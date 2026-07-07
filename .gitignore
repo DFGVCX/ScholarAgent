@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments and secrets
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Personal study notes, local agent instructions, and historical drafts
+docs/
+.agents/
+.codex/
+aiem_specs/
+archive/
+AGENTS.md
+
+# Runtime data and generated artifacts
+storage/
+logs/
+*.log
+*.tmp
+
+# Local model weights and adapters
+models/
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# Frontend dependencies and large build assets
+frontend/node_modules/
+frontend/dist/assets/
+
+# E2E/test outputs
+tests/e2e/node_modules/
+tests/e2e/.auth/
+playwright-report/
+test-results/

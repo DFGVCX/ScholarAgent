@@ -1,0 +1,2 @@
+"""ScholarAgent MCP package root."""
+

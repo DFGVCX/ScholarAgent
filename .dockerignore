@@ -1,0 +1,15 @@
+.agents/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+storage/runtime/
+storage/uploads/
+models/base_models/
+models/lora_adapters/
+docs/history/
+docs/assets/
+archive/
+tests/e2e/node_modules/
+frontend/node_modules/

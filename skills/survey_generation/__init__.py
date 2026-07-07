@@ -1,0 +1,2 @@
+"""Survey generation Skill."""
+
