@@ -276,6 +276,22 @@ SCHEMA_SQL: tuple[str, ...] = (
         provider TEXT, model TEXT, latency_ms INTEGER, metadata_json TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')))""",
 
+    """CREATE TABLE IF NOT EXISTS scholar_annotations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        paper_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        page INTEGER NOT NULL DEFAULT 0,
+        annotation_type TEXT NOT NULL DEFAULT 'highlight',
+        color TEXT,
+        points_json TEXT,
+        content TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (tenant_id, user_id, paper_id)
+            REFERENCES scholar_knowledge_papers(tenant_id, user_id, paper_id)
+            ON DELETE CASCADE)""",
+
     """CREATE TABLE IF NOT EXISTS scholar_settings (
         key TEXT PRIMARY KEY, value TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT (datetime('now')))""",
@@ -305,7 +321,11 @@ def initialize_database(create_database: bool = True) -> dict[str, Any]:
     for index_sql in _INDEXES_SQL:
         conn.execute(index_sql)
     seed_demo_data()
-    return {"database": "scholar_agent", "tables": len(SCHEMA_SQL)}
+    migrated = migrate_annotations_json()
+    result = {"database": "scholar_agent", "tables": len(SCHEMA_SQL)}
+    if migrated:
+        result["migrated_annotations"] = migrated
+    return result
 
 
 def seed_demo_data() -> None:
@@ -371,3 +391,110 @@ def get_all_settings() -> dict[str, Any]:
     for row in rows:
         result[row["key"]] = decode_json(row["value"], row["value"])
     return result
+
+
+# ---------------------------------------------------------------------------
+# Annotation CRUD
+# ---------------------------------------------------------------------------
+
+def save_annotations(tenant_id: str, user_id: str, paper_id: str,
+                     annotations: list[dict[str, Any]]) -> int:
+    """Replace all annotations for a paper. Returns count saved."""
+    execute("DELETE FROM scholar_annotations WHERE tenant_id = ? AND user_id = ? AND paper_id = ?",
+            (tenant_id, user_id, paper_id))
+    count = 0
+    for ann in annotations:
+        execute(
+            "INSERT INTO scholar_annotations "
+            "(paper_id, tenant_id, user_id, page, annotation_type, color, points_json, content) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                paper_id, tenant_id, user_id,
+                int(ann.get("page", 0)),
+                str(ann.get("annotation_type", "highlight")),
+                ann.get("color"),
+                encode_json(ann.get("points", [])),
+                str(ann.get("content", "")),
+            ),
+        )
+        count += 1
+    return count
+
+
+def get_annotations(tenant_id: str, user_id: str, paper_id: str) -> list[dict[str, Any]]:
+    """Get all annotations for a paper."""
+    rows = fetch_all(
+        "SELECT id, page, annotation_type, color, points_json, content, created_at, updated_at "
+        "FROM scholar_annotations "
+        "WHERE tenant_id = ? AND user_id = ? AND paper_id = ? "
+        "ORDER BY page, id",
+        (tenant_id, user_id, paper_id),
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        result.append({
+            "id": row["id"],
+            "page": row["page"],
+            "annotation_type": row["annotation_type"],
+            "color": row.get("color"),
+            "points": decode_json(row.get("points_json"), []),
+            "content": row.get("content") or "",
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        })
+    return result
+
+
+def migrate_annotations_json() -> int:
+    """Migrate legacy JSON annotation files to SQLite. Returns count of migrated papers."""
+    import os as _os
+    from pathlib import Path as _Path
+    annotations_root = _Path(_os.getenv("SCHOLAR_STORAGE_DIR", "storage/runtime")) / "annotations"
+    if not annotations_root.exists():
+        return 0
+    count = 0
+    for json_file in annotations_root.rglob("*.json"):
+        try:
+            data = json.loads(json_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        paper_id = data.get("paper_id", "")
+        if not paper_id:
+            continue
+        # Read tenant_id/user_id from directory structure: annotations/{tenant}/{user}/{digest}.json
+        parts = json_file.relative_to(annotations_root).parts
+        if len(parts) < 2:
+            continue
+        tenant_id, user_id = parts[0], parts[1]
+        strokes = data.get("strokes", [])
+        notes = data.get("notes", "")
+        # Convert old format to new: each stroke becomes an annotation row
+        annotations: list[dict[str, Any]] = []
+        for stroke in strokes:
+            annotations.append({
+                "page": stroke.get("page", 0),
+                "annotation_type": stroke.get("type", "highlight"),
+                "color": stroke.get("color"),
+                "points": stroke.get("points", []),
+                "content": "",
+            })
+        if notes:
+            annotations.append({
+                "page": 0,
+                "annotation_type": "note",
+                "color": None,
+                "points": [],
+                "content": notes,
+            })
+        if annotations:
+            try:
+                save_annotations(tenant_id, user_id, paper_id, annotations)
+                count += 1
+            except Exception:
+                continue  # skip papers that don't exist yet
+        # Rename migrated file
+        try:
+            json_file.rename(json_file.with_suffix(".json.bak"))
+        except OSError:
+            pass
+    return count
