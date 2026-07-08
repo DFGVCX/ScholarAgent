@@ -98,5 +98,31 @@ class KnowledgeBaseToggleTest(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class ChunkingTest(unittest.TestCase):
+    def test_paragraph_chunking_preserves_boundaries(self):
+        from app.services.rag_service import _chunk_text
+        text = "第一段内容。\n\n第二段内容。\n\n第三段很长" + "的内容。" * 100
+        import os
+        os.environ["SCHOLAR_RAG_CHUNK_STRATEGY"] = "paragraph"
+        os.environ["SCHOLAR_RAG_CHUNK_SIZE"] = "50"
+        os.environ["SCHOLAR_RAG_CHUNK_OVERLAP"] = "10"
+        chunks = _chunk_text(text, size=50, overlap=10)
+        # 段落边界不应被切断："第一段内容。" 和 "第二段内容。" 应各在一个 chunk 中
+        self.assertTrue(any("第一段内容" in c for c in chunks))
+        self.assertTrue(any("第二段内容" in c for c in chunks))
+        # 不应该有跨段落边界的 chunk 同时包含两段开头
+        for chunk in chunks:
+            self.assertFalse("第一段内容" in chunk and "第二段内容" in chunk)
+
+    def test_fixed_mode_unchanged(self):
+        from app.services.rag_service import _chunk_text
+        text = "A" * 100 + " " + "B" * 100
+        import os
+        os.environ["SCHOLAR_RAG_CHUNK_STRATEGY"] = "fixed"
+        os.environ["SCHOLAR_RAG_CHUNK_SIZE"] = "30"
+        os.environ["SCHOLAR_RAG_CHUNK_OVERLAP"] = "5"
+        chunks = _chunk_text(text, size=30, overlap=5)
+        self.assertGreater(len(chunks), 1)
+
 if __name__ == "__main__":
     unittest.main()

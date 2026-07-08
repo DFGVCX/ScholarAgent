@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from app.services import mysql_store
 
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_\-一-鿿]+")
+_SENTENCE_END = re.compile(r"[。！？.!?]")
 
 
 def _tokens(text: str) -> list[str]:
@@ -24,7 +26,18 @@ def _chunk_text(text: str, size: int | None = None, overlap: int | None = None) 
     settings = get_settings()
     size = max(200, int(size or settings.rag_chunk_size))
     overlap = min(max(0, int(overlap if overlap is not None else settings.rag_chunk_overlap)), size - 1)
-    text = re.sub(r"\s+", " ", text or "").strip()
+    text = text or ""
+    if not text.strip():
+        return []
+    strategy = os.environ.get("SCHOLAR_RAG_CHUNK_STRATEGY", "paragraph")
+    if strategy == "fixed":
+        return _chunk_fixed(text, size, overlap)
+    return _chunk_by_paragraph(text, size, overlap)
+
+
+def _chunk_fixed(text: str, size: int, overlap: int) -> list[str]:
+    """Original fixed-size sliding window chunking."""
+    text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return []
     chunks: list[str] = []
@@ -35,6 +48,58 @@ def _chunk_text(text: str, size: int | None = None, overlap: int | None = None) 
             chunks.append(chunk)
         cursor += max(size - overlap, 1)
     return chunks
+
+
+def _chunk_by_paragraph(text: str, size: int, overlap: int) -> list[str]:
+    """Paragraph-aware chunking: split by paragraphs, then sentences, then fixed."""
+    # Step 1: Split by double-newline (paragraphs)
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if not paragraphs:
+        return [text.strip()[:size]]
+
+    chunks: list[str] = []
+    for paragraph in paragraphs:
+        if len(paragraph) <= size:
+            _append_chunk(chunks, paragraph, size, overlap)
+        else:
+            # Step 2: Split by sentence-ending punctuation
+            sentences = _SENTENCE_END.split(paragraph)
+            current = ""
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                if len(current) + len(sentence) + 1 <= size:
+                    current = (current + " " + sentence).strip() if current else sentence
+                else:
+                    if len(sentence) > size:
+                        # Step 3: Fixed-size fallback for very long sentences
+                        if current:
+                            _append_chunk(chunks, current, size, overlap)
+                            current = ""
+                        for i in range(0, len(sentence), max(size - overlap, 1)):
+                            sub = sentence[i : i + size].strip()
+                            if sub:
+                                _append_chunk(chunks, sub, size, overlap)
+                    else:
+                        if current:
+                            _append_chunk(chunks, current, size, overlap)
+                        current = sentence
+            if current:
+                _append_chunk(chunks, current, size, overlap)
+    return [c for c in chunks if c]
+
+
+def _append_chunk(chunks: list[str], text: str, size: int, overlap: int) -> None:
+    """Append text, adding overlap from previous chunk end if available."""
+    if not chunks:
+        chunks.append(text)
+        return
+    if overlap > 0 and len(chunks[-1]) > overlap:
+        prefix = chunks[-1][-overlap:]
+        chunks.append(prefix + " " + text)
+    else:
+        chunks.append(text)
 
 
 def _hash_embedding(content: str, dimensions: int = 16) -> list[float]:
