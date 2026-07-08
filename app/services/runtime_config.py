@@ -140,6 +140,7 @@ DEFAULT_VALUES: dict[str, str] = {
 
 
 def runtime_config_path() -> Path:
+    """Return path to legacy JSON config file (for migration and fallback)."""
     configured = os.getenv("SCHOLAR_RUNTIME_CONFIG_PATH")
     if configured:
         return Path(configured)
@@ -147,24 +148,72 @@ def runtime_config_path() -> Path:
     return storage_dir / "runtime_config.json"
 
 
-def read_runtime_config() -> dict[str, str]:
-    path = runtime_config_path()
-    if not path.exists():
-        return {}
+def _migrate_json_to_db() -> int:
+    """Migrate settings from legacy JSON file to SQLite. Returns count of migrated keys."""
+    json_path = runtime_config_path()
+    if not json_path.exists():
+        return 0
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {}
+        return 0
     if not isinstance(raw, dict):
-        return {}
-    return {key: str(value) for key, value in raw.items() if key in CONFIG_KEYS and value is not None}
+        return 0
+    from app.services import mysql_store
+    count = 0
+    for key, value in raw.items():
+        if key in CONFIG_KEYS and value is not None:
+            mysql_store.set_setting(key, str(value))
+            count += 1
+    if count > 0:
+        backup = json_path.with_suffix(".json.bak")
+        try:
+            json_path.rename(backup)
+        except OSError:
+            pass
+    return count
+
+
+def read_runtime_config() -> dict[str, str]:
+    """Read runtime config from SQLite scholar_settings table, with JSON fallback."""
+    try:
+        from app.services import mysql_store
+        all_settings = mysql_store.get_all_settings()
+        if not all_settings:
+            _migrate_json_to_db()
+            all_settings = mysql_store.get_all_settings()
+        return {key: str(value) for key, value in all_settings.items()
+                if key in CONFIG_KEYS and value is not None}
+    except Exception:
+        # Ultimate fallback: legacy JSON file
+        path = runtime_config_path()
+        if not path.exists():
+            return {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {key: str(value) for key, value in raw.items()
+                if key in CONFIG_KEYS and value is not None}
 
 
 def write_runtime_config(values: dict[str, Any]) -> dict[str, str]:
     sanitized = _sanitize_values(values, preserve_blank_secrets=False)
-    path = runtime_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    try:
+        from app.services import mysql_store
+        existing = mysql_store.get_all_settings()
+        for key in existing:
+            if key in CONFIG_KEYS and key not in sanitized:
+                mysql_store.execute("DELETE FROM scholar_settings WHERE key = ?", (key,))
+        for key, val in sanitized.items():
+            mysql_store.set_setting(key, val)
+    except Exception:
+        # Fallback to JSON if SQLite fails
+        path = runtime_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     apply_runtime_config(sanitized)
     return sanitized
 
@@ -207,8 +256,17 @@ def public_runtime_config() -> dict[str, Any]:
                 "options": list(SELECT_OPTIONS.get(key, ())),
             }
         )
+    # Determine storage backend info
+    try:
+        from app.services import mysql_store
+        db_path = str(mysql_store._db_path())
+        storage_backend = "sqlite"
+    except Exception:
+        db_path = str(runtime_config_path())
+        storage_backend = "json"
     return {
-        "path": str(runtime_config_path()),
+        "path": db_path,
+        "storage_backend": storage_backend,
         "items": items,
     }
 

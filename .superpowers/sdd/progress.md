@@ -1,3 +1,4 @@
 Task 1: complete (commits 6b0cda9..f42a1b1, review: C1 plan-mandated — rag_chunks table removed, Task 3 fixes rag_service)
 Task 2: complete (commits f42a1b1..e058647, review: clean — Redis code deleted)
 Task 3: complete (ChromaDB integration + MySQL/Redis cleanup — chroma_store.py, rag_service.py rewritten, health.py/settings.py/runtime_config.py cleaned, config.py stale fields removed)
+Task 4: complete (Config management: runtime_config.py → SQLite scholar_settings, auto-migration from JSON, fix circular dependency in mysql_store._db_path)

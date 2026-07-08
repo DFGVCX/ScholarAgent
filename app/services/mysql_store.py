@@ -9,7 +9,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from app.config import get_settings
 
 
 class MySQLUnavailable(RuntimeError):
@@ -28,9 +27,10 @@ def _db_path() -> Path:
     global _storage_path
     if _storage_path is not None:
         return _storage_path
-    settings = get_settings()
-    settings.storage_dir.mkdir(parents=True, exist_ok=True)
-    _storage_path = settings.storage_dir / "scholar.db"
+    import os as _os
+    storage_dir = Path(_os.getenv("SCHOLAR_STORAGE_DIR", "storage/runtime"))
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    _storage_path = storage_dir / "scholar.db"
     return _storage_path
 
 
