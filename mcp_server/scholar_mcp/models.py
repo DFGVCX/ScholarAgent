@@ -40,6 +40,8 @@ class PaperRecord:
     doi: str | None = None
     arxiv_id: str | None = None
     url: str | None = None
+    file_path: str = ""
+    in_knowledge_base: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
