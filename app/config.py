@@ -33,6 +33,7 @@ class Settings:
     rag_embedding_dimensions: int = 0
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 120
+    rag_chunk_strategy: str = "paragraph"
     rag_top_k: int = 8
     rag_candidate_limit: int = 800
     storage_dir: Path = Path("storage/runtime")
@@ -102,6 +103,7 @@ def get_settings() -> Settings:
         rag_embedding_dimensions=max(0, _setting_int(overrides, "SCHOLAR_RAG_EMBEDDING_DIMENSIONS", 0)),
         rag_chunk_size=max(200, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_SIZE", 900)),
         rag_chunk_overlap=max(0, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_OVERLAP", 120)),
+        rag_chunk_strategy=_setting_value(overrides, "SCHOLAR_RAG_CHUNK_STRATEGY", "paragraph").strip().lower(),
         rag_top_k=max(1, _setting_int(overrides, "SCHOLAR_RAG_TOP_K", 8)),
         rag_candidate_limit=max(20, _setting_int(overrides, "SCHOLAR_RAG_CANDIDATE_LIMIT", 800)),
         storage_dir=storage_dir,

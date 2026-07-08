@@ -20,6 +20,7 @@ CONFIG_KEYS: tuple[str, ...] = (
     "SCHOLAR_RAG_EMBEDDING_DIMENSIONS",
     "SCHOLAR_RAG_CHUNK_SIZE",
     "SCHOLAR_RAG_CHUNK_OVERLAP",
+    "SCHOLAR_RAG_CHUNK_STRATEGY",
     "SCHOLAR_RAG_TOP_K",
     "SCHOLAR_RAG_CANDIDATE_LIMIT",
     "SCHOLAR_PRIMARY_MODEL_PROVIDER",
@@ -47,6 +48,7 @@ SELECT_OPTIONS: dict[str, tuple[str, ...]] = {
     "SCHOLAR_RAG_INDEX_BACKEND": ("auto", "chromadb"),
     "SCHOLAR_RAG_RETRIEVAL_MODE": ("hybrid", "lexical", "vector"),
     "SCHOLAR_RAG_EMBEDDING_PROVIDER": ("lexical", "hybrid", "openai-compatible", "bge", "jina", "cohere", "mock-hash"),
+    "SCHOLAR_RAG_CHUNK_STRATEGY": ("paragraph", "fixed"),
     "SCHOLAR_PRIMARY_MODEL_PROVIDER": (
         "none",
         "openai-compatible",
@@ -128,6 +130,7 @@ DEFAULT_VALUES: dict[str, str] = {
     "SCHOLAR_RAG_EMBEDDING_DIMENSIONS": "0",
     "SCHOLAR_RAG_CHUNK_SIZE": "900",
     "SCHOLAR_RAG_CHUNK_OVERLAP": "120",
+    "SCHOLAR_RAG_CHUNK_STRATEGY": "paragraph",
     "SCHOLAR_RAG_TOP_K": "8",
     "SCHOLAR_RAG_CANDIDATE_LIMIT": "800",
     "SCHOLAR_PRIMARY_MODEL_PROVIDER": "none",
@@ -298,6 +301,7 @@ def _normalize_value(key: str, value: Any) -> str:
         "SCHOLAR_RAG_INDEX_BACKEND",
         "SCHOLAR_RAG_RETRIEVAL_MODE",
         "SCHOLAR_RAG_EMBEDDING_PROVIDER",
+        "SCHOLAR_RAG_CHUNK_STRATEGY",
         "SCHOLAR_PRIMARY_MODEL_PROVIDER",
         "SCHOLAR_SECONDARY_MODEL_PROVIDER",
     }:
