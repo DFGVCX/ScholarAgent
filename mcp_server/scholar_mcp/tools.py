@@ -288,6 +288,22 @@ async def delete_knowledge(
     return {"deleted": deleted, "paper_id": paper_id}
 
 
+@scholar_tool(
+    name="toggle_knowledge_base",
+    description="Toggle a paper's membership in the vector knowledge base",
+    category="knowledge",
+    safety_level=SafetyLevel.MEDIUM,
+)
+async def toggle_knowledge_base(
+    tenant_id: str,
+    user_id: str,
+    paper_id: str,
+    in_knowledge_base: bool = True,
+) -> dict[str, Any]:
+    result = await knowledge_store.toggle_kb(tenant_id, user_id, paper_id, in_knowledge_base)
+    return {"paper_id": paper_id, "in_knowledge_base": result}
+
+
 async def call_tool_with_safety(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     spec = tool_registry.get_spec(name)
     decision = evaluate_tool_safety(spec, arguments)
