@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import mimetypes
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
+from app.services import mysql_store
 from app.services.rag_service import rag_service
 from mcp_server.scholar_mcp.client import ScholarMCPClient
 
@@ -133,13 +133,6 @@ def _resolve_tenant_file(file_path: str, user) -> Path:
     return resolved
 
 
-def _annotation_path(user, paper_id: str) -> Path:
-    digest = hashlib.sha1(paper_id.encode("utf-8")).hexdigest()[:18]
-    path = get_settings().storage_dir / "annotations" / user.tenant_id / user.user_id / f"{digest}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 class FileAnnotationDTO(BaseModel):
     strokes: list[dict[str, Any]] = Field(default_factory=list)
     notes: str = Field(default="", max_length=50000)
@@ -228,6 +221,9 @@ async def upload_knowledge_file(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
     user = _current_user(x_api_key)
+    # Unwrap Form() default when called directly (not through FastAPI)
+    if not isinstance(in_knowledge_base, bool):
+        in_knowledge_base = True
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="empty file")
@@ -298,15 +294,27 @@ async def get_file_annotations(
 ) -> dict[str, Any]:
     user = _current_user(x_api_key or api_key)
     await _find_user_paper(paper_id, user)
-    path = _annotation_path(user, paper_id)
-    if not path.exists():
-        return {"paper_id": paper_id, "strokes": [], "notes": ""}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        payload = {"strokes": [], "notes": ""}
-    payload["paper_id"] = paper_id
-    return payload
+    annotations = mysql_store.get_annotations(user.tenant_id, user.user_id, paper_id)
+    # Convert back to old API format for backward compatibility
+    strokes: list[dict[str, Any]] = []
+    notes_parts: list[str] = []
+    for ann in annotations:
+        if ann["annotation_type"] == "note":
+            if ann["content"]:
+                notes_parts.append(ann["content"])
+        else:
+            strokes.append({
+                "page": ann["page"],
+                "type": ann["annotation_type"],
+                "color": ann.get("color"),
+                "points": ann.get("points", []),
+                "content": ann.get("content", ""),
+            })
+    return {
+        "paper_id": paper_id,
+        "strokes": strokes,
+        "notes": "\n".join(notes_parts),
+    }
 
 
 @router.post("/files/{paper_id}/annotations")
@@ -317,10 +325,32 @@ async def save_file_annotations(
 ) -> dict[str, Any]:
     user = _current_user(x_api_key)
     await _find_user_paper(paper_id, user)
-    path = _annotation_path(user, paper_id)
-    payload = {"paper_id": paper_id, "strokes": request.strokes[:1000], "notes": request.notes}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"saved": True, **payload}
+    # Convert old DTO format to annotation rows
+    annotations: list[dict[str, Any]] = []
+    for stroke in request.strokes[:1000]:
+        annotations.append({
+            "page": stroke.get("page", 0),
+            "annotation_type": stroke.get("type", "highlight"),
+            "color": stroke.get("color"),
+            "points": stroke.get("points", []),
+            "content": stroke.get("content", ""),
+        })
+    if request.notes:
+        annotations.append({
+            "page": 0,
+            "annotation_type": "note",
+            "color": None,
+            "points": [],
+            "content": request.notes,
+        })
+    count = mysql_store.save_annotations(user.tenant_id, user.user_id, paper_id, annotations)
+    return {
+        "saved": True,
+        "paper_id": paper_id,
+        "count": count,
+        "strokes": request.strokes,
+        "notes": request.notes,
+    }
 
 
 @router.put("/files/{paper_id}/text")
