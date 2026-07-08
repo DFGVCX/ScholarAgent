@@ -380,6 +380,8 @@ async def save_file_text(
         "arxiv_id",
         "url",
         "metadata",
+        "in_knowledge_base",
+        "file_path",
     }
     updated = {key: paper.get(key) for key in paper_fields if key in paper}
     updated["full_text"] = request.content

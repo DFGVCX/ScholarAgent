@@ -29,7 +29,7 @@ def _chunk_text(text: str, size: int | None = None, overlap: int | None = None) 
     text = text or ""
     if not text.strip():
         return []
-    strategy = os.environ.get("SCHOLAR_RAG_CHUNK_STRATEGY", "paragraph")
+    strategy = settings.rag_chunk_strategy
     if strategy == "fixed":
         return _chunk_fixed(text, size, overlap)
     return _chunk_by_paragraph(text, size, overlap)
@@ -59,6 +59,7 @@ def _chunk_by_paragraph(text: str, size: int, overlap: int) -> list[str]:
 
     chunks: list[str] = []
     for paragraph in paragraphs:
+        paragraph = re.sub(r"\s+", " ", paragraph).strip()
         if len(paragraph) <= size:
             _append_chunk(chunks, paragraph, size, overlap)
         else:

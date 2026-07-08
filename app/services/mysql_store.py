@@ -399,26 +399,38 @@ def get_all_settings() -> dict[str, Any]:
 
 def save_annotations(tenant_id: str, user_id: str, paper_id: str,
                      annotations: list[dict[str, Any]]) -> int:
-    """Replace all annotations for a paper. Returns count saved."""
-    execute("DELETE FROM scholar_annotations WHERE tenant_id = ? AND user_id = ? AND paper_id = ?",
-            (tenant_id, user_id, paper_id))
-    count = 0
-    for ann in annotations:
-        execute(
-            "INSERT INTO scholar_annotations "
-            "(paper_id, tenant_id, user_id, page, annotation_type, color, points_json, content) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                paper_id, tenant_id, user_id,
-                int(ann.get("page", 0)),
-                str(ann.get("annotation_type", "highlight")),
-                ann.get("color"),
-                encode_json(ann.get("points", [])),
-                str(ann.get("content", "")),
-            ),
+    """Replace all annotations for a paper (transactional). Returns count saved."""
+    conn = _get_conn()
+    # Flush any pending implicit transaction so we can start a clean one
+    if conn.in_transaction:
+        conn.execute("COMMIT")
+    conn.execute("BEGIN")
+    try:
+        conn.execute(
+            "DELETE FROM scholar_annotations WHERE tenant_id = ? AND user_id = ? AND paper_id = ?",
+            (tenant_id, user_id, paper_id),
         )
-        count += 1
-    return count
+        count = 0
+        for ann in annotations:
+            conn.execute(
+                "INSERT INTO scholar_annotations "
+                "(paper_id, tenant_id, user_id, page, annotation_type, color, points_json, content) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    paper_id, tenant_id, user_id,
+                    int(ann.get("page", 0)),
+                    str(ann.get("annotation_type", "highlight")),
+                    ann.get("color"),
+                    encode_json(ann.get("points", [])),
+                    str(ann.get("content", "")),
+                ),
+            )
+            count += 1
+        conn.execute("COMMIT")
+        return count
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def get_annotations(tenant_id: str, user_id: str, paper_id: str) -> list[dict[str, Any]]:
