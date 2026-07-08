@@ -38,6 +38,7 @@ class KnowledgePaperDTO(BaseModel):
     doi: str | None = Field(default=None, max_length=200)
     arxiv_id: str | None = Field(default=None, max_length=120)
     url: str | None = Field(default=None, max_length=500)
+    in_knowledge_base: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -223,6 +224,7 @@ async def upload_knowledge_file(
     arxiv_id: str = Form(default=""),
     url: str = Form(default=""),
     abstract: str = Form(default=""),
+    in_knowledge_base: bool = Form(default=True),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
     user = _current_user(x_api_key)
@@ -255,6 +257,7 @@ async def upload_knowledge_file(
         doi=doi.strip() or None,
         arxiv_id=arxiv_id.strip() or None,
         url=url.strip() or None,
+        in_knowledge_base=in_knowledge_base,
         metadata={
             "created_from": "web_upload",
             "file_name": safe_name,
@@ -383,6 +386,29 @@ async def delete_knowledge(
         },
     )
     return result
+
+
+class ToggleKbDTO(BaseModel):
+    in_knowledge_base: bool
+
+
+@router.put("/{paper_id}/toggle-kb")
+async def toggle_knowledge_base(
+    paper_id: str,
+    request: ToggleKbDTO,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    await _find_user_paper(paper_id, user)
+    from mcp_server.scholar_mcp.tools import toggle_knowledge_base as _toggle_kb
+    result = await _toggle_kb(
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        paper_id=paper_id,
+        in_knowledge_base=request.in_knowledge_base,
+    )
+    stats = await rag_service.stats(user.tenant_id, user.user_id)
+    return {**result, "rag": stats}
 
 
 @router.get("/rag/search")
