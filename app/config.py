@@ -14,8 +14,6 @@ class Settings:
     api_keys: str = "demo-key:tenant_demo:user_demo"
     allow_mock_data: bool = False
     storage_backend: str = "auto"
-    mysql_url: str = "mysql://scholar:scholar@127.0.0.1:3306/scholar_agent?charset=utf8mb4"
-    redis_url: str = "redis://127.0.0.1:6379/0"
     primary_model_provider: str = "none"
     secondary_model_provider: str = "none"
     llm_base_url: str = ""
@@ -85,12 +83,6 @@ def get_settings() -> Settings:
         api_keys=_setting_value(overrides, "SCHOLAR_API_KEYS", "demo-key:tenant_demo:user_demo"),
         allow_mock_data=_setting_bool(overrides, "SCHOLAR_ALLOW_MOCK_DATA", False),
         storage_backend=_setting_value(overrides, "SCHOLAR_STORAGE_BACKEND", "auto"),
-        mysql_url=_setting_value(
-            overrides,
-            "SCHOLAR_MYSQL_URL",
-            "mysql://scholar:scholar@127.0.0.1:3306/scholar_agent?charset=utf8mb4",
-        ),
-        redis_url=_setting_value(overrides, "SCHOLAR_REDIS_URL", "redis://127.0.0.1:6379/0"),
         primary_model_provider=_setting_value(overrides, "SCHOLAR_PRIMARY_MODEL_PROVIDER", "none").strip().lower(),
         secondary_model_provider=_setting_value(overrides, "SCHOLAR_SECONDARY_MODEL_PROVIDER", "none").strip().lower(),
         llm_base_url=_setting_value(overrides, "SCHOLAR_LLM_BASE_URL", "").strip(),

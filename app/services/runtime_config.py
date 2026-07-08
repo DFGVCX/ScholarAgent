@@ -8,8 +8,6 @@ from typing import Any
 
 CONFIG_KEYS: tuple[str, ...] = (
     "SCHOLAR_STORAGE_BACKEND",
-    "SCHOLAR_MYSQL_URL",
-    "SCHOLAR_REDIS_URL",
     "SCHOLAR_ALLOW_MOCK_DATA",
     "SCHOLAR_EXTERNAL_SOURCE_PROVIDER",
     "SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS",
@@ -43,10 +41,10 @@ SECRET_KEYS: frozenset[str] = frozenset(
 )
 
 SELECT_OPTIONS: dict[str, tuple[str, ...]] = {
-    "SCHOLAR_STORAGE_BACKEND": ("auto", "mysql", "json"),
+    "SCHOLAR_STORAGE_BACKEND": ("auto", "sqlite"),
     "SCHOLAR_ALLOW_MOCK_DATA": ("false", "true"),
     "SCHOLAR_EXTERNAL_SOURCE_PROVIDER": ("real", "mock"),
-    "SCHOLAR_RAG_INDEX_BACKEND": ("auto", "mysql", "json"),
+    "SCHOLAR_RAG_INDEX_BACKEND": ("auto", "chromadb"),
     "SCHOLAR_RAG_RETRIEVAL_MODE": ("hybrid", "lexical", "vector"),
     "SCHOLAR_RAG_EMBEDDING_PROVIDER": ("lexical", "hybrid", "openai-compatible", "bge", "jina", "cohere", "mock-hash"),
     "SCHOLAR_PRIMARY_MODEL_PROVIDER": (
@@ -119,8 +117,6 @@ SELECT_OPTIONS: dict[str, tuple[str, ...]] = {
 
 DEFAULT_VALUES: dict[str, str] = {
     "SCHOLAR_STORAGE_BACKEND": "auto",
-    "SCHOLAR_MYSQL_URL": "mysql://scholar:scholar@127.0.0.1:3306/scholar_agent?charset=utf8mb4",
-    "SCHOLAR_REDIS_URL": "redis://127.0.0.1:6379/0",
     "SCHOLAR_ALLOW_MOCK_DATA": "false",
     "SCHOLAR_EXTERNAL_SOURCE_PROVIDER": "real",
     "SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS": "8.0",

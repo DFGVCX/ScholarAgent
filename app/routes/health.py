@@ -4,13 +4,9 @@ from fastapi import APIRouter
 
 from app.config import get_settings
 from app.services import mysql_store
+from app.services.chroma_store import chroma_store
 from app.services.rag_service import rag_service
 from skills.survey_generation.tools.formatter import CitationFormatter
-
-try:
-    import redis
-except ImportError:  # pragma: no cover
-    redis = None
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -28,44 +24,35 @@ async def infra_health() -> dict[str, object]:
     settings = get_settings()
     formatter = CitationFormatter()
     formatter.load()
-    redis_status: dict[str, object] = {"url": settings.redis_url, "available": False}
-    mysql_available = mysql_store.is_available()
-    mysql_table_count = 0
-    if mysql_available:
+    sqlite_available = mysql_store.is_available()
+    sqlite_table_count = 0
+    if sqlite_available:
         try:
             row = mysql_store.fetch_one(
-                """
-                SELECT COUNT(*) AS table_count
-                FROM information_schema.tables
-                WHERE table_schema = %s AND table_name LIKE 'scholar_%%'
-                """,
-                (mysql_store.configured_database_name(),),
+                "SELECT COUNT(*) AS table_count FROM sqlite_master WHERE type='table' AND name LIKE 'scholar_%'"
             )
-            mysql_table_count = int((row or {}).get("table_count") or 0)
+            sqlite_table_count = int((row or {}).get("table_count") or 0)
         except Exception:
-            mysql_table_count = 0
-    if redis is not None:
-        try:
-            client = redis.Redis.from_url(
-                settings.redis_url,
-                socket_connect_timeout=0.3,
-                socket_timeout=0.3,
-                decode_responses=True,
-            )
-            redis_status["available"] = bool(client.ping())
-        except Exception as exc:
-            redis_status["error"] = str(exc)
+            sqlite_table_count = 0
+    # ChromaDB stats
+    chroma_stats: dict[str, object] = {"available": False, "chunk_count": 0, "paper_count": 0}
+    try:
+        stats = chroma_store._collection.count()
+        chroma_stats["available"] = True
+        chroma_stats["chunk_count"] = stats
+    except Exception:
+        pass
     return {
         "status": "ok",
-        "mysql": {
-            "database": mysql_store.configured_database_name(),
-            "available": mysql_available,
-            "table_count": mysql_table_count,
+        "sqlite": {
+            "database": str(mysql_store._db_path()),
+            "available": sqlite_available,
+            "table_count": sqlite_table_count,
         },
-        "redis": redis_status,
+        "chromadb": chroma_stats,
         "storage_backend": settings.storage_backend,
         "runtime_backend": {
-            "storage": "mysql" if mysql_available else "json",
+            "storage": "sqlite" if sqlite_available else "json",
             "rag": rag_service.backend(),
         },
         "rag": {

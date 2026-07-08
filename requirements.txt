@@ -3,6 +3,5 @@ uvicorn[standard]>=0.30
 pydantic>=2.7
 python-multipart>=0.0.9
 aiohttp>=3.9
-pymysql>=1.1
-redis>=5.0
+chromadb>=0.5
 pypdf>=4.2
