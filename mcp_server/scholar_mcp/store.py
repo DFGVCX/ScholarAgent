@@ -31,24 +31,27 @@ class KnowledgeStore:
         return f"{tenant_id}:{user_id}:{paper_id}"
 
     async def save_paper(self, paper: PaperRecord) -> dict[str, Any]:
+        in_kb = 1 if paper.in_knowledge_base else 0
         if mysql_store.is_available():
             mysql_store.execute(
                 """
                 INSERT INTO scholar_knowledge_papers
                     (paper_id, tenant_id, user_id, source, title, authors_json, abstract, full_text,
-                     published_at, doi, arxiv_id, url, metadata_json)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    source = VALUES(source),
-                    title = VALUES(title),
-                    authors_json = VALUES(authors_json),
-                    abstract = VALUES(abstract),
-                    full_text = VALUES(full_text),
-                    published_at = VALUES(published_at),
-                    doi = VALUES(doi),
-                    arxiv_id = VALUES(arxiv_id),
-                    url = VALUES(url),
-                    metadata_json = VALUES(metadata_json)
+                     published_at, doi, arxiv_id, url, file_path, in_knowledge_base, metadata_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT(tenant_id, user_id, paper_id) DO UPDATE SET
+                    source = excluded.source,
+                    title = excluded.title,
+                    authors_json = excluded.authors_json,
+                    abstract = excluded.abstract,
+                    full_text = excluded.full_text,
+                    published_at = excluded.published_at,
+                    doi = excluded.doi,
+                    arxiv_id = excluded.arxiv_id,
+                    url = excluded.url,
+                    file_path = excluded.file_path,
+                    in_knowledge_base = excluded.in_knowledge_base,
+                    metadata_json = excluded.metadata_json
                 """,
                 (
                     paper.paper_id,
@@ -63,19 +66,66 @@ class KnowledgeStore:
                     paper.doi,
                     paper.arxiv_id,
                     paper.url,
+                    paper.file_path,
+                    in_kb,
                     mysql_store.encode_json(paper.metadata),
                 ),
             )
             data = paper.to_dict()
-            await rag_service.index_paper(data)
+            if paper.in_knowledge_base:
+                await rag_service.index_paper(data)
             return data
+        # JSON fallback
         async with self._lock:
             data = self._read_sync()
             data[self._key(paper.tenant_id, paper.user_id, paper.paper_id)] = paper.to_dict()
             self._write_sync(data)
         result = paper.to_dict()
-        await rag_service.index_paper(result)
+        if paper.in_knowledge_base:
+            await rag_service.index_paper(result)
         return result
+
+    async def toggle_kb(self, tenant_id: str, user_id: str, paper_id: str,
+                        in_knowledge_base: bool) -> bool:
+        """Toggle a paper's knowledge-base membership. Returns True if toggled on."""
+        if mysql_store.is_available():
+            mysql_store.execute(
+                "UPDATE scholar_knowledge_papers SET in_knowledge_base = %s, updated_at = datetime('now') "
+                "WHERE tenant_id = %s AND user_id = %s AND paper_id = %s",
+                (1 if in_knowledge_base else 0, tenant_id, user_id, paper_id),
+            )
+            if in_knowledge_base:
+                row = mysql_store.fetch_one(
+                    "SELECT * FROM scholar_knowledge_papers "
+                    "WHERE tenant_id = %s AND user_id = %s AND paper_id = %s",
+                    (tenant_id, user_id, paper_id),
+                )
+                if row:
+                    paper_dict = self._from_mysql_row(row)
+                    await rag_service.index_paper(paper_dict)
+            else:
+                await rag_service.delete_paper(tenant_id, user_id, paper_id)
+            return in_knowledge_base
+        # JSON fallback
+        async with self._lock:
+            data = self._read_sync()
+            key = self._key(tenant_id, user_id, paper_id)
+            item = data.get(key)
+            if item is None:
+                key = next((k for k, v in data.items()
+                            if v.get("tenant_id") == tenant_id
+                            and v.get("user_id") == user_id
+                            and v.get("paper_id") == paper_id), "")
+                item = data.get(key)
+            if not item:
+                return False
+            item["in_knowledge_base"] = in_knowledge_base
+            self._write_sync(data)
+        if in_knowledge_base:
+            await rag_service.index_paper(item)
+        else:
+            await rag_service.delete_paper(tenant_id, user_id, paper_id)
+        return in_knowledge_base
 
     async def search(self, tenant_id: str, user_id: str, query: str, limit: int) -> list[dict[str, Any]]:
         if mysql_store.is_available():
@@ -162,6 +212,8 @@ class KnowledgeStore:
             "doi": row.get("doi"),
             "arxiv_id": row.get("arxiv_id"),
             "url": row.get("url"),
+            "file_path": row.get("file_path") or "",
+            "in_knowledge_base": bool(row.get("in_knowledge_base", 1)),
             "metadata": mysql_store.decode_json(row.get("metadata_json"), {}),
         }
 
