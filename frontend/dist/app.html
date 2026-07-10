@@ -9409,6 +9409,8 @@
         let readerScale = 1.5;
         let readerPaperId = null;
         let readerAnnotations = [];
+        let highlightTooltip = null;
+        const HIGHLIGHT_COLORS = ['#ffeb3b', '#a5d6a7', '#ef9a9a', '#90caf9', '#ce93d8', '#ffcc80'];
 
         // Load pdf.js from CDN on demand
         function loadPdfJs() {
@@ -9473,16 +9475,55 @@
             await page.render({ canvasContext: ctx, viewport }).promise;
             document.getElementById('readerPageInput').value = readerPageNum;
             document.getElementById('readerZoomLabel').textContent = Math.round(readerScale * 100) + '%';
+            renderAnnotationList();
         }
 
-        // Load annotations for the current paper
+        // ── Annotations ──
         async function loadAnnotations() {
             try {
                 const data = await api(`/knowledge/files/${encodeURIComponent(readerPaperId)}/annotations`);
-                readerAnnotations = data.annotations || [];
-            } catch {
-                readerAnnotations = [];
+                readerAnnotations = (data.strokes || []).map(s => ({
+                    page: s.page || 0,
+                    type: s.type || 'highlight',
+                    color: s.color || '#ffeb3b',
+                    points: s.points || [],
+                    content: s.content || '',
+                }));
+                if (data.notes) {
+                    readerAnnotations.push({
+                        page: 0, type: 'note', color: null, points: [], content: data.notes,
+                    });
+                }
+                renderAnnotationList();
+            } catch (e) { readerAnnotations = []; }
+        }
+
+        async function saveAnnotations() {
+            const strokes = readerAnnotations
+                .filter(a => a.type !== 'note')
+                .map(a => ({ page: a.page, type: a.type, color: a.color, points: a.points, content: a.content }));
+            const notes = readerAnnotations
+                .filter(a => a.type === 'note')
+                .map(a => a.content).join('\n');
+            await api(`/knowledge/files/${encodeURIComponent(readerPaperId)}/annotations`, {
+                method: 'POST',
+                body: JSON.stringify({ strokes, notes }),
+            });
+        }
+
+        function renderAnnotationList() {
+            const container = document.getElementById('readerAnnotations');
+            const items = readerAnnotations.filter(a => a.page === readerPageNum);
+            if (!items.length) {
+                container.innerHTML = '<div class="subtle" style="text-align:center">本页暂无批注</div>';
+                return;
             }
+            container.innerHTML = items.map(a => `
+                <div class="annotation-item">
+                    ${a.type !== 'note' ? `<span class="ann-color" style="background:${a.color}"></span>` : ''}
+                    <span>${a.type === 'note' ? '📝' : '🖍️'} ${a.content || '(无文字)'}</span>
+                </div>
+            `).join('');
         }
 
         // ── Page navigation ──
@@ -9522,6 +9563,68 @@
                 readerScale = w / vp.width;
                 await renderPage();
             }
+        });
+
+        // ── Text selection → highlight tooltip ──
+        function createTooltip() {
+            if (highlightTooltip) return;
+            highlightTooltip = document.createElement('div');
+            highlightTooltip.className = 'highlight-tooltip';
+            highlightTooltip.style.display = 'none';
+            HIGHLIGHT_COLORS.forEach(color => {
+                const btn = document.createElement('button');
+                btn.className = 'color-btn';
+                btn.style.background = color;
+                btn.addEventListener('click', async () => {
+                    const sel = window.getSelection();
+                    if (!sel.rangeCount) return;
+                    readerAnnotations.push({
+                        page: readerPageNum,
+                        type: 'highlight',
+                        color: color,
+                        points: [],
+                        content: sel.toString().substring(0, 200),
+                    });
+                    await saveAnnotations();
+                    renderAnnotationList();
+                    highlightTooltip.style.display = 'none';
+                    sel.removeAllRanges();
+                });
+                highlightTooltip.appendChild(btn);
+            });
+            const noteBtn = document.createElement('button');
+            noteBtn.textContent = '💬';
+            noteBtn.title = '添加批注';
+            noteBtn.addEventListener('click', async () => {
+                const sel = window.getSelection();
+                if (!sel.rangeCount) return;
+                const text = sel.toString().substring(0, 200);
+                const note = prompt('批注内容:', text);
+                if (note) {
+                    readerAnnotations.push({
+                        page: readerPageNum, type: 'note', color: null, points: [], content: note,
+                    });
+                    await saveAnnotations();
+                    renderAnnotationList();
+                }
+                highlightTooltip.style.display = 'none';
+                sel.removeAllRanges();
+            });
+            highlightTooltip.appendChild(noteBtn);
+            document.body.appendChild(highlightTooltip);
+        }
+
+        document.addEventListener('mouseup', (e) => {
+            const sel = window.getSelection();
+            if (!sel.toString().trim() || !readerPaperId) {
+                if (highlightTooltip) highlightTooltip.style.display = 'none';
+                return;
+            }
+            createTooltip();
+            const rect = sel.getRangeAt(0).getBoundingClientRect();
+            highlightTooltip.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+            highlightTooltip.style.left = (rect.left + window.scrollX) + 'px';
+            highlightTooltip.style.display = 'flex';
         });
 
         // ── Sidebar toggles ──
