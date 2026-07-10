@@ -155,4 +155,30 @@ export class ScholarApiClient {
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   }
+
+  async getAnnotations(paperId: string): Promise<{ paper_id: string; strokes: unknown[]; notes: string }> {
+    const response = await fetch(`${this.baseUrl}/knowledge/files/${encodeURIComponent(paperId)}/annotations`, {
+      headers: this.headers(),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async saveAnnotations(paperId: string, strokes: unknown[], notes: string): Promise<{ saved: boolean; paper_id: string }> {
+    const response = await fetch(`${this.baseUrl}/knowledge/files/${encodeURIComponent(paperId)}/annotations`, {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify({ strokes, notes }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async getPdfInfo(paperId: string): Promise<{ paper_id: string; pages: number; file_size: number; file_name: string }> {
+    const response = await fetch(`${this.baseUrl}/knowledge/files/${encodeURIComponent(paperId)}/pdf-info`, {
+      headers: this.headers(),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
 }
