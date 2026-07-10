@@ -1,20 +1,38 @@
 from __future__ import annotations
+import logging
+import shutil
 from typing import Any
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class ChromaStore:
     def __init__(self) -> None:
         settings = get_settings()
         self._path = str(settings.storage_dir / "chroma")
-        self._client = chromadb.PersistentClient(
-            path=self._path,
-            settings=ChromaSettings(anonymized_telemetry=False))
+        self._client = self._init_client(self._path)
         self._collection = self._client.get_or_create_collection(
             name="scholar_chunks",
             metadata={"hnsw:space": "cosine"})
+
+    def _init_client(self, path: str) -> chromadb.PersistentClient:
+        """Initialize ChromaDB client with auto-recovery from corrupted data."""
+        try:
+            return chromadb.PersistentClient(
+                path=path,
+                settings=ChromaSettings(anonymized_telemetry=False))
+        except Exception:
+            logger.warning("ChromaDB init failed, clearing corrupted data at %s", path)
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+            except Exception:
+                pass
+            return chromadb.PersistentClient(
+                path=path,
+                settings=ChromaSettings(anonymized_telemetry=False))
 
     def index_paper(self, tenant_id: str, user_id: str, paper_id: str,
                     chunks: list[dict[str, Any]],
