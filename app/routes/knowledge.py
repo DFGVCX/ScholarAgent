@@ -285,6 +285,33 @@ async def get_knowledge_file(
         content_disposition_type="inline",
     )
 
+@router.get("/files/{paper_id}/pdf-info")
+async def get_pdf_info(
+    paper_id: str,
+    api_key: str = "",
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key or api_key)
+    paper = await _find_user_paper(paper_id, user)
+    file_path = paper.get("metadata", {}).get("file_path")
+    if not file_path:
+        raise HTTPException(status_code=404, detail="file not found for this paper")
+    resolved = _resolve_tenant_file(file_path, user)
+    pages = 0
+    if resolved.suffix.lower() == ".pdf":
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(resolved))
+            pages = len(reader.pages)
+        except Exception:
+            pages = 0
+    return {
+        "paper_id": paper_id,
+        "pages": pages,
+        "file_size": resolved.stat().st_size,
+        "file_name": resolved.name,
+    }
+
 
 @router.get("/files/{paper_id}/annotations")
 async def get_file_annotations(
