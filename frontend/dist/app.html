@@ -5022,6 +5022,33 @@
             border-color: #dba4a4;
             background: #fff0f0;
         }
+        #pageKnowledge .paper-row-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            align-self: center;
+        }
+        #pageKnowledge .reader-open-btn {
+            min-height: 28px;
+            padding: 5px 9px;
+            border: 1px solid #cfd9de;
+            border-radius: 6px;
+            background: #f5f8fa;
+            color: #1e7a5e;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            box-sizing: border-box;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+            overflow: visible;
+        }
+        #pageKnowledge .reader-open-btn:hover {
+            border-color: #1e7a5e;
+            background: #e3f1ed;
+        }
         #pageProfile .profile-home.account-console {
             grid-template-rows: 54px minmax(0, 1fr);
         }
@@ -8844,7 +8871,7 @@
                         <span class="paper-row-foot">
                             <span>${hasFile ? '原文可浏览' : '仅元数据'}</span>
                             <span>${parsed ? '正文已解析' : '待解析'}</span>
-                            <button class="plain danger-lite paper-delete-btn" type="button" data-delete-paper="${escapeHtml(item.paper_id)}">删除</button>
+                            <span class="paper-row-actions">${hasFile ? `<button class="plain reader-open-btn" type="button" data-reader-paper="${escapeHtml(item.paper_id)}">阅读</button>` : ''}<button class="plain danger-lite paper-delete-btn" type="button" data-delete-paper="${escapeHtml(item.paper_id)}">删除</button></span>
                         </span>
                     </article>
                 `;
@@ -8860,6 +8887,11 @@
                 event.preventDefault();
                 event.stopPropagation();
                 deletePaper(button.dataset.deletePaper);
+            }));
+            target.querySelectorAll('[data-reader-paper]').forEach((button) => button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openReader(button.dataset.readerPaper);
             }));
         }
         function renderPaperWorkbench(populateEditor = false) {
@@ -9370,6 +9402,141 @@
         setSource('arxiv');
         loadInfra();
         resumeSession();
+
+        // ── PDF Reader state ──
+        let pdfDoc = null;
+        let readerPageNum = 1;
+        let readerScale = 1.5;
+        let readerPaperId = null;
+        let readerAnnotations = [];
+
+        // Load pdf.js from CDN on demand
+        function loadPdfJs() {
+            if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs';
+                script.type = 'module';
+                script.onload = () => {
+                    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+                    resolve(window.pdfjsLib);
+                };
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+        async function openReader(paperId) {
+            readerPaperId = paperId;
+            readerPageNum = 1;
+            readerScale = 1.5;
+
+            // Show reader page
+            document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
+            document.getElementById('pageReader').style.display = '';
+            document.getElementById('readerTitle').textContent = '加载中...';
+            document.getElementById('readerCanvasWrap').innerHTML =
+                '<div class="reader-empty" style="color:#ccc;padding:60px">加载中...</div>';
+
+            try {
+                await loadPdfJs();
+                const fileUrl = `/knowledge/files/${encodeURIComponent(paperId)}`;
+                const loadingTask = window.pdfjsLib.getDocument({
+                    url: fileUrl,
+                    httpHeaders: { 'X-API-Key': state.session?.access_token || '' }
+                });
+                pdfDoc = await loadingTask.promise;
+                document.getElementById('readerTitle').textContent =
+                    paperId; // Will be updated from metadata
+                document.getElementById('readerTotalPages').textContent = pdfDoc.numPages;
+                document.getElementById('readerPageInput').max = pdfDoc.numPages;
+                await loadAnnotations();
+                await renderPage();
+            } catch (err) {
+                document.getElementById('readerCanvasWrap').innerHTML =
+                    `<div class="reader-empty" style="color:#c00;padding:60px">加载失败: ${err.message}</div>`;
+            }
+        }
+
+        async function renderPage() {
+            if (!pdfDoc) return;
+            const page = await pdfDoc.getPage(readerPageNum);
+            const viewport = page.getViewport({ scale: readerScale });
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            const wrap = document.getElementById('readerCanvasWrap');
+            wrap.innerHTML = '';
+            wrap.appendChild(canvas);
+            await page.render({ canvasContext: ctx, viewport }).promise;
+            document.getElementById('readerPageInput').value = readerPageNum;
+            document.getElementById('readerZoomLabel').textContent = Math.round(readerScale * 100) + '%';
+        }
+
+        // Load annotations for the current paper
+        async function loadAnnotations() {
+            try {
+                const data = await api(`/knowledge/files/${encodeURIComponent(readerPaperId)}/annotations`);
+                readerAnnotations = data.annotations || [];
+            } catch {
+                readerAnnotations = [];
+            }
+        }
+
+        // ── Page navigation ──
+        document.getElementById('readerPrevPage').addEventListener('click', async () => {
+            if (readerPageNum <= 1) return;
+            readerPageNum--;
+            await renderPage();
+        });
+        document.getElementById('readerNextPage').addEventListener('click', async () => {
+            if (!pdfDoc || readerPageNum >= pdfDoc.numPages) return;
+            readerPageNum++;
+            await renderPage();
+        });
+        document.getElementById('readerPageInput').addEventListener('change', async () => {
+            const n = parseInt(document.getElementById('readerPageInput').value);
+            if (pdfDoc && n >= 1 && n <= pdfDoc.numPages) {
+                readerPageNum = n;
+                await renderPage();
+            }
+        });
+
+        // ── Zoom ──
+        document.getElementById('readerZoomIn').addEventListener('click', async () => {
+            readerScale = Math.min(4, readerScale + 0.25);
+            await renderPage();
+        });
+        document.getElementById('readerZoomOut').addEventListener('click', async () => {
+            readerScale = Math.max(0.5, readerScale - 0.25);
+            await renderPage();
+        });
+        document.getElementById('readerZoomFit').addEventListener('click', async () => {
+            const wrap = document.getElementById('readerCanvasWrap');
+            const w = wrap.clientWidth - 32;
+            if (pdfDoc) {
+                const page = await pdfDoc.getPage(readerPageNum);
+                const vp = page.getViewport({ scale: 1 });
+                readerScale = w / vp.width;
+                await renderPage();
+            }
+        });
+
+        // ── Sidebar toggles ──
+        document.getElementById('readerToggleLeft').addEventListener('click', () => {
+            document.getElementById('readerLeftSidebar').classList.toggle('collapsed');
+        });
+        document.getElementById('readerToggleRight').addEventListener('click', () => {
+            document.getElementById('readerRightSidebar').classList.toggle('collapsed');
+        });
+
+        // ── Back button ──
+        document.getElementById('readerBackBtn').addEventListener('click', () => {
+            document.getElementById('pageReader').style.display = 'none';
+            window.location.hash = '#/knowledge';
+        });
     </script>
 </body>
 </html>
