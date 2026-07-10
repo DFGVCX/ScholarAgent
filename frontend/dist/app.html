@@ -8050,7 +8050,10 @@
             if (!routeTitles[route]) route = 'chat';
             state.route = route;
             document.querySelectorAll('.nav-button').forEach((button) => button.classList.toggle('active', button.dataset.route === route));
-            document.querySelectorAll('.page').forEach((page) => page.classList.remove('active'));
+            document.querySelectorAll('.page').forEach((page) => {
+                page.style.display = ''; // clear any inline style from openReader
+                page.classList.remove('active');
+            });
             const page = $(`page${route[0].toUpperCase()}${route.slice(1)}`);
             if (page) page.classList.add('active');
             $('pageTitle').textContent = routeTitles[route];
@@ -8072,6 +8075,21 @@
         async function refreshAll() {
             await Promise.allSettled([loadInfra(), loadSkills(), loadConversations(), loadTasks(), loadKnowledge(), loadRagStats(), loadRuntimeConfig()]);
         }
+
+        // ── Route handler for URL hash ──
+        function handleRoute() {
+            const hash = window.location.hash.replace('#', '') || '/knowledge';
+            if (hash.startsWith('/reader/')) {
+                const paperId = hash.replace('/reader/', '');
+                if (readerPaperId === paperId) return; // prevent re-entry
+                openReader(paperId);
+            } else {
+                const routeName = hash.replace('/', '') || 'chat';
+                if (routeTitles[routeName]) switchRoute(routeName);
+            }
+        }
+        window.addEventListener('hashchange', handleRoute);
+
         function setSource(type) {
             state.inputType = type;
             document.querySelectorAll('#sourceSwitch button').forEach((button) => button.classList.toggle('active', button.dataset.type === type));
@@ -9430,13 +9448,18 @@
         }
 
         async function openReader(paperId) {
+            window.location.hash = '#/reader/' + paperId;
             readerPaperId = paperId;
             readerPageNum = 1;
             readerScale = 1.5;
 
-            // Show reader page
-            document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
-            document.getElementById('pageReader').style.display = '';
+            // Show reader page using class system (consistent with switchRoute)
+            document.querySelectorAll('.page').forEach(p => {
+                p.style.display = '';
+                p.classList.remove('active');
+            });
+            document.getElementById('pageReader').classList.add('active');
+
             document.getElementById('readerTitle').textContent = '加载中...';
             document.getElementById('readerCanvasWrap').innerHTML =
                 '<div class="reader-empty" style="color:#ccc;padding:60px">加载中...</div>';
@@ -9449,8 +9472,10 @@
                     httpHeaders: { 'X-API-Key': state.session?.access_token || '' }
                 });
                 pdfDoc = await loadingTask.promise;
+                // Show real title from knowledge list
+                const paper = state.knowledge.find(p => p.paper_id === paperId || p.id === paperId);
                 document.getElementById('readerTitle').textContent =
-                    paperId; // Will be updated from metadata
+                    paper?.title || paperId;
                 document.getElementById('readerTotalPages').textContent = pdfDoc.numPages;
                 document.getElementById('readerPageInput').max = pdfDoc.numPages;
                 await loadAnnotations();
@@ -9637,7 +9662,6 @@
 
         // ── Back button ──
         document.getElementById('readerBackBtn').addEventListener('click', () => {
-            document.getElementById('pageReader').style.display = 'none';
             window.location.hash = '#/knowledge';
         });
     </script>
