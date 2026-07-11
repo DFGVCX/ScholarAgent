@@ -41,6 +41,20 @@ class Settings:
     cors_allow_origins: tuple[str, ...] = ("*",)
 
 
+def validate_release_settings(settings: Settings) -> None:
+    """Fail fast when a production process still uses development defaults."""
+    if settings.env != "production":
+        return
+    if settings.allow_mock_data:
+        raise RuntimeError("SCHOLAR_ALLOW_MOCK_DATA must be false in production")
+    if not settings.api_keys or any(
+        marker in settings.api_keys for marker in ("demo-key", "acme-key", "change-me")
+    ):
+        raise RuntimeError("Configure non-demo SCHOLAR_API_KEYS before production startup")
+    if not settings.cors_allow_origins or "*" in settings.cors_allow_origins:
+        raise RuntimeError("Configure explicit SCHOLAR_CORS_ALLOW_ORIGINS in production")
+
+
 def _setting_value(overrides: dict[str, str], name: str, default: str = "") -> str:
     value = overrides.get(name)
     if value is not None:
@@ -79,6 +93,11 @@ def get_settings() -> Settings:
     overrides = read_runtime_config()
     storage_dir = Path(_setting_value(overrides, "SCHOLAR_STORAGE_DIR", "storage/runtime"))
     upload_dir = Path(_setting_value(overrides, "SCHOLAR_UPLOAD_DIR", "storage/uploads"))
+    cors_origins = tuple(
+        item.strip()
+        for item in _setting_value(overrides, "SCHOLAR_CORS_ALLOW_ORIGINS", "*").split(",")
+        if item.strip()
+    )
     return Settings(
         env=_setting_value(overrides, "SCHOLAR_ENV", "development"),
         api_keys=_setting_value(overrides, "SCHOLAR_API_KEYS", "demo-key:tenant_demo:user_demo"),
@@ -108,4 +127,5 @@ def get_settings() -> Settings:
         rag_candidate_limit=max(20, _setting_int(overrides, "SCHOLAR_RAG_CANDIDATE_LIMIT", 800)),
         storage_dir=storage_dir,
         upload_dir=upload_dir,
+        cors_allow_origins=cors_origins or ("*",),
     )

@@ -6,7 +6,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - SCHOLAR_ENV=development
+      - SCHOLAR_ENV=${SCHOLAR_ENV:-development}
+      - SCHOLAR_CORS_ALLOW_ORIGINS=${SCHOLAR_CORS_ALLOW_ORIGINS:-*}
       - SCHOLAR_API_KEYS=${SCHOLAR_API_KEYS:-demo-key:tenant_demo:user_demo}
       - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
       - SCHOLAR_REDIS_URL=${SCHOLAR_REDIS_URL:-redis://redis:6379/0}
@@ -33,7 +34,8 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.worker
     environment:
-      - SCHOLAR_ENV=development
+      - SCHOLAR_ENV=${SCHOLAR_ENV:-development}
+      - SCHOLAR_CORS_ALLOW_ORIGINS=${SCHOLAR_CORS_ALLOW_ORIGINS:-*}
       - SCHOLAR_API_KEYS=${SCHOLAR_API_KEYS:-demo-key:tenant_demo:user_demo}
       - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
       - SCHOLAR_REDIS_URL=${SCHOLAR_REDIS_URL:-redis://redis:6379/0}
@@ -62,7 +64,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.mcp
     environment:
-      - SCHOLAR_ENV=development
+      - SCHOLAR_ENV=${SCHOLAR_ENV:-development}
       - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.config import get_settings
+from app.config import get_settings, validate_release_settings
 from app.routes.auth import router as auth_router
 from app.routes.agents import router as agents_router
 from app.routes.conversations import router as conversations_router
@@ -17,6 +17,7 @@ from app.routes.translations import router as translations_router
 from app.services import mysql_store
 
 settings = get_settings()
+validate_release_settings(settings)
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
