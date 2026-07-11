@@ -69,11 +69,19 @@ async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[di
     citation_style = initial_state.get("citation_style", "IEEE")
     max_papers = int(initial_state.get("max_papers", 12))
     require_outline_confirmation = bool(initial_state.get("require_outline_confirmation", False))
+    delegation_results = list(initial_state.get("delegation_results") or [])
+    collaboration_plan = "\n\n".join(
+        f"[{item.get('agent_name', 'subagent')}] {item.get('content', '')}"
+        for item in delegation_results
+        if item.get("status") == "succeeded" and item.get("content")
+    )[:10000]
     trace_context = {
         "task_id": task_id,
         "tenant_id": tenant_id,
         "user_id": user_id,
         "trace_id": initial_state.get("trace_id"),
+        "execution_mode": "delegation" if delegation_results else "skill",
+        "collaboration_plan": collaboration_plan,
     }
 
     client = ScholarMCPClient()
@@ -142,7 +150,11 @@ async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[di
     synthesizer = OutlineSynthesizer()
     outline = synthesizer.synthesize(topic, chunks)
     outline_markdown = synthesizer.to_markdown(outline, topic)
-    outline_payload = {"outline": outline, "outline_markdown": outline_markdown}
+    outline_payload = {
+        "outline": outline,
+        "outline_markdown": outline_markdown,
+        "agent_collaboration": delegation_results,
+    }
     if require_outline_confirmation:
         outline_approval_registry.open(task_id, outline_payload)
     yield {
@@ -236,6 +248,11 @@ async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[di
         "formatter_status": formatter.status(),
         "citation_audit": citation_audit,
         "reflection_logs": reflection_logs,
+        "agent_execution": {
+            "mode": "delegation" if delegation_results else "skill",
+            "parent_run_id": initial_state.get("agent_parent_run_id"),
+            "children": delegation_results,
+        },
     }
     yield _progress("lce_refine", "Merged sections into final report", 92)
     yield {"event": "skill_result", "phase": "survey_generation", "message": "Skill result ready", "percent": 94, "payload": result}

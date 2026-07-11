@@ -154,10 +154,11 @@ def runtime_config_path() -> Path:
 def _migrate_json_to_db() -> int:
     """Migrate settings from legacy JSON file to SQLite. Returns count of migrated keys."""
     json_path = runtime_config_path()
-    if not json_path.exists():
+    source_path = json_path if json_path.exists() else json_path.with_suffix(".json.bak")
+    if not source_path.exists():
         return 0
     try:
-        raw = json.loads(json_path.read_text(encoding="utf-8"))
+        raw = json.loads(source_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return 0
     if not isinstance(raw, dict):
@@ -168,7 +169,7 @@ def _migrate_json_to_db() -> int:
         if key in CONFIG_KEYS and value is not None:
             mysql_store.set_setting(key, str(value))
             count += 1
-    if count > 0:
+    if count > 0 and source_path == json_path:
         backup = json_path.with_suffix(".json.bak")
         try:
             json_path.rename(backup)

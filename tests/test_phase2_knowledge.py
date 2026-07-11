@@ -124,5 +124,28 @@ class ChunkingTest(unittest.TestCase):
         chunks = _chunk_text(text, size=30, overlap=5)
         self.assertGreater(len(chunks), 1)
 
+
+class LexicalEmbeddingTest(unittest.TestCase):
+    def test_lexical_embedding_is_local_and_deterministic(self):
+        from app.services.rag_service import _lexical_embedding
+
+        first = _lexical_embedding("citation audit retrieval", 128)
+        second = _lexical_embedding("citation audit retrieval", 128)
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 128)
+        self.assertTrue(any(value != 0 for value in first))
+
+    def test_related_text_has_higher_similarity(self):
+        from app.services.rag_service import _lexical_embedding
+
+        query = _lexical_embedding("citation audit", 256)
+        related = _lexical_embedding("citation audit for academic papers", 256)
+        unrelated = _lexical_embedding("database deployment pipeline", 256)
+
+        related_score = sum(a * b for a, b in zip(query, related, strict=True))
+        unrelated_score = sum(a * b for a, b in zip(query, unrelated, strict=True))
+        self.assertGreater(related_score, unrelated_score)
+
 if __name__ == "__main__":
     unittest.main()

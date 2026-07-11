@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
-from app.schemas import CitationStyle, InputType, SurveyTaskRequest
+from app.schemas import AgentMode, CitationStyle, InputType, SurveyTaskRequest
 from app.services.event_bus import event_bus
 from app.services.outline_approval import outline_approval_registry
 from app.services.repository import task_repository
@@ -25,6 +25,7 @@ class SurveyTaskRequestDTO(BaseModel):
     citation_style: CitationStyle = CitationStyle.IEEE
     max_papers: int = Field(default=12, ge=1, le=1500)
     require_outline_confirmation: bool = False
+    agent_mode: AgentMode = AgentMode.AUTO
 
 
 class OutlineApprovalDTO(BaseModel):
@@ -54,6 +55,7 @@ async def create_survey_task(
                 citation_style=request.citation_style,
                 max_papers=request.max_papers,
                 require_outline_confirmation=request.require_outline_confirmation,
+                agent_mode=request.agent_mode,
             ),
             user,
         )

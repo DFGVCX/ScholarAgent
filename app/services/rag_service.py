@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -108,6 +109,24 @@ def _hash_embedding(content: str, dimensions: int = 16) -> list[float]:
     return [round(digest[i % len(digest)] / 255, 6) for i in range(dimensions)]
 
 
+def _lexical_embedding(content: str, dimensions: int = 256) -> list[float]:
+    """Build a deterministic local vector without loading a model."""
+    dimensions = max(32, int(dimensions or 256))
+    vector = [0.0] * dimensions
+    terms = _tokens(content)
+    if not terms and content.strip():
+        terms = [content.strip().lower()]
+    for term in terms:
+        digest = hashlib.blake2b(term.encode("utf-8"), digest_size=8).digest()
+        index = int.from_bytes(digest[:4], "big") % dimensions
+        sign = 1.0 if digest[4] % 2 == 0 else -1.0
+        vector[index] += sign
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm:
+        return [round(value / norm, 8) for value in vector]
+    return vector
+
+
 def _public_embedding(value: Any) -> list[float]:
     settings = get_settings()
     if settings.rag_embedding_provider == "mock-hash" and settings.allow_mock_data:
@@ -121,7 +140,8 @@ async def _embed_texts(texts: list[str]) -> list[list[float]]:
     settings = get_settings()
     provider = settings.rag_embedding_provider
     if provider in {"", "lexical", "hybrid"}:
-        return [[] for _ in texts]
+        dimensions = settings.rag_embedding_dimensions or 256
+        return [_lexical_embedding(text, dimensions) for text in texts]
     dimensions = settings.rag_embedding_dimensions or 16
     if provider == "mock-hash" and settings.allow_mock_data:
         return [_hash_embedding(text, dimensions) for text in texts]
@@ -262,6 +282,10 @@ class RagService:
     async def search(self, tenant_id: str, user_id: str, query: str, limit: int = 10) -> dict[str, Any]:
         from app.services.chroma_store import chroma_store
 
+        settings = get_settings()
+        candidate_limit = min(
+            max(limit * 4, 20), max(int(settings.rag_candidate_limit or 0), limit)
+        )
         query_embedding = []
         if query.strip():
             try:
@@ -269,7 +293,55 @@ class RagService:
                 query_embedding = embeddings[0] if embeddings else []
             except Exception:
                 pass
-        result = chroma_store.search(tenant_id, user_id, query, query_embedding, limit)
+        vector_result = chroma_store.search(
+            tenant_id, user_id, query, query_embedding, candidate_limit
+        )
+        query_terms = set(_tokens(query))
+        lexical_items: list[dict[str, Any]] = []
+        if query_terms:
+            async with self._lock:
+                chunks = self._read_sync().values()
+            for recency, chunk in enumerate(chunks):
+                if chunk.get("tenant_id") != tenant_id or chunk.get("user_id") != user_id:
+                    continue
+                content_terms = set(_tokens(str(chunk.get("content") or "")))
+                matched = query_terms & content_terms
+                if not matched:
+                    continue
+                lexical_items.append(
+                    {
+                        "chunk_id": chunk.get("chunk_id", ""),
+                        "paper_id": chunk.get("paper_id", ""),
+                        "chunk_index": chunk.get("chunk_index", 0),
+                        "content": chunk.get("content", ""),
+                        "score": len(matched) / len(query_terms),
+                        "_recency": recency,
+                    }
+                )
+            lexical_items.sort(
+                key=lambda item: (item["score"], item["_recency"]), reverse=True
+            )
+
+        # Reciprocal-rank fusion keeps semantic recall while guaranteeing that
+        # exact topic terms from newly indexed tenant data remain discoverable.
+        fused: dict[tuple[str, int], dict[str, Any]] = {}
+        for source, weight, lexical in (
+            (vector_result.get("items", []), 1.0, False),
+            (lexical_items, 1.35, True),
+        ):
+            for rank, item in enumerate(source[:candidate_limit], start=1):
+                key = (str(item.get("paper_id") or ""), int(item.get("chunk_index") or 0))
+                current = fused.setdefault(key, {**item, "score": 0.0})
+                current["score"] += weight / (60 + rank)
+                if lexical:
+                    current["score"] += float(item.get("score") or 0.0)
+                if len(str(item.get("content") or "")) > len(str(current.get("content") or "")):
+                    current["content"] = item.get("content", "")
+        items = sorted(fused.values(), key=lambda item: item["score"], reverse=True)[:limit]
+        for item in items:
+            item.pop("_recency", None)
+            item["score"] = round(float(item["score"]), 6)
+        result = {"backend": "chromadb", "retrieval_mode": "hybrid", "items": items}
         # Supplement with SQLite paper metadata
         for item in result["items"]:
             if mysql_store.is_available():

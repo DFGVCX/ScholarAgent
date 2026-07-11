@@ -147,7 +147,9 @@ def _print_url_to_pdf(url: str, output_path: Path, timeout: float) -> None:
 
     output_path = output_path.resolve()
     errors: list[str] = []
-    temp_root = tempfile.mkdtemp(prefix="scholar-print-")
+    browser_temp_root = get_settings().storage_dir / "browser-print"
+    browser_temp_root.mkdir(parents=True, exist_ok=True)
+    temp_root = tempfile.mkdtemp(prefix="scholar-print-", dir=str(browser_temp_root))
     try:
         temp_dir = Path(temp_root)
         profile_dir = temp_dir

@@ -88,7 +88,9 @@ class SurveyWorkflowTest(unittest.IsolatedAsyncioTestCase):
                 events.append(event)
 
         task = asyncio.create_task(run_workflow())
-        for _ in range(40):
+        # Index persistence can take a few seconds on a cold Windows/Chroma start.
+        # Poll with a bounded lifecycle timeout instead of assuming a 2s backend.
+        for _ in range(600):
             if any(event["event"] == "outline_required" for event in events):
                 break
             await asyncio.sleep(0.05)
@@ -101,7 +103,7 @@ class SurveyWorkflowTest(unittest.IsolatedAsyncioTestCase):
             "## 2. Evidence calibration and deployment review"
         )
         self.assertTrue(outline_approval_registry.approve("confirm-task", "test approval", edited_outline))
-        await asyncio.wait_for(task, timeout=10)
+        await asyncio.wait_for(task, timeout=30)
         self.assertEqual(events[-1]["event"], "completed")
         result = events[-1]["payload"]
         self.assertEqual(result["outline"][0]["title"], "Human-in-the-loop safety protocol")

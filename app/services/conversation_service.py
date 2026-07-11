@@ -8,9 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from agents.factory import model_factory
+from agents.conversation_tool_loop import conversation_tool_loop
+from agents.context import conversation_context_manager
+from agents.orchestrator import general_orchestrator
 from app.config import get_settings
 from app.schemas import UserContext
 from app.services import mysql_store
+from app.services.conversation_state_service import conversation_state_service
 from app.services.rag_service import rag_service
 
 
@@ -21,19 +25,19 @@ def _now() -> str:
 SKILL_CATALOG: tuple[dict[str, Any], ...] = (
     {
         "skill_id": "general_assistant",
-        "name": "通用研究对话",
+        "name": "通用调度 Agent",
         "category": "workspace",
         "status": "available",
-        "description": "承接需求拆解、资料整理、任务规划和后续 Skill 分发。",
+        "description": "理解目标并动态选择工具、Skill、写作 Agent 或受限子 Agent。",
         "entrypoint": "conversation",
         "placeholder": "描述你要完成的工作，系统会保存为一个可继续推进的会话。",
     },
     {
         "skill_id": "survey_review",
-        "name": "学术综述生成",
+        "name": "写作 Agent",
         "category": "generation",
         "status": "implemented",
-        "description": "接入现有任务生成流程，支持大纲确认、正文生成和引用审计。",
+        "description": "承载科研写作状态；简单任务执行 Skill，复杂任务协同专用子 Agent。",
         "entrypoint": "tasks.survey",
         "placeholder": "例如：生成一篇关于多模态医疗影像模型可靠性的综述。",
     },
@@ -110,6 +114,23 @@ CONVERSATION_SCHEMA_SQL: tuple[str, ...] = (
         CONSTRAINT fk_scholar_conversation_messages_conversation_runtime
             FOREIGN KEY (conversation_id) REFERENCES scholar_conversations(conversation_id)
             ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS scholar_conversation_tool_calls (
+        call_id CHAR(36) PRIMARY KEY,
+        conversation_id CHAR(36) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        tool_name VARCHAR(160) NOT NULL,
+        arguments_json JSON NOT NULL,
+        status VARCHAR(40) NOT NULL,
+        result_json JSON NULL,
+        error TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_scholar_conversation_tool_calls_status
+            (tenant_id, user_id, conversation_id, status, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
 )
@@ -349,12 +370,34 @@ class ConversationRepository:
     async def dispatch_message(
         self,
         user: UserContext,
+        conversation_id: str,
         content: str,
         skill_id: str,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         metadata = metadata or {}
         skill = next((item for item in SKILL_CATALOG if item["skill_id"] == skill_id), SKILL_CATALOG[0])
+        recent_messages = await self.messages(user, conversation_id)
+        context_bundle = conversation_context_manager.build(
+            user, conversation_id, recent_messages
+        )
+        if conversation_context_manager.is_recall_request(content):
+            return (
+                conversation_context_manager.recall(context_bundle.events),
+                {
+                    "kind": "context_recall",
+                    "event_count": len(context_bundle.events),
+                    "estimated_tokens": context_bundle.estimated_tokens,
+                },
+            )
+        tool_outcome = await conversation_tool_loop.run(
+            user,
+            conversation_id,
+            content,
+            recent_messages[-20:],
+        )
+        if tool_outcome is not None:
+            return tool_outcome.content, tool_outcome.metadata
         if skill_id == "knowledge_base":
             results = await rag_service.search(user.tenant_id, user.user_id, content, 5)
             count = len(results.get("items") or [])
@@ -365,7 +408,7 @@ class ConversationRepository:
         if skill_id == "survey_review":
             return (
                 "已把写作需求保存为会话。正式生成时进入“写作专项”，只填写研究主题即可自动联网检索论文池；DOI、arXiv ID 或 PDF 只是可选限定材料。",
-                {"kind": "survey_intake", "entrypoint": "tasks.survey"},
+                {"kind": "survey_intake", "entrypoint": "tasks.survey", "agent": "writing_agent"},
             )
         if skill_id == "citation_audit":
             return (
@@ -377,20 +420,47 @@ class ConversationRepository:
                 f"已保存到会话。{skill['name']} 当前是预留 Skill，后续接入执行器后可以复用这条会话继续执行。",
                 {"kind": "planned_skill", "entrypoint": skill["entrypoint"]},
             )
+        decision = general_orchestrator.decide(
+            content, skill_id, context_bundle.state or {}
+        )
+        if skill_id == "general_assistant" and decision.execution_mode == "delegation":
+            return await general_orchestrator.execute_complex(
+                user, conversation_id, content, context_bundle.prompt
+            )
         try:
+            route_state = conversation_state_service.record_route(
+                user,
+                conversation_id,
+                intent=decision.intent,
+                target=decision.target_agent,
+                execution_mode=decision.execution_mode,
+                reasons=list(decision.reasons),
+                confidence=decision.confidence,
+                planned_steps=list(decision.planned_steps),
+            )
             response = await model_factory.generate_text(
                 "conversation",
-                content,
+                context_bundle.prompt,
                 {
                     "tenant_id": user.tenant_id,
                     "user_id": user.user_id,
                     "skill_id": skill_id,
                     "conversation_metadata": metadata,
+                    "context_summary": context_bundle.summary,
+                    "context_event_count": len(context_bundle.events),
+                    "context_memory_count": len(context_bundle.memories),
+                    "conversation_state": context_bundle.state or {},
+                    "context_estimated_tokens": context_bundle.estimated_tokens,
+                    "agent_route": decision.to_dict(),
                 },
             )
             return (
                 response.content,
-                {"kind": "llm_chat", "provider": response.provider, "model": response.model},
+                {"kind": "llm_chat", "agent": decision.target_agent,
+                 "execution_mode": decision.execution_mode,
+                 "provider": response.provider, "model": response.model,
+                 "routing": decision.to_dict(),
+                 "state_version": route_state.get("state_version")},
             )
         except Exception as exc:
             return (

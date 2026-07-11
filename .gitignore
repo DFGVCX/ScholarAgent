@@ -15,9 +15,19 @@ env/
 !.env.example
 
 # Personal study notes, local agent instructions, and historical drafts
-docs/
+docs/*
+!docs/PROJECT_STRUCTURE.md
+!docs/EXTENSION_CONTRACT.md
+!docs/product/
+docs/product/*
+!docs/product/PRODUCT_ARCHITECTURE.md
+!docs/product/CONTEXT_AND_ORCHESTRATION_ARCHITECTURE.md
+!docs/operations/
+docs/operations/*
+!docs/operations/STARTUP_CN.md
 .agents/
 .codex/
+.superpowers/
 aiem_specs/
 archive/
 AGENTS.md

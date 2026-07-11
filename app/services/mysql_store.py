@@ -162,6 +162,7 @@ def execute(
     sql = _translate_sql(sql)
     params = _adapt_params(params)
     cursor = conn.execute(sql, params)
+    conn.commit()
     return cursor.rowcount
 
 
@@ -231,6 +232,49 @@ SCHEMA_SQL: tuple[str, ...] = (
         metadata_json TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')))""",
 
+    """CREATE TABLE IF NOT EXISTS scholar_conversation_tool_calls (
+        call_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL, arguments_json TEXT NOT NULL,
+        status TEXT NOT NULL, result_json TEXT, error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (conversation_id) REFERENCES scholar_conversations(conversation_id)
+            ON DELETE CASCADE)""",
+
+    """CREATE TABLE IF NOT EXISTS scholar_conversation_context (
+        conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '', state_json TEXT, token_estimate INTEGER NOT NULL DEFAULT 0,
+        compression_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (tenant_id, user_id, conversation_id),
+        FOREIGN KEY (conversation_id) REFERENCES scholar_conversations(conversation_id)
+            ON DELETE CASCADE)""",
+
+    """CREATE TABLE IF NOT EXISTS scholar_conversation_working_state (
+        conversation_id TEXT NOT NULL, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        state_version INTEGER NOT NULL DEFAULT 1, state_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (tenant_id, user_id, conversation_id))""",
+
+    """CREATE TABLE IF NOT EXISTS scholar_conversation_events (
+        event_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        event_type TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL,
+        payload_json TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (conversation_id) REFERENCES scholar_conversations(conversation_id)
+            ON DELETE CASCADE)""",
+
+    """CREATE TABLE IF NOT EXISTS scholar_agent_runs (
+        run_id TEXT PRIMARY KEY, parent_run_id TEXT, conversation_id TEXT,
+        task_id TEXT, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        agent_name TEXT NOT NULL, agent_role TEXT NOT NULL, execution_mode TEXT NOT NULL,
+        goal TEXT NOT NULL, status TEXT NOT NULL, depth INTEGER NOT NULL DEFAULT 0,
+        input_json TEXT, result_json TEXT, error TEXT,
+        started_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT)""",
+
     """CREATE TABLE IF NOT EXISTS scholar_knowledge_papers (
         paper_id TEXT NOT NULL, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
         source TEXT NOT NULL, title TEXT NOT NULL, authors_json TEXT,
@@ -269,6 +313,17 @@ SCHEMA_SQL: tuple[str, ...] = (
         updated_at TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (tenant_id, user_id, preference_key))""",
 
+    """CREATE TABLE IF NOT EXISTS scholar_memories (
+        memory_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        conversation_id TEXT, memory_type TEXT NOT NULL, content TEXT NOT NULL,
+        normalized_content TEXT NOT NULL, importance REAL NOT NULL DEFAULT 0.5,
+        confidence REAL NOT NULL DEFAULT 1.0, source_message_id TEXT, metadata_json TEXT,
+        access_count INTEGER NOT NULL DEFAULT 0, last_accessed_at TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (tenant_id, user_id, memory_type, normalized_content))""",
+
     """CREATE TABLE IF NOT EXISTS scholar_trace_events (
         trace_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
         trace_id TEXT NOT NULL, task_id TEXT, tenant_id TEXT, user_id TEXT,
@@ -292,9 +347,44 @@ SCHEMA_SQL: tuple[str, ...] = (
             REFERENCES scholar_knowledge_papers(tenant_id, user_id, paper_id)
             ON DELETE CASCADE)""",
 
+    """CREATE TABLE IF NOT EXISTS scholar_translations (
+        translation_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, paper_id TEXT NOT NULL,
+        source_hash TEXT NOT NULL, source_text TEXT NOT NULL,
+        source_language TEXT NOT NULL, target_language TEXT NOT NULL,
+        translated_text TEXT NOT NULL, provider TEXT, model TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (tenant_id, user_id, paper_id, source_hash, target_language),
+        FOREIGN KEY (tenant_id, user_id, paper_id)
+            REFERENCES scholar_knowledge_papers(tenant_id, user_id, paper_id)
+            ON DELETE CASCADE)""",
+
     """CREATE TABLE IF NOT EXISTS scholar_settings (
         key TEXT PRIMARY KEY, value TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT (datetime('now')))""",
+
+    """CREATE TABLE IF NOT EXISTS scholar_institution_profiles (
+        profile_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        institution_name TEXT NOT NULL, access_type TEXT NOT NULL,
+        login_url TEXT, proxy_prefix TEXT, enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')))""",
+
+    """CREATE TABLE IF NOT EXISTS scholar_institution_sessions (
+        session_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
+        authenticated_domains_json TEXT, verified_at TEXT, expires_at TEXT,
+        revoked_at TEXT, last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')))""",
+
+    """CREATE TABLE IF NOT EXISTS scholar_institution_downloads (
+        download_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, conversation_id TEXT,
+        source TEXT NOT NULL, source_url TEXT NOT NULL, title TEXT, doi TEXT,
+        status TEXT NOT NULL, file_type TEXT, file_path TEXT, file_sha256 TEXT,
+        file_size INTEGER, paper_id TEXT, failure_code TEXT, failure_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT)""",
 )
 
 _INDEXES_SQL: tuple[str, ...] = (
@@ -302,11 +392,16 @@ _INDEXES_SQL: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_scholar_tasks_status ON scholar_tasks(tenant_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_conversations_user ON scholar_conversations(tenant_id, user_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_conversation_messages_conversation ON scholar_conversation_messages(tenant_id, conversation_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_scholar_conversation_tool_calls_status ON scholar_conversation_tool_calls(tenant_id, user_id, conversation_id, status, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_knowledge_user ON scholar_knowledge_papers(tenant_id, user_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_task_events_task ON scholar_task_events(tenant_id, task_id, event_id)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_citation_audits_task ON scholar_citation_audits(tenant_id, task_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_reflection_logs_task ON scholar_reflection_logs(tenant_id, task_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_scholar_memories_recall ON scholar_memories(tenant_id, user_id, status, memory_type, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_trace_events_trace ON scholar_trace_events(trace_id, trace_event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_institution_profiles_user ON scholar_institution_profiles(tenant_id, user_id, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_institution_sessions_user ON scholar_institution_sessions(tenant_id, user_id, status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_institution_downloads_user ON scholar_institution_downloads(tenant_id, user_id, status, created_at)",
 )
 
 
@@ -455,6 +550,33 @@ def get_annotations(tenant_id: str, user_id: str, paper_id: str) -> list[dict[st
             "updated_at": row["updated_at"],
         })
     return result
+
+
+def get_translation(
+    tenant_id: str, user_id: str, paper_id: str, source_hash: str, target_language: str
+) -> dict[str, Any] | None:
+    return fetch_one(
+        "SELECT translation_id, source_text, source_language, target_language, "
+        "translated_text, provider, model, created_at FROM scholar_translations "
+        "WHERE tenant_id = ? AND user_id = ? AND paper_id = ? "
+        "AND source_hash = ? AND target_language = ?",
+        (tenant_id, user_id, paper_id, source_hash, target_language),
+    )
+
+
+def save_translation(
+    *, translation_id: str, tenant_id: str, user_id: str, paper_id: str,
+    source_hash: str, source_text: str, source_language: str,
+    target_language: str, translated_text: str, provider: str, model: str,
+) -> None:
+    execute(
+        "INSERT OR REPLACE INTO scholar_translations "
+        "(translation_id, tenant_id, user_id, paper_id, source_hash, source_text, "
+        "source_language, target_language, translated_text, provider, model) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (translation_id, tenant_id, user_id, paper_id, source_hash, source_text,
+         source_language, target_language, translated_text, provider, model),
+    )
 
 
 def migrate_annotations_json() -> int:

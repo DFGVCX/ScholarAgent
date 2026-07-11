@@ -40,13 +40,25 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe scripts\init_infra.py
 ```
 
-4. 启动后端：
+4. 启动 Browser Worker（机构登录与知网下载）：
+
+```powershell
+.\scripts\start_browser_worker.ps1
+```
+
+5. 启动 MCP Server：
+
+```powershell
+.\.venv\Scripts\python.exe mcp_server\server.py --transport streamable-http --host 127.0.0.1 --port 8001
+```
+
+6. 启动后端：
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-5. 访问前端：
+7. 访问前端：
 
 ```text
 http://127.0.0.1:8000/app.html

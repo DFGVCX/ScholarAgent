@@ -25,6 +25,12 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 
+class AgentMode(str, Enum):
+    AUTO = "auto"
+    SKILL = "skill"
+    MULTI_AGENT = "multi_agent"
+
+
 @dataclass(frozen=True)
 class UserContext:
     tenant_id: str
@@ -40,6 +46,7 @@ class SurveyTaskRequest:
     citation_style: CitationStyle = CitationStyle.IEEE
     max_papers: int = 12
     require_outline_confirmation: bool = False
+    agent_mode: AgentMode = AgentMode.AUTO
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> "SurveyTaskRequest":
@@ -50,6 +57,7 @@ class SurveyTaskRequest:
             citation_style=CitationStyle(payload.get("citation_style", "IEEE")),
             max_papers=int(payload.get("max_papers", 12)),
             require_outline_confirmation=bool(payload.get("require_outline_confirmation", False)),
+            agent_mode=AgentMode(str(payload.get("agent_mode", "auto"))),
         )
 
 

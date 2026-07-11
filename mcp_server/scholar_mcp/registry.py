@@ -62,6 +62,12 @@ class ToolRegistry:
     def get_spec(self, name: str) -> ToolSpec:
         return self._specs[name]
 
+    def get_callable(self, name: str) -> ToolCallable:
+        return self._tools[name]
+
+    def names(self) -> list[str]:
+        return list(self._tools)
+
     async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return await self._tools[name](**arguments)
 

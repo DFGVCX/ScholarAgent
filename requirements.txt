@@ -5,3 +5,6 @@ python-multipart>=0.0.9
 aiohttp>=3.9
 chromadb>=0.5
 pypdf>=4.2
+mcp[cli]>=1.28,<2
+playwright>=1.52,<2
+cajCvtPdf==0.1.2

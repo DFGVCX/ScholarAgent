@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.schemas import UserContext
+from app.services.institutional_access.service import institutional_access_service
+from app.services.browser_worker_client import browser_worker_client
 from mcp_server.scholar_mcp.external_sources import (
     ExternalSourceError,
     attach_arxiv_pdf,
@@ -153,7 +156,8 @@ async def ingest_paper(
     task_id: str = "",
 ) -> dict[str, Any]:
     source = input_type.lower()
-    if _mock_external_sources_enabled():
+    is_mock = _mock_external_sources_enabled()
+    if is_mock:
         if source not in {"pdf", "doi", "arxiv"}:
             raise ValueError(f"unsupported input_type: {input_type}")
         value = Path(input_value).stem if source == "pdf" else input_value
@@ -168,19 +172,33 @@ async def ingest_paper(
             paper = await asyncio.to_thread(fetch_arxiv_paper, tenant_id, user_id, input_value, topic)
         else:
             raise ValueError(f"unsupported input_type: {input_type}")
-    await knowledge_store.save_paper(paper)
+    # Synthetic fixtures are scoped to the current run. Persisting them would
+    # contaminate tenant retrieval and make repeated test runs progressively slower.
+    if not is_mock:
+        await knowledge_store.save_paper(paper)
     return {"paper": paper.to_dict()}
 
 
-async def _save_external_search_results(papers: list[PaperRecord]) -> list[dict[str, Any]]:
-    saved: list[dict[str, Any]] = []
+async def _prepare_external_search_results(
+    papers: list[PaperRecord],
+    *,
+    persist_results: bool,
+) -> list[dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
     for paper in papers:
-        if paper.source == "arxiv":
-            paper = await asyncio.to_thread(attach_arxiv_pdf, paper)
-        elif paper.metadata.get("pdf_url") and not paper.metadata.get("pdf_download_error"):
-            paper = await asyncio.to_thread(attach_paper_pdf, paper, [str(paper.metadata["pdf_url"])])
-        saved.append(await knowledge_store.save_paper(paper))
-    return saved
+        # Topic search is metadata-only. Full text is acquired only after the user
+        # selects a candidate, avoiding bandwidth waste and unintended bulk downloads.
+        paper.metadata["full_text_available"] = bool(
+            paper.source == "arxiv"
+            or paper.arxiv_id
+            or (paper.metadata.get("is_oa") and paper.metadata.get("pdf_url"))
+        )
+        prepared.append(
+            await knowledge_store.save_paper(paper)
+            if persist_results
+            else paper.to_dict()
+        )
+    return prepared
 
 
 def _external_sources_for(source: str) -> list[tuple[str, Any]]:
@@ -209,6 +227,7 @@ async def search_papers(
     query: str,
     source: str = "all",
     limit: int = 12,
+    persist_results: bool = True,
 ) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     external_error: str | None = None
@@ -229,7 +248,12 @@ async def search_papers(
                     break
                 try:
                     papers = await asyncio.to_thread(search_fn, tenant_id, user_id, query, needed)
-                    items.extend(await _save_external_search_results(papers))
+                    items.extend(
+                        await _prepare_external_search_results(
+                            papers,
+                            persist_results=persist_results,
+                        )
+                    )
                 except ExternalSourceError as exc:
                     external_errors.append(f"{source_name}: {exc}")
                     if source == source_name:
@@ -251,8 +275,49 @@ async def search_papers(
     safety_level=SafetyLevel.MEDIUM,
 )
 async def save_to_knowledge(tenant_id: str, user_id: str, paper: dict[str, Any]) -> dict[str, Any]:
-    record = PaperRecord(tenant_id=tenant_id, user_id=user_id, **paper)
+    normalized = dict(paper)
+    normalized.pop("tenant_id", None)
+    normalized.pop("user_id", None)
+    record = PaperRecord(tenant_id=tenant_id, user_id=user_id, **normalized)
     return {"paper": await knowledge_store.save_paper(record)}
+
+
+@scholar_tool(
+    name="acquire_paper_to_knowledge",
+    description="Download the selected real paper full text and save it to the tenant knowledge base",
+    category="knowledge",
+    safety_level=SafetyLevel.MEDIUM,
+)
+async def acquire_paper_to_knowledge(
+    tenant_id: str,
+    user_id: str,
+    paper: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(paper)
+    normalized.pop("tenant_id", None)
+    normalized.pop("user_id", None)
+    record = PaperRecord(tenant_id=tenant_id, user_id=user_id, **normalized)
+    if record.file_path and Path(record.file_path).exists():
+        acquired = record
+    elif record.source == "arxiv" or record.arxiv_id:
+        acquired = await asyncio.to_thread(attach_arxiv_pdf, record)
+    else:
+        candidates = [
+            str(value)
+            for value in (
+                record.metadata.get("pdf_url"),
+                record.metadata.get("landing_page_url"),
+                record.url,
+            )
+            if value
+        ]
+        acquired = await asyncio.to_thread(attach_paper_pdf, record, candidates)
+    if not acquired.file_path or not Path(acquired.file_path).exists():
+        reason = acquired.metadata.get("pdf_download_error") or "候选来源没有提供可下载全文"
+        raise RuntimeError(f"未能获取该论文全文：{reason}")
+    acquired.metadata["created_from"] = "conversation_selected_acquisition"
+    acquired.metadata["full_text_available"] = True
+    return {"paper": await knowledge_store.save_paper(acquired), "acquired": True}
 
 
 @scholar_tool(
@@ -302,6 +367,325 @@ async def toggle_knowledge_base(
 ) -> dict[str, Any]:
     result = await knowledge_store.toggle_kb(tenant_id, user_id, paper_id, in_knowledge_base)
     return {"paper_id": paper_id, "in_knowledge_base": result}
+
+
+@scholar_tool(
+    name="institution_session_status",
+    description="Read the current user's institution access session status",
+    category="institutional_access",
+    safety_level=SafetyLevel.LOW,
+)
+async def institution_session_status(
+    tenant_id: str,
+    user_id: str,
+    session_id: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    return {"session": institutional_access_service.status(user, session_id)}
+
+
+@scholar_tool(
+    name="start_institution_login",
+    description="Start a user-visible institution login session from a saved profile",
+    category="institutional_access",
+    safety_level=SafetyLevel.MEDIUM,
+)
+async def start_institution_login(
+    tenant_id: str,
+    user_id: str,
+    profile_id: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    if not profile_id:
+        profiles = institutional_access_service.list_profiles(user)
+        if not profiles:
+            raise RuntimeError("请先在个人中心添加机构访问配置")
+        profile_id = str(profiles[0]["profile_id"])
+    session = institutional_access_service.start_session(user, profile_id)
+    browser = await browser_worker_client.start_session(
+        session_id=session["session_id"],
+        tenant_id=tenant_id,
+        user_id=user_id,
+        login_url=session["login_url"],
+        headless=False,
+    )
+    return {"session": session, "browser": browser, "browser_managed": True}
+
+
+@scholar_tool(
+    name="confirm_institution_browser_login",
+    description="Confirm that the user completed login in the visible institution browser",
+    category="institutional_access",
+    safety_level=SafetyLevel.MEDIUM,
+)
+async def confirm_institution_browser_login(
+    tenant_id: str,
+    user_id: str,
+    session_id: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    if not session_id:
+        session_id = str(institutional_access_service.status(user).get("session_id") or "")
+    if not session_id:
+        raise RuntimeError("当前没有机构浏览器会话")
+    browser = await browser_worker_client.mark_authenticated(session_id)
+    session = institutional_access_service.activate_browser_session(
+        user, session_id, str(browser.get("current_url") or "")
+    )
+    return {"session": session, "browser": browser}
+
+
+async def _recover_system_vpn_browser(
+    user: UserContext, session: dict[str, Any]
+) -> bool:
+    profile = next(
+        (
+            item for item in institutional_access_service.list_profiles(user)
+            if str(item.get("profile_id") or "") == str(session.get("profile_id") or "")
+        ),
+        None,
+    )
+    if not profile or profile.get("access_type") != "system_vpn":
+        return False
+    session_id = str(session.get("session_id") or "")
+    if not session_id:
+        return False
+    try:
+        await browser_worker_client.close(session_id)
+    except Exception:
+        pass
+    await browser_worker_client.start_session(
+        session_id=session_id,
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        login_url=str(profile.get("login_url") or "https://www.cnki.net/"),
+        headless=False,
+    )
+    browser = await browser_worker_client.mark_authenticated(session_id)
+    institutional_access_service.activate_browser_session(
+        user, session_id, str(browser.get("current_url") or profile.get("login_url") or "")
+    )
+    return True
+
+
+@scholar_tool(
+    name="search_cnki_papers",
+    description="Search CNKI in the current authenticated institution browser session",
+    category="institutional_access",
+    safety_level=SafetyLevel.LOW,
+)
+async def search_cnki_papers(
+    tenant_id: str,
+    user_id: str,
+    query: str,
+    limit: int = 20,
+    session_id: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    if not session_id:
+        session_id = str(institutional_access_service.status(user).get("session_id") or "")
+    if not session_id:
+        raise RuntimeError("当前没有机构浏览器会话，请先连接机构并完成登录")
+    session = institutional_access_service.status(user, session_id)
+    if session.get("status") == "active":
+        try:
+            browser_status = await browser_worker_client.status(session_id)
+            if browser_status.get("status") == "closed":
+                raise RuntimeError("browser context is closed")
+            result = await browser_worker_client.search_cnki(
+                session_id, query, min(max(1, limit), 50)
+            )
+            return {"items": result.get("items", []), "session_id": session_id, "browser": result}
+        except Exception as exc:
+            if not await _recover_system_vpn_browser(user, session):
+                institutional_access_service.mark_browser_unavailable(user, session_id, str(exc))
+                raise RuntimeError("机构浏览器已经关闭，请重新连接机构并完成登录") from exc
+            result = await browser_worker_client.search_cnki(
+                session_id, query, min(max(1, limit), 50)
+            )
+            return {"items": result.get("items", []), "session_id": session_id, "browser": result}
+    if await _recover_system_vpn_browser(user, session):
+        result = await browser_worker_client.search_cnki(
+            session_id, query, min(max(1, limit), 50)
+        )
+        return {"items": result.get("items", []), "session_id": session_id, "browser": result}
+    if session.get("status") != "active":
+        raise RuntimeError("机构登录已失效，请重新连接并在可见浏览器完成学校登录")
+    try:
+        await browser_worker_client.status(session_id)
+    except Exception as exc:
+        institutional_access_service.mark_browser_unavailable(user, session_id, str(exc))
+        raise RuntimeError("机构浏览器已经关闭，请重新连接并完成登录") from exc
+    result = await browser_worker_client.search_cnki(session_id, query, min(max(1, limit), 50))
+    return {"items": result.get("items", []), "session_id": session_id, "browser": result}
+
+
+@scholar_tool(
+    name="download_cnki_selections",
+    description="Download selected CNKI results in the authenticated browser and ingest them",
+    category="institutional_access",
+    safety_level=SafetyLevel.HIGH,
+)
+async def download_cnki_selections(
+    tenant_id: str,
+    user_id: str,
+    indexes: list[int],
+    session_id: str = "",
+    confirmation_token: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    if not session_id:
+        session_id = str(institutional_access_service.status(user).get("session_id") or "")
+    if not session_id:
+        raise RuntimeError("当前没有机构浏览器会话")
+    session = institutional_access_service.status(user, session_id)
+    if session.get("status") != "active":
+        raise RuntimeError("机构登录已失效，请重新连接并完成登录后再下载")
+    try:
+        await browser_worker_client.status(session_id)
+    except Exception as exc:
+        institutional_access_service.mark_browser_unavailable(user, session_id, str(exc))
+        raise RuntimeError("机构浏览器已经关闭，请重新连接并完成登录后再下载") from exc
+    result = await browser_worker_client.download_cnki(session_id, indexes[:5])
+    papers = [
+        await institutional_access_service.ingest_browser_download(user, session_id, item)
+        for item in result.get("items", [])
+    ]
+    return {"items": papers, "indexes": indexes[:5], "browser": result}
+
+
+@scholar_tool(
+    name="verify_institution_access",
+    description="Verify VPN or institution access against a user-provided publisher URL",
+    category="institutional_access",
+    safety_level=SafetyLevel.LOW,
+)
+async def verify_institution_access(
+    tenant_id: str,
+    user_id: str,
+    probe_url: str,
+    session_id: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    if not session_id:
+        session_id = str(institutional_access_service.status(user).get("session_id") or "")
+    if not session_id:
+        raise RuntimeError("当前没有机构会话，请先启动机构登录")
+    return {"session": await institutional_access_service.verify(user, session_id, probe_url)}
+
+
+@scholar_tool(
+    name="prepare_institution_download",
+    description="Create a tenant-scoped institution document download plan",
+    category="institutional_access",
+    safety_level=SafetyLevel.MEDIUM,
+)
+async def prepare_institution_download(
+    tenant_id: str,
+    user_id: str,
+    source_url: str,
+    session_id: str = "",
+    title: str = "机构文献",
+    doi: str = "",
+    source: str = "institution",
+    conversation_id: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    if not session_id:
+        session_id = str(institutional_access_service.status(user).get("session_id") or "")
+    return {
+        "download": institutional_access_service.prepare_download(
+            user,
+            session_id=session_id,
+            source_url=source_url,
+            title=title,
+            doi=doi,
+            source=source,
+            conversation_id=conversation_id,
+        )
+    }
+
+
+@scholar_tool(
+    name="download_institution_url",
+    description="Confirm, download, validate, and ingest one institution PDF or CAJ URL",
+    category="institutional_access",
+    safety_level=SafetyLevel.HIGH,
+)
+async def download_institution_url(
+    tenant_id: str,
+    user_id: str,
+    source_url: str,
+    title: str = "机构文献",
+    doi: str = "",
+    source: str = "institution",
+    conversation_id: str = "",
+    session_id: str = "",
+    confirmation_token: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    if not session_id:
+        session_id = str(institutional_access_service.status(user).get("session_id") or "")
+    if not session_id:
+        raise RuntimeError("当前没有有效机构会话，请先连接并验证学校 VPN 或机构入口")
+    plan = institutional_access_service.prepare_download(
+        user,
+        session_id=session_id,
+        source_url=source_url,
+        title=title,
+        doi=doi,
+        source=source,
+        conversation_id=conversation_id,
+    )
+    return await institutional_access_service.confirm_download(
+        user,
+        str(plan["download_id"]),
+        confirmation_token=confirmation_token,
+    )
+
+
+@scholar_tool(
+    name="download_institution_paper",
+    description="Download, validate, parse, and ingest an institution paper after user confirmation",
+    category="institutional_access",
+    safety_level=SafetyLevel.HIGH,
+)
+async def download_institution_paper(
+    tenant_id: str,
+    user_id: str,
+    download_id: str,
+    confirmation_token: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    return await institutional_access_service.confirm_download(
+        user,
+        download_id,
+        confirmation_token=confirmation_token,
+    )
+
+
+@scholar_tool(
+    name="revoke_institution_session",
+    description="Revoke and clear an institution access session",
+    category="institutional_access",
+    safety_level=SafetyLevel.HIGH,
+)
+async def revoke_institution_session(
+    tenant_id: str,
+    user_id: str,
+    session_id: str = "",
+    confirmation_token: str = "",
+) -> dict[str, Any]:
+    user = UserContext(tenant_id=tenant_id, user_id=user_id)
+    if not session_id:
+        session_id = str(institutional_access_service.status(user).get("session_id") or "")
+    if not session_id:
+        raise RuntimeError("当前没有可断开的机构会话")
+    try:
+        await browser_worker_client.close(session_id)
+    except Exception:
+        pass
+    return {"session": institutional_access_service.revoke(user, session_id)}
 
 
 async def call_tool_with_safety(name: str, arguments: dict[str, Any]) -> dict[str, Any]:

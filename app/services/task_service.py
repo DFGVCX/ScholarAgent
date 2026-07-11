@@ -43,6 +43,7 @@ class TaskService:
                 "citation_style": request.citation_style.value,
                 "max_papers": request.max_papers,
                 "require_outline_confirmation": request.require_outline_confirmation,
+                "agent_mode": request.agent_mode.value,
             },
             percent=0,
             trace_id=trace_id,

@@ -3636,6 +3636,57 @@
         #pageChat .message-bubble.user small {
             color: rgba(255,255,255,.72);
         }
+        #pageChat .tool-observation {
+            width: min(900px, 88%);
+            justify-self: start;
+            border-left: 3px solid #0a7a70;
+            padding: 14px 16px;
+            background: linear-gradient(90deg, rgba(224,243,239,.72), rgba(255,255,255,.18));
+            color: #20323b;
+        }
+        #pageChat .tool-observation-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            margin-bottom: 10px;
+        }
+        #pageChat .tool-observation-head strong { font-size: 14px; color: #12272d; }
+        #pageChat .tool-observation-head span { font-size: 12px; color: #60737c; }
+        #pageChat .tool-paper-list { display: grid; border-top: 1px solid rgba(129,163,161,.24); }
+        #pageChat .tool-paper-row {
+            display: grid;
+            grid-template-columns: 28px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 12px;
+            min-height: 54px;
+            border-bottom: 1px solid rgba(129,163,161,.24);
+        }
+        #pageChat .tool-paper-row > span:first-child { color: #0a7a70; font-size: 12px; font-weight: 800; }
+        #pageChat .tool-paper-row strong {
+            display: -webkit-box;
+            overflow: hidden;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+        #pageChat .tool-paper-row small { margin: 2px 0 0; font-size: 11px; font-weight: 500; }
+        #pageChat .tool-status { color: #0a6b62; font-size: 12px; white-space: nowrap; }
+        #pageChat .tool-paper-action {
+            min-height: 30px;
+            padding: 0 10px;
+            border: 1px solid rgba(10,122,112,.32);
+            background: rgba(255,255,255,.72);
+            color: #086b63;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        #pageChat .tool-confirmation { border-left-color: #c87b16; background: rgba(255,247,232,.78); }
+        #pageChat .tool-confirm-actions { display: flex; gap: 8px; margin-top: 12px; }
+        #pageChat .tool-confirm-actions button { min-width: 80px; min-height: 34px; padding: 0 14px; }
+        #pageChat .tool-confirm-actions button[data-tool-confirm="false"] { background: transparent; color: #53666f; }
+        #pageChat .tool-error { border-left-color: #c54848; background: rgba(255,240,240,.7); }
         #pageChat .chat-composer {
             grid-template-columns: 190px minmax(0, 1fr) 92px;
             gap: 10px;
@@ -6436,6 +6487,36 @@
             line-height: 18px;
             overflow: visible;
         }
+        #pageTasks .agent-mode-control {
+            display: grid;
+            grid-template-columns: auto 118px minmax(0, 1fr);
+            align-items: center;
+            gap: 9px;
+            min-height: 38px;
+            padding: 6px 9px;
+            border: 1px solid #d8e2e6;
+            background: #f8fbfb;
+            border-radius: 6px;
+        }
+        #pageTasks .agent-mode-control > span {
+            color: #2c4148;
+            font-size: 12px;
+            font-weight: 800;
+        }
+        #pageTasks .agent-mode-control select {
+            height: 30px;
+            min-width: 0;
+            padding: 0 24px 0 8px;
+            border-color: #c9dadd;
+            background-color: #fff;
+            font-size: 12px;
+        }
+        #pageTasks .agent-mode-control small {
+            min-width: 0;
+            color: #6b7d83;
+            font-size: 11px;
+            line-height: 1.35;
+        }
         #pageTasks #style,
         #pageTasks #style option {
             font-size: 12px !important;
@@ -6822,6 +6903,15 @@
                                     <span class="switch-copy"><strong>启动开关</strong><small>生成大纲后暂停确认</small></span>
                                 </label>
                             </div>
+                            <div class="agent-mode-control" role="group" aria-label="执行策略">
+                                <span>执行策略</span>
+                                <select id="agentMode" title="选择写作 Agent 的执行方式">
+                                    <option value="auto">自动调度</option>
+                                    <option value="skill">仅 Skill</option>
+                                    <option value="multi_agent">多 Agent 协作</option>
+                                </select>
+                                <small>自动模式仅在复杂任务中启用研究、结构与引用子 Agent</small>
+                            </div>
                             <div class="panel workflow-panel">
                                 <div class="panel-head"><h2>生成流程</h2><span id="streamState" class="subtle">未连接</span></div>
                                 <div id="workflowLane" class="workflow-lane">
@@ -6981,6 +7071,7 @@
                                     <button id="readerPrevPage" class="plain" type="button">◀</button>
                                     <input id="readerPageInput" class="page-number" type="number" value="1" min="1">
                                     <span class="subtle">/ <span id="readerTotalPages">1</span></span>
+                                    <button id="readerNextPage" class="plain" type="button">▶</button>
                                     <span style="flex:1"></span>
                                     <button id="readerZoomOut" class="plain" type="button">−</button>
                                     <span id="readerZoomLabel" class="zoom-label">100%</span>
@@ -7011,6 +7102,7 @@
                                     <button class="config-menu-item active" type="button" data-settings-pane="settingsStorage"><strong>数据底座</strong><span>MySQL / Redis / 只读查询</span></button>
                                     <button class="config-menu-item" type="button" data-settings-pane="settingsModel"><strong>模型路由</strong><span>多供应商 / 密钥 / 连通性</span></button>
                                     <button class="config-menu-item" type="button" data-settings-pane="settingsRag"><strong>知识检索</strong><span>RAG / Embedding / 召回验证</span></button>
+                                    <button class="config-menu-item" type="button" data-settings-pane="settingsInstitution"><strong>机构访问</strong><span>学校 VPN / WebVPN / 授权下载</span></button>
                                 </div>
                             </div>
                             <div class="config-section settings-bootstrap">
@@ -7265,6 +7357,50 @@
                                     <div id="profileRagResult" class="ops-result ops-result-large">等待检索。</div>
                                 </div>
                             </div>
+                            <div id="settingsInstitution" class="config-section settings-card">
+                                <div class="panel-head"><h2>机构访问</h2><span id="institutionStatusBadge" class="badge">未连接</span></div>
+                                <div class="provider-matrix config-overview-cards">
+                                    <div><b>用户认证</b><span>账号、密码、验证码始终由你在学校页面中完成，系统不保存凭证。</span></div>
+                                    <div><b>授权下载</b><span>支持系统 VPN/IP 授权；下载前必须确认，文件校验通过后才会入库。</span></div>
+                                    <div><b>会话隔离</b><span>机构配置、认证状态和下载记录按租户与用户独立保存。</span></div>
+                                </div>
+                                <div class="field-grid">
+                                    <div>
+                                        <label for="institutionName">学校或机构</label>
+                                        <input id="institutionName" placeholder="例如：XX 大学图书馆">
+                                    </div>
+                                    <div>
+                                        <label for="institutionAccessType">访问方式</label>
+                                        <select id="institutionAccessType">
+                                            <option value="system_vpn">系统 VPN / 校园 IP</option>
+                                            <option value="webvpn">学校 WebVPN</option>
+                                            <option value="ezproxy">EZproxy</option>
+                                            <option value="publisher_login">出版社机构登录</option>
+                                        </select>
+                                    </div>
+                                    <div class="span-2">
+                                        <label for="institutionLoginUrl">机构登录入口</label>
+                                        <input id="institutionLoginUrl" placeholder="https://webvpn.example.edu/ 或学校图书馆入口">
+                                    </div>
+                                    <div class="span-2">
+                                        <label for="institutionProbeUrl">访问验证地址</label>
+                                        <input id="institutionProbeUrl" placeholder="粘贴一篇你有权访问的知网、MIT Press 或出版商页面/PDF 地址">
+                                    </div>
+                                </div>
+                                <div class="config-actions">
+                                    <button id="saveInstitutionBtn" class="primary" type="button">保存配置</button>
+                                    <button id="connectInstitutionBtn" class="plain" type="button">连接机构</button>
+                                    <button id="browserLoginDoneBtn" class="plain" type="button">我已完成登录</button>
+                                    <button id="verifyInstitutionBtn" class="plain" type="button">验证访问</button>
+                                    <button id="revokeInstitutionBtn" class="plain" type="button">断开</button>
+                                </div>
+                                <div class="ops-console">
+                                    <div class="ops-console-head">
+                                        <div><strong>当前会话</strong><span>认证页面会在新窗口打开，完成登录后回到这里验证。</span></div>
+                                    </div>
+                                    <div id="institutionAccessResult" class="ops-result">尚未配置机构访问。</div>
+                                </div>
+                            </div>
                             <div class="config-actions settings-action-bar">
                                 <button id="saveRuntimeConfigBtn" class="primary" type="button">保存运行配置</button>
                                 <button id="resetConfigFormBtn" class="plain" type="button">恢复表单</button>
@@ -7280,7 +7416,7 @@
     <script>
         const storageKey = 'scholar.session.v1';
         const sidebarStorageKey = 'scholar.sidebar.collapsed.v1';
-        const state = { session: null, route: 'chat', inputType: 'arxiv', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true };
+        const state = { session: null, route: 'chat', inputType: 'arxiv', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
         const routeTitles = { chat: '智能会话', tasks: '写作专项', audit: '引用审计', knowledge: '个人知识库', profile: '个人中心' };
         const sourceDefaults = {
             arxiv: { label: '限定条件（可选）', value: '', placeholder: '留空时自动按研究主题检索；也可填 arXiv ID 或关键词' },
@@ -7456,8 +7592,11 @@
             if (data.event === 'failed') return taskFailureMessage(data.payload?.error || '');
             return phaseLabel(data.phase || data.event);
         }
+        function isExternalSourceError(errorMessage = '') {
+            return /external source|arxiv|crossref|openalex|论文源|timed out|timeout|refused|拒绝连接/i.test(errorMessage);
+        }
         function taskFailureMessage(errorMessage = '') {
-            if (/external source|arxiv|crossref|论文源|timed out|timeout|refused|拒绝连接/i.test(errorMessage)) {
+            if (isExternalSourceError(errorMessage)) {
                 return `论文源连接失败：${errorMessage || '外部论文源暂时不可用'}`;
             }
             if (/llm|model|provider|模型|密钥|api key/i.test(errorMessage)) {
@@ -7499,7 +7638,7 @@
             }
             target.innerHTML = `
                 <div>
-                    <strong>${escapeHtml(active.name || '通用研究对话')}</strong>
+                    <strong>${escapeHtml(active.name || '通用调度 Agent')}</strong>
                     <span>${escapeHtml(active.description || '承接需求拆解、材料整理和后续任务分发。')}</span>
                 </div>
                 <button class="plain" type="button" data-skill-toggle>${state.skillDockCollapsed ? '切换能力' : '收起能力'}</button>
@@ -7522,7 +7661,7 @@
             const dock = $('skillDock');
             const select = $('chatSkillSelect');
             if (!dock || !select) return;
-            const items = state.skills.length ? state.skills : [{ skill_id: 'general_assistant', name: '通用研究对话', status: 'available', description: '描述需求并沉淀为会话。' }];
+            const items = state.skills.length ? state.skills : [{ skill_id: 'general_assistant', name: '通用调度 Agent', status: 'available', description: '理解需求并动态选择工具、Skill 或专用 Agent。' }];
             renderSelectedSkillBar(items);
             dock.classList.toggle('is-collapsed', state.skillDockCollapsed);
             dock.innerHTML = items.slice(0, 6).map((skill) => `
@@ -7591,6 +7730,40 @@
             renderSkills();
             renderChatThread(conversation);
         }
+        function renderToolObservation(message) {
+            const metadata = message.metadata || {};
+            const toolCall = metadata.tool_call || {};
+            const result = toolCall.result || {};
+            const kind = metadata.kind || '';
+            if (!kind.startsWith('tool_')) return '';
+            if (kind === 'tool_confirmation') {
+                return `<div class="tool-observation tool-confirmation">
+                    <div class="tool-observation-head"><strong>需要你的确认</strong><span>${escapeHtml(toolCall.tool_name || '工具操作')}</span></div>
+                    <div>${renderMarkdown(message.content)}</div>
+                    <div class="tool-confirm-actions">
+                        <button class="primary" type="button" data-tool-confirm="true" data-call-id="${escapeHtml(toolCall.call_id)}">确认执行</button>
+                        <button class="plain" type="button" data-tool-confirm="false" data-call-id="${escapeHtml(toolCall.call_id)}">取消</button>
+                    </div>
+                </div>`;
+            }
+            if (['search_papers', 'search_cnki_papers'].includes(toolCall.tool_name) && Array.isArray(result.items)) {
+                const isCnki = toolCall.tool_name === 'search_cnki_papers';
+                const rows = result.items.slice(0, 8).map((paper, index) => `<div class="tool-paper-row">
+                    <span>${String(index + 1).padStart(2, '0')}</span>
+                    <div><strong>${escapeHtml(paper.title || '未命名文献')}</strong><small>${escapeHtml([paper.authors, paper.year, paper.doi, isCnki ? '知网' : ''].filter(Boolean).join(' · '))}</small></div>
+                    <button class="tool-paper-action" type="button" ${isCnki ? `data-cnki-index="${index + 1}"` : `data-acquire-index="${index + 1}"`}>${isCnki ? '选择下载' : (paper.metadata?.full_text_available ? '下载入库' : '尝试获取')}</button>
+                </div>`).join('');
+                return `<div class="tool-observation">
+                    <div class="tool-observation-head"><strong>${isCnki ? '知网检索结果' : '文献检索结果'}</strong><span>${result.items.length} 篇</span></div>
+                    <div class="tool-paper-list">${rows}</div>
+                </div>`;
+            }
+            const title = kind === 'tool_error' ? '工具执行失败' : kind === 'tool_cancelled' ? '操作已取消' : '工具执行完成';
+            return `<div class="tool-observation ${kind === 'tool_error' ? 'tool-error' : ''}">
+                <div class="tool-observation-head"><strong>${title}</strong><span>${escapeHtml(toolCall.tool_name || '')}</span></div>
+                <div>${renderMarkdown(message.content)}</div>
+            </div>`;
+        }
         function renderChatThread(conversation) {
             const target = $('chatThread');
             if (!target) return;
@@ -7600,12 +7773,44 @@
                 return;
             }
             target.innerHTML = messages.map((message) => {
+                const toolObservation = renderToolObservation(message);
+                if (toolObservation) return toolObservation;
                 const roleLabel = message.role === 'user' ? '你' : 'ScholarAgent';
                 if (message.role === 'assistant') {
                     return `<div class="message-bubble assistant markdown-preview"><small>${roleLabel}</small>${renderMarkdown(message.content)}</div>`;
                 }
                 return `<div class="message-bubble user"><small>${roleLabel}</small>${escapeHtml(message.content)}</div>`;
             }).join('');
+            target.querySelectorAll('[data-tool-confirm]').forEach((button) => button.addEventListener('click', async () => {
+                const callId = button.dataset.callId;
+                const approved = button.dataset.toolConfirm === 'true';
+                if (!callId || !state.selectedConversationId) return;
+                button.disabled = true;
+                try {
+                    await api(`/conversations/${encodeURIComponent(state.selectedConversationId)}/tool-calls/${encodeURIComponent(callId)}/confirm`, {
+                        method: 'POST',
+                        body: JSON.stringify({ approved }),
+                    });
+                    await loadConversation(state.selectedConversationId);
+                } catch (error) {
+                    button.disabled = false;
+                    toast(error.message, 'bad');
+                }
+            }));
+            target.querySelectorAll('[data-acquire-index]').forEach((button) => button.addEventListener('click', async () => {
+                const index = Number(button.dataset.acquireIndex || 0);
+                if (!index || !state.selectedConversationId) return;
+                button.disabled = true;
+                $('chatInput').value = `下载第${index}篇并存储到知识库`;
+                await sendChatMessage();
+            }));
+            target.querySelectorAll('[data-cnki-index]').forEach((button) => button.addEventListener('click', async () => {
+                const index = Number(button.dataset.cnkiIndex || 0);
+                if (!index || !state.selectedConversationId) return;
+                button.disabled = true;
+                $('chatInput').value = `下载第${index}篇知网论文`;
+                await sendChatMessage();
+            }));
             target.scrollTop = target.scrollHeight;
         }
         async function createConversationFromComposer() {
@@ -7951,6 +8156,161 @@
                 $('profileRagSearchBtn').disabled = false;
             }
         }
+        function institutionStatusText(status) {
+            return ({
+                disconnected: '未连接',
+                awaiting_user_login: '等待登录',
+                verifying: '验证中',
+                active: '已连接',
+                expired: '已过期',
+                revoked: '已断开',
+                error: '连接异常',
+            })[status] || status || '未连接';
+        }
+        function renderInstitutionAccess() {
+            const profile = state.institutionProfiles[0] || null;
+            const session = state.institutionSession || { status: 'disconnected' };
+            if (profile) {
+                $('institutionName').value = profile.institution_name || '';
+                $('institutionAccessType').value = profile.access_type || 'system_vpn';
+                $('institutionLoginUrl').value = profile.login_url || '';
+            }
+            const label = institutionStatusText(session.status);
+            $('institutionStatusBadge').textContent = label;
+            $('institutionStatusBadge').className = `badge ${session.status === 'active' ? 'ok' : session.status === 'error' ? 'bad' : 'warn'}`;
+            const domains = (session.authenticated_domains || []).join('、') || '尚未验证';
+            const browser = state.institutionBrowser || {};
+            $('institutionAccessResult').innerHTML = `
+                <strong>${escapeHtml(label)}</strong>\n
+                ${profile ? `${escapeHtml(profile.institution_name)} / ${escapeHtml(profile.access_type)}` : '尚未保存机构配置'}\n
+                已验证域名：${escapeHtml(domains)}\n
+                ${session.expires_at ? `有效期：${escapeHtml(session.expires_at)}` : ''}
+                ${browser.current_url ? `\n浏览器页面：${escapeHtml(browser.title || browser.current_url)}\n${escapeHtml(browser.current_url)}` : ''}
+                ${session.last_error ? `\n${escapeHtml(session.last_error)}` : ''}
+            `;
+            $('connectInstitutionBtn').disabled = !profile;
+            $('verifyInstitutionBtn').disabled = !session.session_id;
+            $('browserLoginDoneBtn').disabled = !session.session_id;
+            $('revokeInstitutionBtn').disabled = !session.session_id || ['revoked', 'disconnected'].includes(session.status);
+        }
+        async function loadInstitutionAccess() {
+            if (!state.session) return;
+            try {
+                const [profiles, session] = await Promise.all([
+                    api('/institutional-access/profiles'),
+                    api('/institutional-access/sessions/status'),
+                ]);
+                state.institutionProfiles = profiles.items || [];
+                state.institutionSession = session.item || null;
+                state.institutionBrowser = null;
+                if (state.institutionSession?.session_id) {
+                    try {
+                        const browser = await api(`/institutional-access/sessions/${encodeURIComponent(state.institutionSession.session_id)}/browser`);
+                        state.institutionBrowser = browser.item || null;
+                    } catch {}
+                }
+                renderInstitutionAccess();
+            } catch (error) {
+                $('institutionAccessResult').textContent = `读取失败：${error.message}`;
+            }
+        }
+        async function saveInstitutionProfile() {
+            const institutionName = $('institutionName').value.trim();
+            const loginUrl = $('institutionLoginUrl').value.trim();
+            if (!institutionName || !loginUrl) {
+                toast('请填写学校名称和机构入口', 'bad');
+                return;
+            }
+            $('saveInstitutionBtn').disabled = true;
+            try {
+                const current = state.institutionProfiles[0] || {};
+                await api('/institutional-access/profiles', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        profile_id: current.profile_id || '',
+                        institution_name: institutionName,
+                        access_type: $('institutionAccessType').value,
+                        login_url: loginUrl,
+                        proxy_prefix: '',
+                    }),
+                });
+                await loadInstitutionAccess();
+                toast('机构访问配置已保存', 'ok');
+            } catch (error) {
+                toast(error.message, 'bad');
+            } finally {
+                $('saveInstitutionBtn').disabled = false;
+            }
+        }
+        async function connectInstitution() {
+            const profile = state.institutionProfiles[0];
+            if (!profile) return;
+            $('connectInstitutionBtn').disabled = true;
+            try {
+                const data = await api(`/institutional-access/sessions/${encodeURIComponent(profile.profile_id)}`, { method: 'POST' });
+                state.institutionSession = data.item;
+                state.institutionBrowser = data.item.browser || null;
+                renderInstitutionAccess();
+                if (!data.item.browser_managed) window.open(data.item.login_url, '_blank', 'noopener,noreferrer');
+                toast('专属机构浏览器已打开，完成登录后请点击“我已完成登录”', 'ok');
+            } catch (error) {
+                toast(error.message, 'bad');
+            } finally {
+                $('connectInstitutionBtn').disabled = false;
+            }
+        }
+        async function completeBrowserLogin() {
+            const sessionId = state.institutionSession?.session_id;
+            if (!sessionId) return;
+            $('browserLoginDoneBtn').disabled = true;
+            try {
+                const data = await api(`/institutional-access/sessions/${encodeURIComponent(sessionId)}/browser-authenticated`, { method: 'POST' });
+                state.institutionSession = data.item;
+                state.institutionBrowser = data.browser || null;
+                renderInstitutionAccess();
+                toast('浏览器登录状态已确认，现在可以在对话中搜索知网', 'ok');
+            } catch (error) {
+                toast(error.message, 'bad');
+            } finally {
+                $('browserLoginDoneBtn').disabled = false;
+            }
+        }
+        async function verifyInstitution() {
+            const sessionId = state.institutionSession?.session_id;
+            const probeUrl = $('institutionProbeUrl').value.trim();
+            if (!sessionId || !probeUrl) {
+                toast('请先连接机构并填写验证地址', 'bad');
+                return;
+            }
+            $('verifyInstitutionBtn').disabled = true;
+            $('institutionAccessResult').textContent = '正在验证当前网络和机构访问权限...';
+            try {
+                const data = await api(`/institutional-access/sessions/${encodeURIComponent(sessionId)}/verify`, {
+                    method: 'POST',
+                    body: JSON.stringify({ probe_url: probeUrl }),
+                });
+                state.institutionSession = data.item;
+                renderInstitutionAccess();
+                toast('机构访问验证成功', 'ok');
+            } catch (error) {
+                await loadInstitutionAccess();
+                toast(error.message, 'bad');
+            } finally {
+                $('verifyInstitutionBtn').disabled = false;
+            }
+        }
+        async function revokeInstitution() {
+            const sessionId = state.institutionSession?.session_id;
+            if (!sessionId) return;
+            try {
+                const data = await api(`/institutional-access/sessions/${encodeURIComponent(sessionId)}/revoke`, { method: 'POST' });
+                state.institutionSession = data.item;
+                renderInstitutionAccess();
+                toast('机构访问会话已断开', 'ok');
+            } catch (error) {
+                toast(error.message, 'bad');
+            }
+        }
         function setLoginBusy(isBusy) {
             $('loginBtn').disabled = isBusy;
             $('loginBtn').textContent = isBusy ? '登录中...' : '进入工作台';
@@ -7964,7 +8324,10 @@
             const raw = await response.text();
             let data = {};
             if (raw) { try { data = JSON.parse(raw); } catch { data = { detail: raw }; } }
-            if (!response.ok) throw new Error(data.detail || response.statusText);
+            if (!response.ok) {
+                const detail = data.detail;
+                throw new Error(typeof detail === 'object' ? (detail.message || detail.code || response.statusText) : (detail || response.statusText));
+            }
             return data;
         }
         function saveSession(profile) {
@@ -8070,10 +8433,11 @@
                 renderDashboard();
                 loadRuntimeConfig();
                 renderSettingsHealth();
+                loadInstitutionAccess();
             }
         }
         async function refreshAll() {
-            await Promise.allSettled([loadInfra(), loadSkills(), loadConversations(), loadTasks(), loadKnowledge(), loadRagStats(), loadRuntimeConfig()]);
+            await Promise.allSettled([loadInfra(), loadSkills(), loadConversations(), loadTasks(), loadKnowledge(), loadRagStats(), loadRuntimeConfig(), loadInstitutionAccess()]);
         }
 
         // ── Route handler for URL hash ──
@@ -8201,7 +8565,7 @@
                 const topic = $('topic').value.trim();
                 if (!topic) throw new Error('请先填写研究主题');
                 const optionalSeed = $('inputValue').value.trim();
-                const payload = { topic, input_type: state.inputType, input_value: optionalSeed || topic, citation_style: $('style').value, max_papers: Number($('maxPapers').value || 12), require_outline_confirmation: Boolean($('requireOutline')?.checked) };
+                const payload = { topic, input_type: state.inputType, input_value: optionalSeed || topic, citation_style: $('style').value, max_papers: Number($('maxPapers').value || 12), require_outline_confirmation: Boolean($('requireOutline')?.checked), agent_mode: $('agentMode')?.value || 'auto' };
                 const data = await api('/tasks/survey', { method: 'POST', body: JSON.stringify(payload) });
                 state.currentTaskId = data.task_id;
                 $('taskMetric').textContent = data.task_id.slice(0, 8);
@@ -8262,7 +8626,10 @@
                 setAuditMetric({ is_valid: false });
                 const errorMessage = data.payload?.error || '任务失败';
                 if ($('outlineResult') && !$('outlineResult').textContent.trim()) setRichContent('outlineResult', '大纲未生成。');
-                setRichContent('result', `${taskFailureMessage(errorMessage)}\n\n如果是论文源连接问题，可以稍后重试，或先在个人知识库上传/保存论文后继续写作。`);
+                const sourceHint = isExternalSourceError(errorMessage)
+                    ? '\n\n可以稍后重试论文源，或先在个人知识库上传、保存论文后继续写作。'
+                    : '';
+                setRichContent('result', `${taskFailureMessage(errorMessage)}${sourceHint}`);
                 toast(errorMessage, 'bad');
             }
         }
@@ -9414,6 +9781,11 @@
         $('dbQueryBtn')?.addEventListener('click', runDatabaseQuery);
         $('modelProbeBtn')?.addEventListener('click', probeModel);
         $('profileRagSearchBtn')?.addEventListener('click', searchProfileRag);
+        $('saveInstitutionBtn')?.addEventListener('click', saveInstitutionProfile);
+        $('connectInstitutionBtn')?.addEventListener('click', connectInstitution);
+        $('browserLoginDoneBtn')?.addEventListener('click', completeBrowserLogin);
+        $('verifyInstitutionBtn')?.addEventListener('click', verifyInstitution);
+        $('revokeInstitutionBtn')?.addEventListener('click', revokeInstitution);
         $('dbQuerySql')?.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) runDatabaseQuery(); });
         $('profileRagQuery')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') searchProfileRag(); });
         document.querySelectorAll('[data-settings-pane]').forEach((button) => button.addEventListener('click', () => setSettingsPane(button.dataset.settingsPane)));
@@ -9664,6 +10036,203 @@
         document.getElementById('readerBackBtn').addEventListener('click', () => {
             window.location.hash = '#/knowledge';
         });
+    </script>
+    <style>
+        /* Research reader workspace */
+        #pageReader { padding: 0 !important; overflow: hidden !important; }
+        .research-reader { height: 100%; min-height: 0; display: grid; grid-template-rows: 56px minmax(0,1fr); background: #eef1f2; color: #182326; }
+        .research-reader__top { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 16px; padding: 0 18px; border-bottom: 1px solid #d8dfe1; background: rgba(255,255,255,.98); z-index: 5; }
+        .research-reader__identity { min-width: 0; display: grid; gap: 2px; }
+        .research-reader__identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "Noto Serif SC", "Songti SC", serif; font-size: 15px; font-weight: 700; }
+        .research-reader__identity span { color: #718086; font-size: 11px; }
+        .research-reader__controls { display: flex; align-items: center; gap: 6px; }
+        .research-reader__controls button { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border-radius: 5px; }
+        .research-reader__controls .wide { width: auto; padding: 0 10px; }
+        .research-reader__body { min-height: 0; display: grid; grid-template-columns: 224px minmax(440px,1fr) 360px; overflow: hidden; }
+        .research-reader__body.left-hidden { grid-template-columns: 0 minmax(440px,1fr) 360px; }
+        .research-reader__body.right-hidden { grid-template-columns: 224px minmax(440px,1fr) 0; }
+        .research-reader__body.left-hidden.right-hidden { grid-template-columns: 0 minmax(440px,1fr) 0; }
+        .reader-nav, .reader-insight { min-width: 0; overflow: hidden; background: #fafbfb; }
+        .reader-nav { border-right: 1px solid #d8dfe1; }
+        .reader-insight { border-left: 1px solid #d8dfe1; display: grid; grid-template-rows: auto minmax(0,1fr); }
+        .reader-side-tabs { height: 44px; padding: 6px 8px; display: grid; grid-template-columns: repeat(3,1fr); gap: 3px; border-bottom: 1px solid #e0e5e6; }
+        .reader-side-tabs button { border: 0; background: transparent; color: #66757a; font-size: 12px; border-radius: 4px; }
+        .reader-side-tabs button.active { background: #e5f2ef; color: #08756d; font-weight: 700; }
+        .reader-nav-content, .reader-insight-content { min-height: 0; height: 100%; overflow: auto; padding: 12px; }
+        .reader-thumbnail { display: grid; grid-template-columns: 42px minmax(0,1fr); gap: 9px; align-items: center; width: 100%; padding: 7px; border: 1px solid transparent; background: transparent; text-align: left; border-radius: 5px; color: #465358; }
+        .reader-thumbnail.active { border-color: #8bc9c2; background: #eef8f6; color: #075e58; }
+        .reader-thumbnail span:first-child { height: 54px; display: grid; place-items: center; background: white; border: 1px solid #d8dfe1; box-shadow: 0 2px 7px rgba(22,34,38,.06); font-family: Georgia,serif; }
+        .reader-document { min-width: 0; min-height: 0; display: grid; grid-template-rows: 42px minmax(0,1fr); background: #e7ebec; }
+        .reader-document__bar { display: flex; align-items: center; justify-content: center; gap: 7px; border-bottom: 1px solid #d2d9db; background: #f7f9f9; }
+        .reader-document__bar input { width: 48px; height: 28px; padding: 4px; text-align: center; }
+        .reader-pages { min-height: 0; overflow: auto; padding: 24px 32px 54px; scroll-behavior: smooth; }
+        .reader-page-sheet { position: relative; margin: 0 auto 18px; background: white; box-shadow: 0 3px 18px rgba(28,39,43,.16); overflow: hidden; }
+        .reader-page-sheet canvas { display: block; width: 100%; height: 100%; }
+        .reader-text-layer { position: absolute; inset: 0; overflow: hidden; line-height: 1; opacity: 1; }
+        .reader-text-layer span { position: absolute; color: transparent; white-space: pre; transform-origin: 0 0; cursor: text; }
+        .reader-text-layer ::selection, .reader-text-layer span::selection { background: rgba(40,153,209,.32); }
+        .reader-page-sheet.is-loading { min-height: 560px; display: grid; place-items: center; color: #7a888d; }
+        .reader-selection-menu { position: fixed; z-index: 1000; display: none; align-items: center; gap: 2px; padding: 5px; background: #16272b; color: white; border-radius: 6px; box-shadow: 0 10px 30px rgba(12,25,29,.24); }
+        .reader-selection-menu button { border: 0; padding: 6px 9px; background: transparent; color: white; font-size: 12px; border-radius: 4px; }
+        .reader-selection-menu button:hover { background: rgba(255,255,255,.12); }
+        .insight-empty { height: 100%; display: grid; place-content: center; text-align: center; color: #839095; line-height: 1.7; padding: 24px; }
+        .translation-card, .reader-note-card { border-bottom: 1px solid #e0e5e6; padding: 14px 2px; }
+        .translation-card:first-child, .reader-note-card:first-child { padding-top: 2px; }
+        .translation-source { color: #68777c; font-family: Georgia, "Times New Roman", serif; font-size: 13px; line-height: 1.65; margin-bottom: 10px; }
+        .translation-result { color: #172529; font-family: "Noto Serif SC", "Songti SC", serif; font-size: 14px; line-height: 1.85; }
+        .translation-meta { margin-top: 10px; color: #8a969a; font-size: 11px; }
+        .reader-note-card { display: grid; grid-template-columns: 4px minmax(0,1fr); gap: 10px; }
+        .reader-note-color { border-radius: 2px; background: #f3ca52; }
+        .reader-note-card p { margin: 4px 0 0; font-size: 13px; line-height: 1.55; color: #435156; }
+        .reader-loading-line { height: 2px; background: linear-gradient(90deg,transparent,#0a7a70,transparent); background-size: 50% 100%; animation: reader-loading 1.1s linear infinite; }
+        @keyframes reader-loading { to { background-position: 200% 0; } }
+        @media(max-width:1100px) { .research-reader__body { grid-template-columns: 0 minmax(0,1fr) 320px; } .reader-nav { display:none; } }
+    </style>
+    <script>
+    (() => {
+        const page = document.getElementById('pageReader');
+        if (!page) return;
+        const initialReaderMatch = window.location.hash.match(/^#\/reader\/(.+)$/);
+        page.innerHTML = `
+          <div class="research-reader">
+            <header class="research-reader__top">
+              <button id="rrBack" class="plain wide" type="button">返回知识库</button>
+              <div class="research-reader__identity"><strong id="rrTitle">论文阅读</strong><span id="rrMeta">正在准备文档</span></div>
+              <div class="research-reader__controls">
+                <button id="rrToggleLeft" class="plain" title="目录与缩略图">☰</button>
+                <button id="rrSearch" class="plain" title="文内搜索">⌕</button>
+                <button id="rrToggleRight" class="plain" title="翻译与批注">◫</button>
+              </div>
+            </header>
+            <div id="rrBody" class="research-reader__body">
+              <aside class="reader-nav">
+                <div class="reader-side-tabs"><button class="active">页面</button><button>目录</button><button>书签</button></div>
+                <div id="rrNav" class="reader-nav-content"></div>
+              </aside>
+              <main class="reader-document">
+                <div class="reader-document__bar">
+                  <button id="rrPrev" class="plain" title="上一页">‹</button><input id="rrPage" type="number" min="1" value="1"><span id="rrCount" class="subtle">/ 1</span><button id="rrNext" class="plain" title="下一页">›</button>
+                  <span style="width:18px"></span><button id="rrZoomOut" class="plain">−</button><span id="rrZoom" class="subtle">100%</span><button id="rrZoomIn" class="plain">＋</button><button id="rrFit" class="plain">适合宽度</button>
+                </div>
+                <div id="rrPages" class="reader-pages"><div class="reader-page-sheet is-loading">正在加载文献...</div></div>
+              </main>
+              <aside class="reader-insight">
+                <div class="reader-side-tabs"><button data-rr-panel="translation" class="active">翻译</button><button data-rr-panel="annotation">批注</button><button data-rr-panel="information">信息</button></div>
+                <div id="rrInsight" class="reader-insight-content"><div class="insight-empty">选择原文后即可翻译、批注或解释<br><small>译文和批注会与当前文献关联</small></div></div>
+              </aside>
+            </div>
+          </div>
+          <div id="rrSelection" class="reader-selection-menu"><button data-action="translate">翻译</button><button data-action="highlight">高亮</button><button data-action="note">批注</button></div>`;
+
+        let doc = null, paperId = null, current = 1, scale = 1, panel = 'translation', currentPaper = null;
+        let annotations = [], translations = [], selectedText = '';
+        const $r = id => document.getElementById(id);
+
+        async function loadPdfRuntime() {
+            if (window.pdfjsLib?.getDocument) return window.pdfjsLib;
+            const lib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');
+            lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+            window.pdfjsLib = lib;
+            return lib;
+        }
+
+        async function renderPdfPage(pageNumber) {
+            const pdfPage = await doc.getPage(pageNumber);
+            const viewport = pdfPage.getViewport({ scale });
+            const sheet = document.createElement('section');
+            sheet.className = 'reader-page-sheet';
+            sheet.dataset.page = pageNumber;
+            sheet.style.width = viewport.width + 'px'; sheet.style.height = viewport.height + 'px';
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width; canvas.height = viewport.height;
+            const textLayer = document.createElement('div'); textLayer.className = 'reader-text-layer';
+            sheet.append(canvas, textLayer);
+            $r('rrPages').replaceChildren(sheet);
+            const text = await pdfPage.getTextContent();
+            for (const item of text.items) {
+                if (!item.str) continue;
+                const tx = window.pdfjsLib.Util.transform(viewport.transform, item.transform);
+                const span = document.createElement('span'); span.textContent = item.str;
+                const fontHeight = Math.hypot(tx[2], tx[3]);
+                span.style.left = tx[4] + 'px'; span.style.top = (tx[5] - fontHeight) + 'px';
+                span.style.fontSize = fontHeight + 'px'; span.style.fontFamily = item.fontName || 'serif';
+                textLayer.appendChild(span);
+                const targetWidth = item.width * viewport.scale;
+                const actual = span.getBoundingClientRect().width;
+                if (actual > 0) span.style.transform = `scaleX(${targetWidth / actual})`;
+            }
+            await pdfPage.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+            current = pageNumber; $r('rrPage').value = current; $r('rrZoom').textContent = Math.round(scale * 100) + '%';
+            document.querySelectorAll('.reader-thumbnail').forEach((node, i) => node.classList.toggle('active', i + 1 === current));
+        }
+
+        function renderNav() {
+            $r('rrNav').innerHTML = Array.from({length:doc.numPages}, (_,i) => `<button class="reader-thumbnail ${i===0?'active':''}" data-page="${i+1}"><span>${i+1}</span><span>第 ${i+1} 页</span></button>`).join('');
+            $r('rrNav').querySelectorAll('[data-page]').forEach(btn => btn.onclick = () => renderPdfPage(Number(btn.dataset.page)));
+        }
+        function renderInsight() {
+            if (panel === 'translation') $r('rrInsight').innerHTML = translations.length ? translations.map(x => `<article class="translation-card"><div class="translation-source">${escapeHtml(x.source_text)}</div><div class="translation-result">${escapeHtml(x.translated_text)}</div><div class="translation-meta">${escapeHtml(x.model || '')}${x.cached?' · 已使用缓存':''}</div></article>`).join('') : '<div class="insight-empty">划选英文或其他语言文本<br><small>点击“翻译”后在这里对照阅读</small></div>';
+            else if (panel === 'annotation') $r('rrInsight').innerHTML = annotations.length ? annotations.map(a => `<article class="reader-note-card"><i class="reader-note-color" style="background:${a.color||'#f3ca52'}"></i><div><small>第 ${a.page || current} 页 · ${a.type==='note'?'批注':'高亮'}</small><p>${escapeHtml(a.content||'已高亮')}</p></div></article>`).join('') : '<div class="insight-empty">暂无批注<br><small>划选原文可添加高亮或文字批注</small></div>';
+            else $r('rrInsight').innerHTML = currentPaper ? `<article class="translation-card"><div class="translation-result">${escapeHtml(currentPaper.title||'未命名文献')}</div><div class="translation-source" style="margin-top:10px">${escapeHtml((currentPaper.authors||[]).join(', ')||'作者信息未收录')}</div><div class="translation-meta">${escapeHtml([currentPaper.source,currentPaper.published_at,currentPaper.doi&&('DOI '+currentPaper.doi)].filter(Boolean).join(' · '))}</div></article>` : '<div class="insight-empty">暂无文献信息</div>';
+        }
+        async function loadReaderAnnotations() {
+            const data = await api(`/knowledge/files/${encodeURIComponent(paperId)}/annotations`);
+            annotations = (data.strokes || []).map(x => ({page:x.page,type:x.type,color:x.color,content:x.content,points:x.points||[]})); renderInsight();
+        }
+        async function persistAnnotations() {
+            await api(`/knowledge/files/${encodeURIComponent(paperId)}/annotations`, {method:'POST', body:JSON.stringify({strokes:annotations,notes:''})});
+        }
+        async function translateSelection() {
+            if (!selectedText) return;
+            panel = 'translation'; activatePanel(); $r('rrInsight').innerHTML = '<div class="reader-loading-line"></div><div class="insight-empty">正在翻译选中文本...</div>';
+            try {
+                const result = await api('/translations', {method:'POST', body:JSON.stringify({paper_id:paperId,text:selectedText,source_language:'auto',target_language:'中文'})});
+                translations.unshift(result); renderInsight();
+            } catch (error) { $r('rrInsight').innerHTML = `<div class="insight-empty">翻译失败<br><small>${escapeHtml(error.message)}</small></div>`; }
+        }
+        async function addAnnotation(type) {
+            if (!selectedText) return; let content = selectedText;
+            if (type === 'note') { const note = prompt('输入批注内容', ''); if (note === null) return; content = note.trim() || selectedText; }
+            annotations.push({page:current,type,color:type==='highlight'?'#f3ca52':null,content,points:[]}); await persistAnnotations(); panel='annotation'; activatePanel(); renderInsight(); toast('批注已保存','ok');
+        }
+        function activatePanel() { document.querySelectorAll('[data-rr-panel]').forEach(b=>b.classList.toggle('active',b.dataset.rrPanel===panel)); }
+
+        openReader = async function(id) {
+            window.location.hash = '#/reader/' + id; paperId=id; current=1; scale=1; translations=[];
+            document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); page.classList.add('active');
+            const paper = state.knowledge.find(p => p.paper_id === id || p.id === id); currentPaper = paper || null;
+            $r('rrTitle').textContent = paper?.title || '论文阅读'; $r('rrMeta').textContent = [paper?.authors?.join?.(', '),paper?.published_at].filter(Boolean).join(' · ') || '个人知识库';
+            $r('rrPages').innerHTML='<div class="reader-page-sheet is-loading">正在建立文本层...</div>';
+            try { const lib=await loadPdfRuntime(); doc=await lib.getDocument({url:`/knowledge/files/${encodeURIComponent(id)}`,httpHeaders:{'X-API-Key':state.session?.access_token||''}}).promise; $r('rrCount').textContent='/ '+doc.numPages; $r('rrPage').max=doc.numPages; const firstPage=await doc.getPage(1),baseViewport=firstPage.getViewport({scale:1}); scale=Math.max(.5,Math.min(1.5,($r('rrPages').clientWidth-72)/baseViewport.width)); renderNav(); await Promise.all([renderPdfPage(1),loadReaderAnnotations()]); if(state.selectedConversationId){api(`/conversations/${encodeURIComponent(state.selectedConversationId)}/events`,{method:'POST',body:JSON.stringify({event_type:'inspect_reader',summary:`已打开并检查文献《${paper?.title||id}》的阅读效果`,payload:{paper_id:id,title:paper?.title||'',page_count:doc.numPages,text_layer_nodes:document.querySelectorAll('.reader-text-layer span').length}})}).catch(()=>{});} }
+            catch(error){ $r('rrPages').innerHTML=`<div class="reader-page-sheet is-loading">无法打开文献：${escapeHtml(error.message)}</div>`; }
+        };
+        $r('rrBack').onclick=()=>{window.location.hash='#/knowledge';};
+        $r('rrPrev').onclick=()=>current>1&&renderPdfPage(current-1); $r('rrNext').onclick=()=>doc&&current<doc.numPages&&renderPdfPage(current+1);
+        $r('rrPage').onchange=()=>{const n=Number($r('rrPage').value);if(doc&&n>=1&&n<=doc.numPages)renderPdfPage(n);};
+        $r('rrZoomIn').onclick=()=>{scale=Math.min(3,scale+.15);renderPdfPage(current);}; $r('rrZoomOut').onclick=()=>{scale=Math.max(.5,scale-.15);renderPdfPage(current);};
+        $r('rrFit').onclick=async()=>{if(!doc)return;const p=await doc.getPage(current),v=p.getViewport({scale:1});scale=Math.max(.5,($r('rrPages').clientWidth-72)/v.width);renderPdfPage(current);};
+        $r('rrToggleLeft').onclick=()=>$r('rrBody').classList.toggle('left-hidden'); $r('rrToggleRight').onclick=()=>$r('rrBody').classList.toggle('right-hidden');
+        document.querySelectorAll('[data-rr-panel]').forEach(b=>b.onclick=()=>{panel=b.dataset.rrPanel;activatePanel();renderInsight();});
+        document.addEventListener('mouseup', e=>{if(!page.classList.contains('active'))return;const selection=window.getSelection(),text=selection?.toString().trim();const menu=$r('rrSelection');if(!text||!e.target.closest('.reader-text-layer')){menu.style.display='none';return;}selectedText=text.slice(0,8000);const rect=selection.getRangeAt(0).getBoundingClientRect();menu.style.left=Math.min(rect.left,window.innerWidth-250)+'px';menu.style.top=Math.max(8,rect.top-45)+'px';menu.style.display='flex';});
+        $r('rrSelection').querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{const action=b.dataset.action;$r('rrSelection').style.display='none';if(action==='translate')await translateSelection();else if(action==='highlight'||action==='note')await addAnnotation(action);else{panel='information';activatePanel();renderInsight();}});
+        setTimeout(async () => {
+            const match = initialReaderMatch || window.location.hash.match(/^#\/reader\/(.+)$/);
+            if (!match) return;
+            let lastError = null;
+            for (let attempt = 0; attempt < 20; attempt += 1) {
+                try {
+                    await loadKnowledge();
+                    if (!state.session || !state.knowledge.length) throw new Error('阅读会话尚未恢复');
+                    await openReader(decodeURIComponent(match[1]));
+                    return;
+                } catch (error) {
+                    lastError = error;
+                    await new Promise(resolve => setTimeout(resolve, 350));
+                }
+            }
+            $r('rrPages').innerHTML = `<div class="reader-page-sheet is-loading">恢复阅读失败：${escapeHtml(lastError?.message || '会话未就绪')}</div>`;
+        }, 900);
+    })();
     </script>
 </body>
 </html>
