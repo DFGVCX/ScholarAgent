@@ -1,3 +1,12 @@
+---
+name: survey_generation
+version: 1.0.0
+description: Tenant-scoped academic survey generation with outline review and citation audit.
+module: skills.survey_generation.main_workflow
+entrypoint: run_survey_workflow
+enabled: true
+---
+
 # Skill: 文献综述自动化生成 (SurveyForge Core)
 
 ## 1. 能力描述 (Capabilities)

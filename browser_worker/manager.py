@@ -127,9 +127,12 @@ class BrowserSessionManager:
 
     async def search_cnki(self, session_id: str, query: str, limit: int) -> dict[str, Any]:
         session = self._get(session_id)
-        if not [page for page in session.context.pages if not page.is_closed()]:
+        pages = [page for page in session.context.pages if not page.is_closed()]
+        if not pages:
             session.status = "closed"
             raise RuntimeError("机构浏览器已经关闭，请重新连接并完成登录")
+        # Institution login flows can finish in a newly opened tab.
+        session.page = pages[-1]
         session.status = "searching"
         try:
             session.search_results = await search_cnki(session.page, query, limit)

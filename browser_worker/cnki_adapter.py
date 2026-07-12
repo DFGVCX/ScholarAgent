@@ -8,9 +8,71 @@ from typing import Any
 
 CNKI_SEARCH_URL = "https://kns.cnki.net/kns8s/defaultresult/index?kw={query}"
 
+CNKI_RESULT_SELECTOR = (
+    'a[href*="/kcms2/article/abstract" i], '
+    'a[href*="kcms/detail/detail.aspx" i], '
+    'a[href*="kns8s/Detail" i], '
+    'a[href*="dbcode=" i], '
+    '.result-table-list .name a, .result-table-list a.fz14, '
+    '.search-result-item a[title], tr td.name a, .result-item a[title]'
+)
+
 
 def _compact(value: str) -> str:
-    return re.sub(r"\s+", " ", value or "").strip()
+    compact = re.sub(r"\s+", " ", value or "").strip()
+    if compact and any(marker in compact for marker in ("Ã", "Â", "ä", "å", "æ", "ç")):
+        try:
+            repaired = compact.encode("latin-1").decode("utf-8")
+            if repaired:
+                compact = repaired
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return compact
+
+
+def _looks_like_result_url(url: str) -> bool:
+    lowered = urllib.parse.unquote(url or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "/kcms2/article/abstract",
+            "kcms/detail/detail.aspx",
+            "kns8s/detail",
+            "dbcode=",
+            "filename=",
+        )
+    )
+
+
+async def _empty_result_diagnostics(page: Any, query: str) -> dict[str, Any]:
+    try:
+        title = _compact(await page.title())
+    except Exception:
+        title = ""
+    try:
+        body = _compact(await page.locator("body").inner_text())[:800]
+    except Exception:
+        body = ""
+    try:
+        anchors = await page.locator("a").evaluate_all(
+            """(links) => links.slice(0, 30).map((link) => ({
+                text: (link.textContent || link.getAttribute('title') || '').replace(/\\s+/g, ' ').trim().slice(0, 80),
+                href: (link.href || link.getAttribute('href') || '').slice(0, 240)
+            }))"""
+        )
+    except Exception:
+        anchors = []
+    lowered = body.lower()
+    return {
+        "query": query,
+        "current_url": str(getattr(page, "url", "") or ""),
+        "title": title,
+        "body_preview": body[:320],
+        "anchor_samples": anchors[:8],
+        "challenge": any(marker in lowered for marker in ("验证码", "安全验证", "访问过于频繁", "captcha")),
+        "login_required": any(marker in lowered for marker in ("请登录", "机构登录", "登录后", "login")),
+        "explicit_empty": any(marker in lowered for marker in ("未检索到", "没有找到", "暂无数据", "0 条结果")),
+    }
 
 
 def _safe_download_name(title: str, suffix: str = ".pdf") -> str:
@@ -93,27 +155,31 @@ async def _save_opened_document(context: Any, download_dir: Path, title: str) ->
 
 
 async def search_cnki(page: Any, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    query = _compact(query)
+    if not query:
+        raise ValueError("知网检索主题不能为空")
     url = CNKI_SEARCH_URL.format(query=urllib.parse.quote(query))
     await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
     try:
         await page.wait_for_load_state("networkidle", timeout=12_000)
     except Exception:
         pass
-    results = await page.locator(
-        'a[href*="/kcms2/article/abstract"], a[href*="kcms/detail/detail.aspx"], '
-        'a[href*="kns8s/Detail"]'
-    ).evaluate_all(
-        """(links) => links.slice(0, 80).map((link) => ({
-            title: (link.textContent || link.getAttribute('title') || '').trim(),
+    try:
+        await page.locator(CNKI_RESULT_SELECTOR).first.wait_for(state="attached", timeout=12_000)
+    except Exception:
+        pass
+    results = await page.locator(CNKI_RESULT_SELECTOR).evaluate_all(
+        """(links) => links.slice(0, 160).map((link) => ({
+            title: (link.getAttribute('title') || link.textContent || '').trim(),
             url: link.href || '',
-            container: (link.closest('tr, li, .result-table-list, .search-result-item')?.innerText || '').trim()
+            container: (link.closest('tr, li, .result-table-list, .search-result-item, .result-item, .result')?.innerText || '').trim()
         }))"""
     )
     unique: dict[str, dict[str, Any]] = {}
     for item in results:
         title = _compact(str(item.get("title") or ""))
         detail_url = str(item.get("url") or "")
-        if not title or len(title) < 3 or not detail_url:
+        if not title or len(title) < 3 or not detail_url or not _looks_like_result_url(detail_url):
             continue
         container = _compact(str(item.get("container") or ""))
         year_match = re.search(r"(?:19|20)\d{2}", container)
@@ -129,7 +195,20 @@ async def search_cnki(page: Any, query: str, limit: int = 20) -> list[dict[str, 
         )
         if len(unique) >= limit:
             break
-    return list(unique.values())
+    if unique:
+        return list(unique.values())
+
+    diagnostics = await _empty_result_diagnostics(page, query)
+    if diagnostics["explicit_empty"]:
+        return []
+    if diagnostics["challenge"]:
+        raise RuntimeError(f"知网触发了安全验证，请在机构浏览器完成验证码后重试。诊断：{diagnostics}")
+    if diagnostics["login_required"]:
+        raise RuntimeError(f"知网登录状态未生效，请在机构浏览器重新登录后重试。诊断：{diagnostics}")
+    raise RuntimeError(
+        "知网页面已打开，但未能解析论文结果；可能是页面结构或 WebVPN 链接已变化。"
+        f"诊断：{diagnostics}"
+    )
 
 
 async def download_cnki_result(

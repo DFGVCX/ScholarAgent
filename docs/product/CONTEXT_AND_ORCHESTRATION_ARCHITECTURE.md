@@ -83,3 +83,57 @@ ScholarAgent 不再通过“最近若干条消息 + 关键词”推断任务状�
 - https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/agent-loop.md
 - https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/memory.md
 - https://github.com/NousResearch/hermes-agent/blob/main/agent/memory_provider.py
+
+## 2026-07 Implementation Baseline
+
+### LangGraph: compatibility loop vs real StateGraph
+
+| Dimension | Previous compatibility loop | Current implementation |
+| --- | --- | --- |
+| Runtime | A hand-written async generator that imitated graph events | A compiled `langgraph.graph.StateGraph` |
+| Nodes and edges | Control flow existed only in Python branches | Explicit `route_task -> execute_skill -> global_review -> finalize` nodes and edges |
+| State contract | Dictionaries were passed manually | `GlobalState` is the graph state schema |
+| Checkpointing | No LangGraph checkpointer | `InMemorySaver` isolates state by `thread_id` |
+| Streaming | The generator yielded SSE-shaped dictionaries | Nodes publish custom LangGraph stream events while preserving the existing SSE contract |
+| Inspection | No graph topology was available | The compiled graph supports `get_graph()` inspection and LangGraph tooling |
+| Extension | New stages required editing one procedural loop | New nodes, conditional edges and persistent checkpointers can be added at graph boundaries |
+
+The current checkpointer is process-local. A Redis or database-backed production
+checkpointer remains a deployment enhancement; it is separate from the question of
+whether the runtime is a real StateGraph.
+
+### Hybrid retrieval baseline
+
+Tenant-scoped retrieval now fuses four independently inspectable signals:
+
+1. Chroma vector rank.
+2. Standard Okapi BM25 with configurable `k1` and `b`.
+3. Exponential publication-time decay with a configurable half-life.
+4. Long-term preference recall from user memory, restricted by tenant and user.
+
+Every result contains a `score_breakdown` so evaluation can attribute ranking
+changes to vector, BM25, temporal or preference signals.
+
+### Skill discovery baseline
+
+`SkillRegistry` discovers `skills/*/SKILL.md` manifests, validates that entry
+modules remain inside the `skills` package, and refreshes when manifest path,
+modification time or size changes. New, updated, disabled and removed skills become
+visible on the next registry access without restarting the service. Directories
+whose names begin with an underscore are templates and are not loaded.
+
+### Langfuse baseline
+
+Local MySQL/JSON tracing remains authoritative. When the Langfuse switch and both
+credentials are configured, model calls and LangGraph workflow events are also
+sent through the official Langfuse SDK. API keys, tokens, secrets and passwords are
+redacted before export. A Langfuse outage is recorded as tracing status and does
+not fail the business request.
+
+### Explicitly deferred
+
+The following claims are not marked complete in this baseline:
+
+- DOI/title/author/original-evidence citation verification.
+- PostgreSQL/pgvector migration.
+- A trained CiteAdapt adapter and measured LoRA accuracy/latency.

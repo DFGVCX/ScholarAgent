@@ -59,6 +59,12 @@ class _FakeMCPClient:
 
 
 class ConversationToolLoopTest(unittest.IsolatedAsyncioTestCase):
+    def test_cnki_query_removes_command_words_and_requested_count(self):
+        self.assertEqual(
+            conversation_tool_loop._clean_query("在知网搜索点云论文，返回一篇"),
+            "点云",
+        )
+
     async def asyncSetUp(self):
         self.previous_client = conversation_tool_loop.client
         self.client = _FakeMCPClient()
