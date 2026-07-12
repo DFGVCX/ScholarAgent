@@ -8,3 +8,6 @@ pypdf>=4.2
 mcp[cli]>=1.28,<2
 playwright>=1.52,<2
 cajCvtPdf==0.1.2
+langgraph>=1.0,<2
+langfuse>=3.3,<5
+PyYAML>=6.0,<7

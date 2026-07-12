@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.services import mysql_store
 from app.services.chroma_store import chroma_store
 from app.services.rag_service import rag_service
+from app.services.tracing import trace_recorder
 from skills.survey_generation.tools.formatter import CitationFormatter
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -54,6 +55,7 @@ async def infra_health() -> dict[str, object]:
         "runtime_backend": {
             "storage": "sqlite" if sqlite_available else "json",
             "rag": rag_service.backend(),
+            "tracing": trace_recorder.status(),
         },
         "rag": {
             "index_backend": settings.rag_index_backend,

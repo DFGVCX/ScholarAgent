@@ -6,6 +6,8 @@ import json
 import math
 import os
 import re
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,72 @@ _SENTENCE_END = re.compile(r"[。！？.!?]")
 
 
 def _tokens(text: str) -> list[str]:
-    return [item.lower() for item in TOKEN_PATTERN.findall(text or "") if len(item.strip()) > 1]
+    value = text or ""
+    tokens = [
+        item.lower()
+        for item in re.findall(r"[a-z0-9][a-z0-9._/+\-]*", value, re.IGNORECASE)
+    ]
+    for block in re.findall(r"[\u4e00-\u9fff]+", value):
+        if len(block) == 1:
+            tokens.append(block)
+        else:
+            tokens.extend(block[index:index + 2] for index in range(len(block) - 1))
+    return tokens
+
+
+def _bm25_scores(
+    query_tokens: list[str], documents: list[list[str]], *, k1: float = 1.5, b: float = 0.75
+) -> list[float]:
+    """Compute Okapi BM25 scores over one tenant-scoped corpus."""
+    if not query_tokens or not documents:
+        return [0.0] * len(documents)
+    document_count = len(documents)
+    average_length = sum(len(document) for document in documents) / document_count
+    document_frequency = Counter(token for document in documents for token in set(document))
+    scores: list[float] = []
+    for document in documents:
+        frequencies = Counter(document)
+        normalization = 1 - b + b * len(document) / max(average_length, 1.0)
+        score = 0.0
+        for token in query_tokens:
+            frequency = frequencies.get(token, 0)
+            if not frequency:
+                continue
+            frequency_in_documents = document_frequency.get(token, 0)
+            inverse_document_frequency = math.log(
+                1 + (document_count - frequency_in_documents + 0.5)
+                / (frequency_in_documents + 0.5)
+            )
+            score += inverse_document_frequency * (
+                frequency * (k1 + 1) / (frequency + k1 * normalization)
+            )
+        scores.append(score)
+    return scores
+
+
+def _parse_date(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _temporal_decay(value: Any, half_life_days: float, now: datetime | None = None) -> float:
+    published_at = _parse_date(value)
+    if published_at is None:
+        return 0.0
+    current = now or datetime.now(timezone.utc)
+    age_days = max(0.0, (current - published_at).total_seconds() / 86400)
+    return math.exp(-math.log(2) * age_days / max(half_life_days, 1.0))
+
+
+def _preference_score(document_tokens: list[str], preference_tokens: set[str]) -> float:
+    if not document_tokens or not preference_tokens:
+        return 0.0
+    return len(set(document_tokens) & preference_tokens) / max(1, len(preference_tokens))
 
 
 def _chunk_text(text: str, size: int | None = None, overlap: int | None = None) -> list[str]:
@@ -207,6 +274,8 @@ def build_chunks(paper: dict[str, Any]) -> list[dict[str, Any]]:
                 "content": chunk,
                 "token_count": len(token_values),
                 "keywords": keywords,
+                "published_at": paper.get("published_at") or "",
+                "indexed_at": datetime.now(timezone.utc).isoformat(),
                 "embedding": [],
             }
         )
@@ -286,7 +355,7 @@ class RagService:
         candidate_limit = min(
             max(limit * 4, 20), max(int(settings.rag_candidate_limit or 0), limit)
         )
-        query_embedding = []
+        query_embedding: list[float] = []
         if query.strip():
             try:
                 embeddings = await _embed_texts([query])
@@ -296,52 +365,79 @@ class RagService:
         vector_result = chroma_store.search(
             tenant_id, user_id, query, query_embedding, candidate_limit
         )
-        query_terms = set(_tokens(query))
-        lexical_items: list[dict[str, Any]] = []
-        if query_terms:
-            async with self._lock:
-                chunks = self._read_sync().values()
-            for recency, chunk in enumerate(chunks):
-                if chunk.get("tenant_id") != tenant_id or chunk.get("user_id") != user_id:
-                    continue
-                content_terms = set(_tokens(str(chunk.get("content") or "")))
-                matched = query_terms & content_terms
-                if not matched:
-                    continue
-                lexical_items.append(
-                    {
-                        "chunk_id": chunk.get("chunk_id", ""),
-                        "paper_id": chunk.get("paper_id", ""),
-                        "chunk_index": chunk.get("chunk_index", 0),
-                        "content": chunk.get("content", ""),
-                        "score": len(matched) / len(query_terms),
-                        "_recency": recency,
-                    }
-                )
-            lexical_items.sort(
-                key=lambda item: (item["score"], item["_recency"]), reverse=True
-            )
 
-        # Reciprocal-rank fusion keeps semantic recall while guaranteeing that
-        # exact topic terms from newly indexed tenant data remain discoverable.
-        fused: dict[tuple[str, int], dict[str, Any]] = {}
-        for source, weight, lexical in (
-            (vector_result.get("items", []), 1.0, False),
-            (lexical_items, 1.35, True),
-        ):
-            for rank, item in enumerate(source[:candidate_limit], start=1):
-                key = (str(item.get("paper_id") or ""), int(item.get("chunk_index") or 0))
-                current = fused.setdefault(key, {**item, "score": 0.0})
-                current["score"] += weight / (60 + rank)
-                if lexical:
-                    current["score"] += float(item.get("score") or 0.0)
-                if len(str(item.get("content") or "")) > len(str(current.get("content") or "")):
-                    current["content"] = item.get("content", "")
-        items = sorted(fused.values(), key=lambda item: item["score"], reverse=True)[:limit]
-        for item in items:
-            item.pop("_recency", None)
-            item["score"] = round(float(item["score"]), 6)
-        result = {"backend": "chromadb", "retrieval_mode": "hybrid", "items": items}
+        async with self._lock:
+            corpus = [
+                dict(chunk)
+                for chunk in self._read_sync().values()
+                if chunk.get("tenant_id") == tenant_id and chunk.get("user_id") == user_id
+            ]
+        query_tokens = _tokens(query)
+        document_tokens = [_tokens(str(chunk.get("content") or "")) for chunk in corpus]
+        bm25_scores = _bm25_scores(
+            query_tokens,
+            document_tokens,
+            k1=settings.rag_bm25_k1,
+            b=settings.rag_bm25_b,
+        )
+        max_bm25 = max(bm25_scores, default=0.0)
+
+        preference_tokens: set[str] = set()
+        memories: list[Any] = []
+        try:
+            from app.schemas import UserContext
+            from app.services.memory_service import user_memory_service
+
+            memories = user_memory_service.recall(UserContext(tenant_id, user_id), query, limit=8)
+            for memory in memories:
+                if memory.memory_type in {"preference", "profile", "constraint", "instruction"}:
+                    preference_tokens.update(_tokens(memory.content))
+        except Exception:
+            # Retrieval must remain available when the optional durable-memory store is down.
+            memories = []
+
+        vector_ranks: dict[tuple[str, int], int] = {}
+        vector_items: dict[tuple[str, int], dict[str, Any]] = {}
+        for rank, item in enumerate(vector_result.get("items", [])[:candidate_limit], start=1):
+            key = (str(item.get("paper_id") or ""), int(item.get("chunk_index") or 0))
+            vector_ranks[key] = rank
+            vector_items[key] = dict(item)
+
+        fused: list[dict[str, Any]] = []
+        for chunk, tokens, bm25 in zip(corpus, document_tokens, bm25_scores, strict=False):
+            key = (str(chunk.get("paper_id") or ""), int(chunk.get("chunk_index") or 0))
+            rank = vector_ranks.get(key)
+            if bm25 <= 0 and rank is None:
+                continue
+            vector_score = 1.0 / rank if rank else 0.0
+            lexical_score = bm25 / max_bm25 if max_bm25 else 0.0
+            temporal_score = _temporal_decay(
+                chunk.get("published_at") or chunk.get("indexed_at"),
+                settings.rag_recency_half_life_days,
+            )
+            preference_score = _preference_score(tokens, preference_tokens)
+            weighted_score = (
+                settings.rag_vector_weight * vector_score
+                + settings.rag_bm25_weight * lexical_score
+                + settings.rag_recency_weight * temporal_score
+                + settings.rag_preference_weight * preference_score
+            )
+            item = dict(vector_items.get(key) or chunk)
+            item["score"] = round(weighted_score, 6)
+            item["score_breakdown"] = {
+                "vector": round(vector_score, 6),
+                "bm25": round(lexical_score, 6),
+                "temporal": round(temporal_score, 6),
+                "preference": round(preference_score, 6),
+            }
+            fused.append(item)
+        items = sorted(fused, key=lambda item: item["score"], reverse=True)[:limit]
+        result = {
+            "backend": "chromadb",
+            "retrieval_mode": "hybrid_bm25_temporal_preference",
+            "preference_memories_used": len(memories),
+            "items": items,
+        }
         # Supplement with SQLite paper metadata
         for item in result["items"]:
             if mysql_store.is_available():
@@ -378,6 +474,14 @@ class RagService:
             "chunk_overlap": settings.rag_chunk_overlap,
             "top_k": settings.rag_top_k,
             "candidate_limit": settings.rag_candidate_limit,
+            "bm25": {"k1": settings.rag_bm25_k1, "b": settings.rag_bm25_b},
+            "recency_half_life_days": settings.rag_recency_half_life_days,
+            "fusion_weights": {
+                "vector": settings.rag_vector_weight,
+                "bm25": settings.rag_bm25_weight,
+                "temporal": settings.rag_recency_weight,
+                "preference": settings.rag_preference_weight,
+            },
         }
 
 

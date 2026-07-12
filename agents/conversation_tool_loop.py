@@ -480,6 +480,16 @@ class ConversationToolLoop:
             " ",
             content,
         )
+        query = re.sub(
+            r"(?:^|\s)(?:在|从|去|请|帮我|给我|找|查|返回|展示|列出|推荐|获取)\s*",
+            " ",
+            query,
+        )
+        query = re.sub(
+            r"(?:返回|展示|列出|推荐|获取)?\s*(?:第?[一二三四五六七八九十\d]+|几|若干)\s*(?:篇|条|个)?(?:结果|论文|文献)?",
+            " ",
+            query,
+        )
         return re.sub(r"\s+", " ", query).strip(" ，。；;、") or content.strip()
 
     @staticmethod
