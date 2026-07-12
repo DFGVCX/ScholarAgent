@@ -7,9 +7,8 @@ import re
 import socket
 import urllib.parse
 import urllib.request
-import shutil
 import subprocess
-import sys
+from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -35,15 +34,31 @@ def _safe_name(value: str) -> str:
 
 
 def _convert_caj_to_pdf(source: Path, destination: Path) -> bool:
-    executable = Path(sys.executable).parent / "caj2pdf.exe"
-    if not executable.exists():
+    try:
+        import cajCvtPdf
+
+        binary_root = Path(cajCvtPdf.__file__).resolve().parent / "bin"
+    except (ImportError, TypeError):
+        return False
+    executable = binary_root / "caj2pdf.exe"
+    mutool = binary_root / "mutool.exe"
+    if not executable.exists() or not mutool.exists():
         return False
     completed = subprocess.run(
-        [str(executable), "convert", str(source), "-o", str(destination), "-m", "MUTOOL"],
+        [
+            str(executable),
+            "convert",
+            str(source),
+            "-o",
+            str(destination),
+            "-m",
+            str(mutool),
+        ],
         capture_output=True,
         text=True,
         timeout=120,
         check=False,
+        cwd=str(binary_root),
     )
     if completed.returncode != 0 or not destination.exists():
         destination.unlink(missing_ok=True)
@@ -53,6 +68,52 @@ def _convert_caj_to_pdf(source: Path, destination: Path) -> bool:
         destination.unlink(missing_ok=True)
         return False
     return True
+
+
+def _persist_pdf_only(
+    raw: bytes,
+    file_type: str,
+    destination_root: Path,
+    title: str,
+    source_url: str,
+) -> tuple[Path, bytes, str, bool]:
+    """Persist a validated PDF; CAJ is permitted only as a temporary input."""
+    if file_type not in {"pdf", "caj"}:
+        raise InstitutionalAccessError("DOCUMENT_FORMAT_UNSUPPORTED", "知识库只接收最终 PDF 文件")
+    destination_root.mkdir(parents=True, exist_ok=True)
+    marker = uuid4().hex
+    temporary_pdf = destination_root / f".{marker}.pdf"
+    temporary_caj = destination_root / f".{marker}.caj"
+    converted_from_caj = file_type == "caj"
+    try:
+        if converted_from_caj:
+            temporary_caj.write_bytes(raw)
+            if not _convert_caj_to_pdf(temporary_caj, temporary_pdf):
+                raise InstitutionalAccessError(
+                    "CAJ_CONVERSION_FAILED",
+                    "CAJ 已下载，但转换 PDF 失败；本次不会保存 CAJ 或写入知识库",
+                )
+        else:
+            temporary_pdf.write_bytes(raw)
+
+        _validate_article_pdf(temporary_pdf, source_url)
+        pdf_raw = temporary_pdf.read_bytes()
+        digest = hashlib.sha256(pdf_raw).hexdigest()
+        destination = destination_root / f"{digest[:16]}_{_safe_name(title)}.pdf"
+        if destination.exists():
+            temporary_pdf.unlink(missing_ok=True)
+        else:
+            temporary_pdf.replace(destination)
+        return destination, pdf_raw, digest, converted_from_caj
+    finally:
+        temporary_caj.unlink(missing_ok=True)
+        temporary_pdf.unlink(missing_ok=True)
+
+
+def _knowledge_source_url(value: str) -> str:
+    """Keep the article page, never a CAJ download target, in knowledge metadata."""
+    url = (value or "").strip()
+    return "" if ".caj" in url.lower() else url
 
 
 def _validate_url_syntax(value: str) -> urllib.parse.ParseResult:
@@ -398,8 +459,6 @@ class InstitutionalAccessService:
                 timeout=max(20.0, get_settings().external_source_timeout_seconds),
             )
             file_type = _detect_document(raw, content_type, final_url)
-            digest = hashlib.sha256(raw).hexdigest()
-            suffix = f".{file_type}"
             storage = (
                 get_settings().storage_dir
                 / "uploads"
@@ -407,10 +466,16 @@ class InstitutionalAccessService:
                 / user.user_id
                 / "institutional"
             )
-            storage.mkdir(parents=True, exist_ok=True)
-            path = storage / f"{digest[:16]}_{_safe_name(download.get('title') or 'paper')}{suffix}"
-            path.write_bytes(raw)
-            full_text = await asyncio.to_thread(_extract_pdf_text, path) if file_type == "pdf" else ""
+            path, raw, digest, converted_from_caj = await asyncio.to_thread(
+                _persist_pdf_only,
+                raw,
+                file_type,
+                storage,
+                str(download.get("title") or "paper"),
+                final_url,
+            )
+            file_type = "pdf"
+            full_text = await asyncio.to_thread(_extract_pdf_text, path)
             paper_id = f"paper:{download['source']}:{digest[:16]}"
             from mcp_server.scholar_mcp.models import PaperRecord
             from mcp_server.scholar_mcp.store import knowledge_store
@@ -424,7 +489,7 @@ class InstitutionalAccessService:
                 abstract=full_text[:900],
                 full_text=full_text,
                 doi=download.get("doi") or None,
-                url=final_url,
+                url=_knowledge_source_url(final_url),
                 file_path=str(path),
                 metadata={
                     "created_from": "institutional_download",
@@ -433,10 +498,11 @@ class InstitutionalAccessService:
                     "file_name": path.name,
                     "file_path": str(path),
                     "file_url": f"/knowledge/files/{paper_id}",
-                    "content_type": content_type,
+                    "content_type": "application/pdf",
                     "content_length": len(raw),
                     "file_sha256": digest,
                     "document_format": file_type,
+                    "converted_from_caj": converted_from_caj,
                     "parsed": bool(full_text),
                 },
             )
@@ -503,7 +569,6 @@ class InstitutionalAccessService:
         if len(raw) > 50 * 1024 * 1024:
             raise InstitutionalAccessError("DOWNLOAD_TOO_LARGE", "下载文件超过 50MB 限制")
         file_type = _detect_document(raw, "application/octet-stream", source_path.as_uri())
-        digest = hashlib.sha256(raw).hexdigest()
         title = str(item.get("title") or source_path.stem)
         destination_root = (
             get_settings().storage_dir
@@ -512,22 +577,21 @@ class InstitutionalAccessService:
             / user.user_id
             / "institutional"
         )
-        destination_root.mkdir(parents=True, exist_ok=True)
-        destination = destination_root / f"{digest[:16]}_{_safe_name(title)}.{file_type}"
-        if source_path != destination:
-            shutil.copyfile(source_path, destination)
-        original_file_path = str(destination) if file_type == "caj" else ""
-        if file_type == "caj":
-            converted = destination.with_suffix(".pdf")
-            converted_ok = await asyncio.to_thread(_convert_caj_to_pdf, destination, converted)
-            if converted_ok:
-                destination = converted
-                raw = destination.read_bytes()
-                digest = hashlib.sha256(raw).hexdigest()
-                file_type = "pdf"
-        if file_type == "pdf":
-            _validate_article_pdf(destination, str(item.get("detail_url") or ""))
-        full_text = await asyncio.to_thread(_extract_pdf_text, destination) if file_type == "pdf" else ""
+        source_url = _knowledge_source_url(str(item.get("detail_url") or ""))
+        try:
+            destination, raw, digest, converted_from_caj = await asyncio.to_thread(
+                _persist_pdf_only,
+                raw,
+                file_type,
+                destination_root,
+                title,
+                source_url,
+            )
+        finally:
+            # Browser downloads are staging files, not knowledge-base assets.
+            source_path.unlink(missing_ok=True)
+        file_type = "pdf"
+        full_text = await asyncio.to_thread(_extract_pdf_text, destination)
         paper_id = f"paper:cnki:{digest[:16]}"
         from mcp_server.scholar_mcp.models import PaperRecord
         from mcp_server.scholar_mcp.store import knowledge_store
@@ -540,7 +604,7 @@ class InstitutionalAccessService:
             title=title,
             abstract=full_text[:900],
             full_text=full_text,
-            url=str(item.get("detail_url") or ""),
+            url=source_url,
             file_path=str(destination),
             metadata={
                 "created_from": "browser_worker_cnki_download",
@@ -551,8 +615,8 @@ class InstitutionalAccessService:
                 "content_length": len(raw),
                 "file_sha256": digest,
                 "document_format": file_type,
-                "original_file_path": original_file_path,
-                "converted_from_caj": bool(original_file_path and file_type == "pdf"),
+                "content_type": "application/pdf",
+                "converted_from_caj": converted_from_caj,
                 "parsed": bool(full_text),
             },
         )

@@ -20,6 +20,10 @@ RECALL_PHRASES = (
     "刚才做了什么", "刚刚做了什么", "前面做了什么", "做过什么操作",
     "刚才进行了什么", "回顾刚才", "总结刚才", "之前做了什么",
 )
+ACTION_PHRASES = (
+    "搜索", "检索", "查询", "下载", "保存", "入库", "删除", "知识库", "知网", "生成", "写作",
+)
+COMPLEX_PHRASES = ("完整", "系统", "分步骤", "多角度", "对比", "分析", "规划", "分别", "端到端")
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,7 @@ class ContextBundle:
     events: list[dict[str, Any]]
     estimated_tokens: int
     compressed: bool
+    budget_tokens: int = 0
     memories: tuple[MemoryRecord, ...] = ()
     state: dict[str, Any] | None = None
 
@@ -58,12 +63,14 @@ class ConversationContextManager:
             (str(item.get("content") or "") for item in reversed(messages) if item.get("role") == "user"),
             "",
         )
-        memories = tuple(user_memory_service.recall(user, latest_query, limit=8))
+        budget_tokens = min(self.max_tokens, self._adaptive_budget(latest_query))
+        memories = tuple(user_memory_service.recall(user, latest_query, limit=5))
         previous = self._load(user, conversation_id)
         previous_state = mysql_store.decode_json(previous.get("state_json"), {})
 
         head = messages[:2]
-        tail_count = min(self.tail_messages, len(messages))
+        adaptive_tail = 8 if budget_tokens >= 6000 else 6
+        tail_count = min(self.tail_messages, adaptive_tail, len(messages))
         tail = messages[-tail_count:]
         middle = messages[2:-tail_count] if len(messages) > tail_count + 2 else []
         events = self._tool_events(messages, user, conversation_id)
@@ -76,14 +83,29 @@ class ConversationContextManager:
             state["pending_confirmations"] = derived_state["pending_confirmations"]
 
         prompt = self._assemble_prompt(head, tail, summary, events, memories, state)
-        prompt = self._fit_budget(prompt, head, tail, summary, events, memories, state)
+        prompt = self._fit_budget(
+            prompt, head, tail, summary, events, memories, state, budget_tokens
+        )
         estimated = self.estimate_tokens(prompt)
         compressed = bool(middle) or estimated >= self.max_tokens
         self._save(
             user, conversation_id, summary, events, state, estimated,
             int(previous.get("compression_count", 0)) + (1 if middle else 0),
         )
-        return ContextBundle(prompt, summary, events, estimated, compressed, memories, state)
+        return ContextBundle(
+            prompt, summary, events, estimated, compressed, budget_tokens, memories, state
+        )
+
+    @staticmethod
+    def _adaptive_budget(content: str) -> int:
+        if any(phrase in content for phrase in RECALL_PHRASES):
+            return 3000
+        complex_hits = sum(1 for phrase in COMPLEX_PHRASES if phrase in content)
+        if len(content) > 280 or complex_hits >= 2:
+            return 7000
+        if any(phrase in content for phrase in ACTION_PHRASES):
+            return 4200
+        return 2600
 
     def recall(self, events: list[dict[str, Any]]) -> str:
         completed = [event for event in events if event.get("status") == "succeeded"]
@@ -104,11 +126,11 @@ class ConversationContextManager:
         state: dict[str, Any],
     ) -> str:
         transcript = self._render_messages(self._dedupe(head + tail))
-        event_text = self._render_events(events[-12:]) or "暂无工具操作。"
+        event_text = self._render_events(events[-8:]) or "暂无工具操作。"
         memory_text = "\n".join(
             f"- [{item.memory_type}] {item.content}" for item in memories
         ) or "暂无与当前请求相关的长期记忆。"
-        state_text = json.dumps(state, ensure_ascii=False, indent=2)
+        state_text = json.dumps(self._prompt_state(state), ensure_ascii=False, indent=2)
         return (
             f"{REFERENCE_NOTICE}\n\n"
             f"## 当前执行状态\n{state_text}\n\n"
@@ -129,8 +151,9 @@ class ConversationContextManager:
         events: list[dict[str, Any]],
         memories: tuple[MemoryRecord, ...],
         state: dict[str, Any],
+        max_tokens: int,
     ) -> str:
-        if self.estimate_tokens(prompt) <= self.max_tokens:
+        if self.estimate_tokens(prompt) <= max_tokens:
             return prompt
         compact_summary = summary[-2400:]
         compact_events = events[-6:]
@@ -139,7 +162,7 @@ class ConversationContextManager:
         prompt = self._assemble_prompt(
             head[:1], compact_tail, compact_summary, compact_events, compact_memories, state
         )
-        char_budget = self.max_tokens * 3
+        char_budget = max_tokens * 3
         if len(prompt) <= char_budget:
             return prompt
         # Preserve current state and latest user turn when the hard ceiling is reached.
@@ -156,6 +179,19 @@ class ConversationContextManager:
         available = max(0, char_budget - len(prefix) - len(suffix))
         result = prefix + latest[-available:] + suffix if available else prefix + suffix
         return result[-char_budget:]
+
+    @staticmethod
+    def _prompt_state(state: dict[str, Any]) -> dict[str, Any]:
+        keys = (
+            "active_domain", "active_source", "phase", "last_search_query",
+            "last_successful_tool", "pending_action", "pending_confirmations",
+            "recent_results", "last_route",
+        )
+        return {
+            key: state.get(key)
+            for key in keys
+            if state.get(key) not in (None, "", [], {})
+        }
 
     def _tool_events(
         self,

@@ -331,6 +331,24 @@ SCHEMA_SQL: tuple[str, ...] = (
         provider TEXT, model TEXT, latency_ms INTEGER, metadata_json TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')))""",
 
+    """CREATE TABLE IF NOT EXISTS scholar_operation_patterns (
+        pattern_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        operation_name TEXT NOT NULL, signature TEXT NOT NULL, recipe_json TEXT NOT NULL,
+        success_count INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0,
+        first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (tenant_id, user_id, signature))""",
+
+    """CREATE TABLE IF NOT EXISTS scholar_skill_candidates (
+        candidate_id TEXT PRIMARY KEY, pattern_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        name TEXT NOT NULL, description TEXT NOT NULL, manifest_json TEXT NOT NULL,
+        evidence_count INTEGER NOT NULL DEFAULT 0, success_rate REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (tenant_id, user_id, pattern_id))""",
+
     """CREATE TABLE IF NOT EXISTS scholar_annotations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         paper_id TEXT NOT NULL,
@@ -399,6 +417,8 @@ _INDEXES_SQL: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_scholar_reflection_logs_task ON scholar_reflection_logs(tenant_id, task_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_memories_recall ON scholar_memories(tenant_id, user_id, status, memory_type, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_trace_events_trace ON scholar_trace_events(trace_id, trace_event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_operation_patterns_user ON scholar_operation_patterns(tenant_id, user_id, last_seen_at)",
+    "CREATE INDEX IF NOT EXISTS idx_skill_candidates_user ON scholar_skill_candidates(tenant_id, user_id, status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_institution_profiles_user ON scholar_institution_profiles(tenant_id, user_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_institution_sessions_user ON scholar_institution_sessions(tenant_id, user_id, status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_institution_downloads_user ON scholar_institution_downloads(tenant_id, user_id, status, created_at)",

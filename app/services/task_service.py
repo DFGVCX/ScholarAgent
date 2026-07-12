@@ -40,6 +40,8 @@ class TaskService:
                 "topic": request.topic,
                 "input_type": request.input_type.value,
                 "input_value": request.input_value,
+                "retrieval_strategy": request.retrieval_strategy.value,
+                "retrieval_constraints": request.retrieval_constraints,
                 "citation_style": request.citation_style.value,
                 "max_papers": request.max_papers,
                 "require_outline_confirmation": request.require_outline_confirmation,

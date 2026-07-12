@@ -65,7 +65,13 @@ async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[di
     topic = initial_state["topic"]
     task_id = initial_state["task_id"]
     input_type = initial_state.get("input_type", "arxiv")
-    input_value = initial_state.get("input_value", topic)
+    input_value = str(initial_state.get("input_value") or "").strip()
+    retrieval_strategy = str(initial_state.get("retrieval_strategy") or "online").lower()
+    retrieval_constraints = str(initial_state.get("retrieval_constraints") or "").strip()
+    search_source = {"online": "external", "local": "local", "hybrid": "all"}.get(
+        retrieval_strategy,
+        "external",
+    )
     citation_style = initial_state.get("citation_style", "IEEE")
     max_papers = int(initial_state.get("max_papers", 12))
     require_outline_confirmation = bool(initial_state.get("require_outline_confirmation", False))
@@ -82,42 +88,46 @@ async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[di
         "trace_id": initial_state.get("trace_id"),
         "execution_mode": "delegation" if delegation_results else "skill",
         "collaboration_plan": collaboration_plan,
+        "retrieval_strategy": retrieval_strategy,
+        "retrieval_constraints": retrieval_constraints,
     }
 
     client = ScholarMCPClient()
     primary_paper: dict[str, Any] | None = None
     ingest_error: str | None = None
-    yield _progress("ingest_sources", "Resolving seed paper from topic or optional constraint", 8)
-    try:
-        ingest = await client.call_tool(
-            "ingest_paper",
-            {
-                "tenant_id": tenant_id,
-                "user_id": user_id,
-                "task_id": task_id,
-                "input_type": input_type,
-                "input_value": input_value,
-                "topic": topic,
-            },
-        )
-        primary_paper = ingest["paper"]
-    except Exception as exc:
-        ingest_error = str(exc)
-        yield _progress(
-            "ingest_sources",
-            f"Seed paper lookup failed; falling back to tenant knowledge and paper search: {ingest_error}",
-            10,
-            {"external_error": ingest_error},
-        )
+    yield _progress("ingest_sources", "Preparing retrieval scope and optional seed paper", 8)
+    if input_value:
+        try:
+            ingest = await client.call_tool(
+                "ingest_paper",
+                {
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "task_id": task_id,
+                    "input_type": input_type,
+                    "input_value": input_value,
+                    "topic": topic,
+                },
+            )
+            primary_paper = ingest["paper"]
+        except Exception as exc:
+            ingest_error = str(exc)
+            yield _progress(
+                "ingest_sources",
+                f"Seed paper lookup failed; continuing with the selected retrieval scope: {ingest_error}",
+                10,
+                {"external_error": ingest_error},
+            )
 
-    yield _progress("search_papers", "Searching external sources and tenant knowledge base", 16)
+    strategy_labels = {"online": "online sources", "local": "tenant knowledge base", "hybrid": "online sources and tenant knowledge base"}
+    yield _progress("search_papers", f"Searching {strategy_labels.get(retrieval_strategy, 'online sources')}", 16)
     search = await client.call_tool(
         "search_papers",
         {
             "tenant_id": tenant_id,
             "user_id": user_id,
             "query": topic,
-            "source": "all",
+            "source": search_source,
             "limit": max_papers,
         },
     )
@@ -133,9 +143,13 @@ async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[di
     papers = list(deduped.values())[:max_papers]
     if not papers:
         source_error = search.get("external_error") or ingest_error or "no paper source returned results"
+        if retrieval_strategy == "local":
+            raise RuntimeError("本地知识库没有检索到可用于写作的文献，请调整研究主题或附加约束。")
+        if retrieval_strategy == "online":
+            raise RuntimeError(f"在线论文源暂未返回可用文献，请稍后重试或调整检索约束。原始错误：{source_error}")
         raise RuntimeError(
-            "论文源连接失败，且当前租户知识库没有可用于写作的文献。"
-            f"请稍后重试 OpenAlex/arXiv/Crossref，或先在个人知识库上传/保存论文。原始错误：{source_error}"
+            "在线论文源与本地知识库均未返回可用于写作的文献。"
+            f"请稍后重试或先向知识库添加论文。原始错误：{source_error}"
         )
 
     processor = LiteratureProcessor()

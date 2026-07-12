@@ -442,6 +442,7 @@ class ConversationRepository:
                 "conversation",
                 context_bundle.prompt,
                 {
+                    "trace_id": f"conversation:{conversation_id}",
                     "tenant_id": user.tenant_id,
                     "user_id": user.user_id,
                     "skill_id": skill_id,
@@ -459,6 +460,13 @@ class ConversationRepository:
                 {"kind": "llm_chat", "agent": decision.target_agent,
                  "execution_mode": decision.execution_mode,
                  "provider": response.provider, "model": response.model,
+                 "usage": {
+                     "input_tokens": response.input_tokens,
+                     "output_tokens": response.output_tokens,
+                     "total_tokens": response.input_tokens + response.output_tokens,
+                     "cached": response.cached,
+                     "context_budget": context_bundle.budget_tokens,
+                 },
                  "routing": decision.to_dict(),
                  "state_version": route_state.get("state_version")},
             )

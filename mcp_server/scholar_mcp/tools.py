@@ -233,7 +233,7 @@ async def search_papers(
     external_error: str | None = None
     if source in {"all", "local"}:
         items.extend(await knowledge_store.search(tenant_id, user_id, query, limit))
-    if source in {"all", "arxiv", "openalex", "crossref"} and len(items) < limit:
+    if source in {"all", "external", "arxiv", "openalex", "crossref"} and len(items) < limit:
         if _mock_external_sources_enabled():
             needed = limit - len(items)
             items.extend(

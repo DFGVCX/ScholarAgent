@@ -3,13 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel
 
 from agents.registry import agent_registry
+from agents.evolution import skill_evolution_service
 from app.dependencies import AuthError, authenticate_api_key
 from app.services import mysql_store
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+class SkillCandidateReviewDTO(BaseModel):
+    approved: bool
 
 
 def _current_user(x_api_key: str | None):
@@ -52,3 +58,27 @@ async def list_agent_runs(
     for row in rows:
         row["result"] = mysql_store.decode_json(row.pop("result_json", None), {})
     return {"items": rows}
+
+
+@router.get("/skill-candidates")
+async def list_skill_candidates(
+    status: str = Query(default="draft", pattern="^(draft|approved|rejected)$"),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    return {"items": skill_evolution_service.list_candidates(user, status)}
+
+
+@router.post("/skill-candidates/{candidate_id}/review")
+async def review_skill_candidate(
+    candidate_id: str,
+    request: SkillCandidateReviewDTO,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    result = skill_evolution_service.review_candidate(
+        user, candidate_id, approved=request.approved
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="skill candidate not found")
+    return {"item": result}
