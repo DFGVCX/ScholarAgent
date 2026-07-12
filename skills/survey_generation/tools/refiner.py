@@ -5,6 +5,9 @@ class LCERefiner:
     def merge_sections(self, topic: str, sections: list[dict], references: list[str]) -> str:
         lines = [f"# Survey on {topic}", ""]
         for section in sections:
+            title = str(section.get("title") or "").strip()
+            if title:
+                lines.append(f"## {title}")
             lines.append(section["content"].strip())
             lines.append("")
         lines.append("## References")

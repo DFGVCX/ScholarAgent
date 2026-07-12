@@ -15,6 +15,8 @@ from app.routes.settings import router as settings_router
 from app.routes.tasks import router as tasks_router
 from app.routes.translations import router as translations_router
 from app.services import mysql_store
+from agents.checkpointing import checkpoint_provider
+from app.services.task_queue import task_queue
 
 settings = get_settings()
 
@@ -24,6 +26,12 @@ app = FastAPI(title=settings.app_name, version="0.1.0")
 @app.on_event("startup")
 async def initialize_runtime_database() -> None:
     mysql_store.initialize_database()
+
+
+@app.on_event("shutdown")
+async def close_runtime_resources() -> None:
+    await task_queue.close()
+    await checkpoint_provider.close()
 
 
 app.add_middleware(

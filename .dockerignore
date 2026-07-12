@@ -1,5 +1,8 @@
 .agents/
 .git/
+.venv/
+.venv*/
+.cache/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -13,3 +16,4 @@ docs/assets/
 archive/
 tests/e2e/node_modules/
 frontend/node_modules/
+frontend/dist/assets/

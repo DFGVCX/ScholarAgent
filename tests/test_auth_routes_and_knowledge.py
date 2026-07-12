@@ -53,7 +53,9 @@ class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
         demo_list = await list_knowledge(query=title, source="local", limit=50, x_api_key="demo-key")
         self.assertTrue(any(item["paper_id"] == paper_id for item in demo_list["items"]))
 
-        rag_search = await rag_service.search("tenant_demo", "user_demo", "tenant scoped", 5)
+        # Query the unique title so this assertion remains stable when a developer's
+        # local index already contains many earlier test documents with the same prefix.
+        rag_search = await rag_service.search("tenant_demo", "user_demo", title, 5)
         self.assertTrue(any(item["paper_id"] == paper_id for item in rag_search["items"]))
         rag_stats = await rag_service.stats("tenant_demo", "user_demo")
         self.assertGreaterEqual(rag_stats["chunk_count"], 1)

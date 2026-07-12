@@ -49,7 +49,7 @@ class DownloadDTO(BaseModel):
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "scholar-browser-worker", "sessions": len(browser_session_manager.sessions)}
+    return {"service": "scholar-browser-worker", **browser_session_manager.health()}
 
 
 @app.post("/sessions")

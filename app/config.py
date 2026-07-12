@@ -50,6 +50,10 @@ class Settings:
     langfuse_environment: str = "development"
     model_response_cache_enabled: bool = True
     model_response_cache_max_entries: int = 256
+    redis_url: str = ""
+    task_execution_mode: str = "inline"
+    task_queue_name: str = "scholar:tasks"
+    task_max_attempts: int = 3
     storage_dir: Path = Path("storage/runtime")
     upload_dir: Path = Path("storage/uploads")
     cors_allow_origins: tuple[str, ...] = ("*",)
@@ -134,6 +138,10 @@ def get_settings() -> Settings:
         langfuse_environment=_setting_value(overrides, "SCHOLAR_LANGFUSE_ENVIRONMENT", _setting_value(overrides, "SCHOLAR_ENV", "development")).strip(),
         model_response_cache_enabled=_setting_bool(overrides, "SCHOLAR_MODEL_CACHE_ENABLED", True),
         model_response_cache_max_entries=max(16, _setting_int(overrides, "SCHOLAR_MODEL_CACHE_MAX_ENTRIES", 256)),
+        redis_url=_setting_value(overrides, "SCHOLAR_REDIS_URL", "").strip(),
+        task_execution_mode=_setting_value(overrides, "SCHOLAR_TASK_EXECUTION_MODE", "inline").strip().lower(),
+        task_queue_name=_setting_value(overrides, "SCHOLAR_TASK_QUEUE_NAME", "scholar:tasks").strip(),
+        task_max_attempts=max(1, _setting_int(overrides, "SCHOLAR_TASK_MAX_ATTEMPTS", 3)),
         storage_dir=storage_dir,
         upload_dir=upload_dir,
     )

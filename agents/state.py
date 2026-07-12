@@ -22,6 +22,9 @@ class GlobalState(TypedDict, total=False):
     route_decision: dict[str, Any]
     skill_result: dict[str, Any]
     global_review: dict[str, Any]
+    quality_gate: dict[str, Any]
+    quality_retry_count: int
+    task_graph: dict[str, Any]
     final_result: dict[str, Any]
     final_report: str
     reflection_logs: list[dict[str, Any]]

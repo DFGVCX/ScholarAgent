@@ -424,6 +424,7 @@ class RagService:
             )
             item = dict(vector_items.get(key) or chunk)
             item["score"] = round(weighted_score, 6)
+            item["_sort_score"] = weighted_score
             item["score_breakdown"] = {
                 "vector": round(vector_score, 6),
                 "bm25": round(lexical_score, 6),
@@ -431,7 +432,13 @@ class RagService:
                 "preference": round(preference_score, 6),
             }
             fused.append(item)
-        items = sorted(fused, key=lambda item: item["score"], reverse=True)[:limit]
+        items = sorted(
+            fused,
+            key=lambda item: (float(item.get("_sort_score") or 0.0), str(item.get("indexed_at") or "")),
+            reverse=True,
+        )[:limit]
+        for item in items:
+            item.pop("_sort_score", None)
         result = {
             "backend": "chromadb",
             "retrieval_mode": "hybrid_bm25_temporal_preference",

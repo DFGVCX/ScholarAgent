@@ -6,6 +6,7 @@ from typing import AsyncIterator
 
 from app.schemas import TaskEvent
 from app.services import mysql_store
+from app.config import get_settings
 
 
 class EventBus:
@@ -69,6 +70,17 @@ class EventBus:
             return list(self._history.get(task_id, []))
 
     async def subscribe(self, task_id: str, start_index: int = 0) -> AsyncIterator[TaskEvent]:
+        if get_settings().task_execution_mode == "queue":
+            cursor = start_index
+            while True:
+                events = self._load_persisted_events(task_id)
+                for event in events[cursor:]:
+                    cursor += 1
+                    yield event
+                    if event.event in {"completed", "failed"}:
+                        return
+                await asyncio.sleep(0.5)
+            return
         queue: asyncio.Queue[TaskEvent] = asyncio.Queue()
         async with self._lock:
             if not self._history.get(task_id):

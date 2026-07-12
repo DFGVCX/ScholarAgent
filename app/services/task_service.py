@@ -11,6 +11,7 @@ from app.services import mysql_store
 from app.services.rate_limit import rate_limiter
 from app.services.repository import task_repository
 from app.services.tracing import trace_recorder
+from app.services.task_queue import task_queue
 
 
 class RateLimitExceeded(Exception):
@@ -64,7 +65,10 @@ class TaskService:
             )
         )
         if run_background:
-            asyncio.create_task(self.run_survey_task(record))
+            if task_queue.enabled():
+                await task_queue.enqueue(record.tenant_id, record.user_id, record.task_id)
+            else:
+                asyncio.create_task(self.run_survey_task(record))
         return record
 
     async def run_survey_task(self, record: TaskRecord) -> dict[str, Any]:

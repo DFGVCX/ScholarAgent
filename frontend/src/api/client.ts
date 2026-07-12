@@ -72,11 +72,43 @@ export class ScholarApiClient {
     return response.json();
   }
 
-  async approveOutline(taskId: string, comment = ''): Promise<{ status: string; task_id: string }> {
+  async approveOutline(taskId: string, comment = '', outlineMarkdown = ''): Promise<{ status: string; task_id: string }> {
     const response = await fetch(`${this.baseUrl}/tasks/${taskId}/outline/approve`, {
       method: 'POST',
       headers: this.headers(true),
-      body: JSON.stringify({ comment }),
+      body: JSON.stringify({ comment, outline_markdown: outlineMarkdown }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async listConversations(): Promise<{ items: Record<string, unknown>[] }> {
+    const response = await fetch(`${this.baseUrl}/conversations`, { headers: this.headers() });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async createConversation(title = '', skillId = 'general_assistant'): Promise<{ item: Record<string, unknown> }> {
+    const response = await fetch(`${this.baseUrl}/conversations`, {
+      method: 'POST', headers: this.headers(true),
+      body: JSON.stringify({ title, skill_id: skillId }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async getConversation(conversationId: string): Promise<{ item: Record<string, unknown> }> {
+    const response = await fetch(`${this.baseUrl}/conversations/${encodeURIComponent(conversationId)}`, {
+      headers: this.headers(),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async sendMessage(conversationId: string, content: string, skillId = 'general_assistant'): Promise<Record<string, unknown>> {
+    const response = await fetch(`${this.baseUrl}/conversations/${encodeURIComponent(conversationId)}/messages`, {
+      method: 'POST', headers: this.headers(true),
+      body: JSON.stringify({ content, skill_id: skillId }),
     });
     if (!response.ok) throw new Error(await response.text());
     return response.json();

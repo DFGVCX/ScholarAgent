@@ -59,7 +59,7 @@ def _outline_from_markdown(markdown: str, original: list[dict[str, Any]]) -> lis
     return edited
 
 
-async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+async def run_survey_pipeline(initial_state: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     tenant_id = initial_state["tenant_id"]
     user_id = initial_state["user_id"]
     topic = initial_state["topic"]
@@ -270,3 +270,11 @@ async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[di
     }
     yield _progress("lce_refine", "Merged sections into final report", 92)
     yield {"event": "skill_result", "phase": "survey_generation", "message": "Skill result ready", "percent": 94, "payload": result}
+
+
+async def run_survey_workflow(initial_state: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    """Public Skill entrypoint backed by the compiled LangGraph subgraph."""
+    from skills.survey_generation.subgraph import survey_subgraph
+
+    async for event in survey_subgraph.astream(dict(initial_state), stream_mode="custom"):
+        yield event

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from typing import Any, AsyncIterator
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -7,6 +9,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
 from agents.evaluator import GlobalEvaluator
+from agents.checkpointing import checkpoint_provider
 from agents.orchestrator import general_orchestrator
 from agents.skill_registry import skill_registry
 from agents.specialized import writing_agent
@@ -88,7 +91,7 @@ async def _finalize(state: GlobalState) -> dict[str, Any]:
     return {"final_result": result}
 
 
-def build_global_graph():
+def build_global_graph(checkpointer: Any | None = None):
     builder = StateGraph(GlobalState)
     builder.add_node("route_task", _route_task)
     builder.add_node("execute_skill", _execute_skill)
@@ -99,10 +102,22 @@ def build_global_graph():
     builder.add_edge("execute_skill", "global_review")
     builder.add_edge("global_review", "finalize")
     builder.add_edge("finalize", END)
-    return builder.compile(checkpointer=InMemorySaver())
+    return builder.compile(checkpointer=checkpointer or InMemorySaver())
 
 
 app = build_global_graph()
+_runtime_app: Any | None = None
+_runtime_lock = asyncio.Lock()
+
+
+async def _get_runtime_app():
+    global _runtime_app
+    if os.getenv("SCHOLAR_CHECKPOINT_BACKEND", "memory").strip().lower() != "sqlite":
+        return app
+    async with _runtime_lock:
+        if _runtime_app is None:
+            _runtime_app = build_global_graph(await checkpoint_provider.get())
+        return _runtime_app
 
 
 async def run_global_workflow(initial_state: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
@@ -113,7 +128,8 @@ async def run_global_workflow(initial_state: dict[str, Any]) -> AsyncIterator[di
         or f"workflow-{id(initial_state)}"
     )
     config = {"configurable": {"thread_id": thread_id}}
-    async for event in app.astream(
+    runtime_app = await _get_runtime_app()
+    async for event in runtime_app.astream(
         dict(initial_state), config=config, stream_mode="custom"
     ):
         trace_recorder.record(
