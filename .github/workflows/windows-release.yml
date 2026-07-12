@@ -1,0 +1,55 @@
+name: Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version
+        required: true
+        default: 0.2.0
+  push:
+    branches:
+      - test-release
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Create Python environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+          .\.venv\Scripts\python.exe -m pip install pyinstaller pyinstaller-hooks-contrib
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          if (-not $version) { $version = "0.2.0" }
+          .\scripts\build_windows_release.ps1 -Version $version -SkipToolInstall
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScholarAgent-Windows-Installer
+          path: release/output/*.exe
+          if-no-files-found: error

@@ -74,3 +74,13 @@ http://127.0.0.1:8000/app.html
 - 前端页面：`frontend/dist/app.html`
 - 前端源码：`frontend/src/`
 - 部署配置：`deploy/`、`docker-compose.yml`
+
+## Windows 安装版
+
+`test-release` 分支提供去本地化的 Windows 安装包构建。安装版将数据库、知识库、批注和运行配置保存到 `%LOCALAPPDATA%\ScholarAgent`，不要求最终用户安装 Python、Node.js、MySQL、Redis 或 Docker。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 -Version 0.2.0
+```
+
+构建产物为 `release/output/ScholarAgent-Setup-0.2.0.exe`。详细说明见 `docs/operations/WINDOWS_RELEASE.md`。

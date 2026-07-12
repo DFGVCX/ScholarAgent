@@ -7427,7 +7427,8 @@
     </section>
     <div id="toast" class="toast hidden"></div>
     <script>
-        const storageKey = 'scholar.session.v1';
+        const desktopMode = new URLSearchParams(window.location.search).get('desktop') === '1';
+        const storageKey = desktopMode ? 'scholar.desktop.session.v1' : 'scholar.session.v1';
         const sidebarStorageKey = 'scholar.sidebar.collapsed.v1';
         const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
         const routeTitles = { chat: '智能会话', tasks: '写作专项', audit: '引用审计', knowledge: '个人知识库', profile: '个人中心' };
@@ -9708,6 +9709,12 @@
         }
 
         mountProfileConfig();
+        if (desktopMode) {
+            $('tenantId').innerHTML = '<option value="tenant_local">ScholarAgent Local</option>';
+            $('username').value = 'scholar';
+            $('password').value = 'scholar123';
+            document.querySelector('.credential-row')?.classList.add('hidden');
+        }
         $('loginForm').addEventListener('submit', (event) => { event.preventDefault(); login($('username').value, $('password').value, $('tenantId').value); });
         document.querySelectorAll('[data-demo]').forEach((button) => button.addEventListener('click', () => {
             const demo = button.dataset.demo;

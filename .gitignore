@@ -13,6 +13,7 @@ env/
 .env
 .env.*
 !.env.example
+!.env.release.example
 
 # Personal study notes, local agent instructions, and historical drafts
 docs/*
@@ -26,6 +27,7 @@ docs/product/*
 !docs/operations/
 docs/operations/*
 !docs/operations/STARTUP_CN.md
+!docs/operations/WINDOWS_RELEASE.md
 .agents/
 .codex/
 .superpowers/
@@ -49,6 +51,12 @@ models/
 # Frontend dependencies and large build assets
 frontend/node_modules/
 frontend/dist/assets/
+
+# Windows release build outputs
+release/build/
+release/dist/
+release/output/
+release/install-smoke/
 
 # E2E/test outputs
 tests/e2e/node_modules/

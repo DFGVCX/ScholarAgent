@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 import sqlite3
+import os
+import secrets
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -444,6 +446,9 @@ def initialize_database(create_database: bool = True) -> dict[str, Any]:
 
 
 def seed_demo_data() -> None:
+    if os.getenv("SCHOLAR_DESKTOP_MODE", "").strip().lower() in {"1", "true", "yes"}:
+        _seed_desktop_account()
+        return
     tenants = (
         ("tenant_demo", "Scholar Demo Lab", {"plan": "demo"}),
         ("tenant_acme", "Acme AI Research", {"plan": "team"}),
@@ -466,6 +471,35 @@ def seed_demo_data() -> None:
             "(user_id, tenant_id, username, password_hash, display_name, roles_json, api_key) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (*u[:5], json.dumps(u[5], ensure_ascii=False), u[6]),
+        )
+    conn.commit()
+
+
+def _seed_desktop_account() -> None:
+    """Create one private local tenant without embedding a reusable API key."""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO scholar_tenants (tenant_id, name, metadata_json) VALUES (?, ?, ?)",
+        ("tenant_local", "ScholarAgent Local", json.dumps({"plan": "desktop"})),
+    )
+    existing = conn.execute(
+        "SELECT user_id FROM scholar_users WHERE tenant_id = ? AND username = ?",
+        ("tenant_local", "scholar"),
+    ).fetchone()
+    if existing is None:
+        conn.execute(
+            "INSERT INTO scholar_users "
+            "(user_id, tenant_id, username, password_hash, display_name, roles_json, api_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "user_local",
+                "tenant_local",
+                "scholar",
+                password_hash("scholar123"),
+                "Local Researcher",
+                json.dumps(["tenant_admin", "researcher"]),
+                secrets.token_urlsafe(32),
+            ),
         )
     conn.commit()
 
