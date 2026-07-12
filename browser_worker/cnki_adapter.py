@@ -44,6 +44,20 @@ def _looks_like_result_url(url: str) -> bool:
     )
 
 
+def _download_candidate_rank(candidate: dict[str, Any]) -> tuple[int, int]:
+    label = str(candidate.get("text") or "")
+    index = int(candidate["index"])
+    if "PDF下载" in label:
+        return (0, index)
+    if "原版阅读" in label:
+        return (1, index)
+    if "CAJ下载" in label:
+        return (2, index)
+    if "HTML阅读" in label:
+        return (3, index)
+    return (4, index)
+
+
 async def _empty_result_diagnostics(page: Any, query: str) -> dict[str, Any]:
     try:
         title = _compact(await page.title())
@@ -244,21 +258,9 @@ async def download_cnki_result(
                 "当前详情页没有发现官方 PDF/CAJ 下载入口。"
                 f"页面状态：{body_text[:240]}"
             )
-        def candidate_rank(candidate: dict[str, Any]) -> tuple[int, int]:
-            label = str(candidate.get("text") or "")
-            if "CAJ下载" in label:
-                return (0, int(candidate["index"]))
-            if "PDF下载" in label:
-                return (1, int(candidate["index"]))
-            if "原版阅读" in label:
-                return (2, int(candidate["index"]))
-            if "HTML阅读" in label:
-                return (3, int(candidate["index"]))
-            return (4, int(candidate["index"]))
-
         ordered = sorted(
             [item for item in diagnostics if item.get("visible") and "/ads/" not in str(item.get("href") or "").lower()],
-            key=candidate_rank,
+            key=_download_candidate_rank,
         )[:6]
         for descriptor in ordered:
             index = int(descriptor["index"])

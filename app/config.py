@@ -48,6 +48,8 @@ class Settings:
     langfuse_secret_key: str = ""
     langfuse_base_url: str = "https://cloud.langfuse.com"
     langfuse_environment: str = "development"
+    model_response_cache_enabled: bool = True
+    model_response_cache_max_entries: int = 256
     storage_dir: Path = Path("storage/runtime")
     upload_dir: Path = Path("storage/uploads")
     cors_allow_origins: tuple[str, ...] = ("*",)
@@ -149,6 +151,8 @@ def get_settings() -> Settings:
         langfuse_secret_key=_setting_value(overrides, "SCHOLAR_LANGFUSE_SECRET_KEY", "").strip(),
         langfuse_base_url=_setting_value(overrides, "SCHOLAR_LANGFUSE_BASE_URL", "https://cloud.langfuse.com").strip(),
         langfuse_environment=_setting_value(overrides, "SCHOLAR_LANGFUSE_ENVIRONMENT", _setting_value(overrides, "SCHOLAR_ENV", "development")).strip(),
+        model_response_cache_enabled=_setting_bool(overrides, "SCHOLAR_MODEL_CACHE_ENABLED", True),
+        model_response_cache_max_entries=max(16, _setting_int(overrides, "SCHOLAR_MODEL_CACHE_MAX_ENTRIES", 256)),
         storage_dir=storage_dir,
         upload_dir=upload_dir,
         cors_allow_origins=cors_origins or ("*",),

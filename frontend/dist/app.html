@@ -1258,9 +1258,11 @@
         .conversation-list {
             min-height: 0;
             display: grid;
+            grid-auto-rows: 92px;
             align-content: start;
             gap: 8px;
-            overflow: auto;
+            overflow-y: auto;
+            overflow-x: hidden;
             padding-right: 3px;
         }
         .conversation-row {
@@ -3510,12 +3512,32 @@
             box-shadow: 0 16px 40px rgba(20,30,38,.06);
         }
         #pageChat .conversation-row {
-            min-height: 72px;
+            height: 92px;
+            min-height: 92px;
+            flex: 0 0 92px;
+            grid-template-rows: 18px 16px 30px;
+            align-content: start;
+            gap: 3px;
+            overflow: hidden;
             border-radius: 8px;
             padding: 12px;
             background: #fff;
             box-shadow: none;
             transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+        }
+        #pageChat .conversation-row strong {
+            line-height: 18px;
+        }
+        #pageChat .conversation-row span {
+            line-height: 16px;
+        }
+        #pageChat .conversation-row span:last-child {
+            display: -webkit-box;
+            overflow: hidden;
+            white-space: normal;
+            line-height: 15px;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
         }
         #pageChat .conversation-row.active {
             background:
@@ -6882,12 +6904,12 @@
                             </div>
                             <label>检索策略</label>
                             <div id="sourceSwitch" class="source-cards">
-                                <button type="button" data-type="arxiv" class="source-card active"><b>自动联网检索</b><span>默认按研究主题检索论文池，无需先收集材料</span></button>
-                                <button type="button" data-type="doi" class="source-card"><b>限定 DOI</b><span>可选：从一篇确定文献向外扩展</span></button>
-                                <button type="button" data-type="pdf" class="source-card"><b>指定本地文件</b><span>可选：以已有全文作为种子材料</span></button>
+                                <button type="button" data-type="online" class="source-card active"><b>联网检索</b><span>从已接入的在线论文源统一检索</span></button>
+                                <button type="button" data-type="local" class="source-card"><b>本地知识库</b><span>仅检索当前租户已入库的文献</span></button>
+                                <button type="button" data-type="hybrid" class="source-card"><b>混合检索</b><span>合并联网结果与本地知识库</span></button>
                             </div>
-                            <label for="inputValue" id="inputValueLabel">限定条件（可选）</label>
-                            <input id="inputValue" placeholder="留空时自动使用研究主题检索；也可填 arXiv ID、DOI 或本地路径">
+                            <label for="inputValue" id="inputValueLabel">附加约束（可选）</label>
+                            <input id="inputValue" placeholder="用自然语言补充检索要求，例如：优先近三年、中文核心、包含公开数据集">
                             <div class="writing-controls">
                                 <label class="writing-field" for="style">
                                     <span>参考文献格式</span>
@@ -6902,15 +6924,6 @@
                                     <span class="switch-track"><i></i></span>
                                     <span class="switch-copy"><strong>启动开关</strong><small>生成大纲后暂停确认</small></span>
                                 </label>
-                            </div>
-                            <div class="agent-mode-control" role="group" aria-label="执行策略">
-                                <span>执行策略</span>
-                                <select id="agentMode" title="选择写作 Agent 的执行方式">
-                                    <option value="auto">自动调度</option>
-                                    <option value="skill">仅 Skill</option>
-                                    <option value="multi_agent">多 Agent 协作</option>
-                                </select>
-                                <small>自动模式仅在复杂任务中启用研究、结构与引用子 Agent</small>
                             </div>
                             <div class="panel workflow-panel">
                                 <div class="panel-head"><h2>生成流程</h2><span id="streamState" class="subtle">未连接</span></div>
@@ -7416,12 +7429,12 @@
     <script>
         const storageKey = 'scholar.session.v1';
         const sidebarStorageKey = 'scholar.sidebar.collapsed.v1';
-        const state = { session: null, route: 'chat', inputType: 'arxiv', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
+        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
         const routeTitles = { chat: '智能会话', tasks: '写作专项', audit: '引用审计', knowledge: '个人知识库', profile: '个人中心' };
         const sourceDefaults = {
-            arxiv: { label: '限定条件（可选）', value: '', placeholder: '留空时自动按研究主题检索；也可填 arXiv ID 或关键词' },
-            doi: { label: '限定 DOI（可选）', value: '', placeholder: '例如 10.xxxx/xxxxx；留空会按主题自动检索' },
-            pdf: { label: '本地文件路径（可选）', value: '', placeholder: '可填上传后的 PDF/TXT/MD 路径；留空会按主题自动检索' }
+            online: { label: '附加约束（可选）', placeholder: '例如：优先近三年、中文核心、包含公开数据集' },
+            local: { label: '附加约束（可选）', placeholder: '例如：仅检索“异常检测”标签、优先已批注文献' },
+            hybrid: { label: '附加约束（可选）', placeholder: '例如：本地文献优先，不足部分再补充近三年在线论文' }
         };
         const $ = (id) => document.getElementById(id);
         const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -7585,7 +7598,7 @@
             return phaseLabels[phase] || phase || '运行中';
         }
         function streamMessage(data) {
-            if (data.event === 'queued') return '任务已进入队列，正在准备联网检索';
+            if (data.event === 'queued') return '任务已进入队列，正在准备检索';
             if (data.event === 'outline_required' && data.payload?.requires_confirmation) return '大纲已生成，等待确认后继续正文写作';
             if (data.phase === 'outline_confirmed') return '大纲已确认，继续生成正文与引用审计';
             if (data.event === 'completed') return '综述、引用审计和参考文献已生成';
@@ -8458,7 +8471,6 @@
             state.inputType = type;
             document.querySelectorAll('#sourceSwitch button').forEach((button) => button.classList.toggle('active', button.dataset.type === type));
             $('inputValueLabel').textContent = sourceDefaults[type].label;
-            $('inputValue').value = sourceDefaults[type].value;
             $('inputValue').placeholder = sourceDefaults[type].placeholder;
         }
         function addLog(message) {
@@ -8556,7 +8568,8 @@
             setOutlineEditable(false, '');
             renderPaperPool([]);
             $('logs').innerHTML = '';
-            setRichContent('outlineResult', '任务已提交，正在按研究主题联网检索并生成大纲。大纲生成后会显示在这里。');
+            const strategyLabel = { online: '联网检索', local: '本地知识库检索', hybrid: '混合检索' }[state.inputType] || '联网检索';
+            setRichContent('outlineResult', `任务已提交，正在执行${strategyLabel}并生成大纲。大纲生成后会显示在这里。`);
             setRichContent('result', '任务已提交，正在检索论文池、入库并准备写作。');
             $('streamState').textContent = '连接中';
             updateProgress(0, 'queued');
@@ -8564,8 +8577,8 @@
             try {
                 const topic = $('topic').value.trim();
                 if (!topic) throw new Error('请先填写研究主题');
-                const optionalSeed = $('inputValue').value.trim();
-                const payload = { topic, input_type: state.inputType, input_value: optionalSeed || topic, citation_style: $('style').value, max_papers: Number($('maxPapers').value || 12), require_outline_confirmation: Boolean($('requireOutline')?.checked), agent_mode: $('agentMode')?.value || 'auto' };
+                const retrievalConstraints = $('inputValue').value.trim();
+                const payload = { topic, retrieval_strategy: state.inputType, retrieval_constraints: retrievalConstraints, citation_style: $('style').value, max_papers: Number($('maxPapers').value || 12), require_outline_confirmation: Boolean($('requireOutline')?.checked) };
                 const data = await api('/tasks/survey', { method: 'POST', body: JSON.stringify(payload) });
                 state.currentTaskId = data.task_id;
                 $('taskMetric').textContent = data.task_id.slice(0, 8);
@@ -9789,7 +9802,7 @@
         $('dbQuerySql')?.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) runDatabaseQuery(); });
         $('profileRagQuery')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') searchProfileRag(); });
         document.querySelectorAll('[data-settings-pane]').forEach((button) => button.addEventListener('click', () => setSettingsPane(button.dataset.settingsPane)));
-        setSource('arxiv');
+        setSource('online');
         loadInfra();
         resumeSession();
 

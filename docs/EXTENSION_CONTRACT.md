@@ -2,6 +2,8 @@
 
 Use this contract when adding backend features, MCP tools, or new atomic skills. The goal is to keep each capability independently testable and easy to wire into the UI.
 
+Agent 调用预算、缓存和 Skill 候选沉淀遵循 [product/AGENT_EFFICIENCY_AND_EVOLUTION.md](product/AGENT_EFFICIENCY_AND_EVOLUTION.md)。候选 Skill 不得绕过人工审核直接写入生产 `skills/`。
+
 ## Add A Backend Feature
 
 1. Define request/response DTOs in `app/schemas.py` or a feature-specific schema module when the schema grows large.

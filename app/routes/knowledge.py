@@ -133,6 +133,14 @@ def _resolve_tenant_file(file_path: str, user) -> Path:
     return resolved
 
 
+def _reject_unconverted_caj(path: Path) -> None:
+    if path.suffix.lower() == ".caj":
+        raise HTTPException(
+            status_code=409,
+            detail="该历史文件尚未转换为 PDF，系统不会直接输出或下载 CAJ",
+        )
+
+
 class FileAnnotationDTO(BaseModel):
     strokes: list[dict[str, Any]] = Field(default_factory=list)
     notes: str = Field(default="", max_length=50000)
@@ -278,6 +286,7 @@ async def get_knowledge_file(
     if not file_path:
         raise HTTPException(status_code=404, detail="file not found")
     resolved = _resolve_tenant_file(file_path, user)
+    _reject_unconverted_caj(resolved)
     return FileResponse(
         resolved,
         media_type=_media_type_for(resolved),
@@ -297,6 +306,7 @@ async def get_pdf_info(
     if not file_path:
         raise HTTPException(status_code=404, detail="file not found for this paper")
     resolved = _resolve_tenant_file(file_path, user)
+    _reject_unconverted_caj(resolved)
     pages = 0
     if resolved.suffix.lower() == ".pdf":
         try:

@@ -11,6 +11,8 @@ class GlobalState(TypedDict, total=False):
     topic: str
     input_type: str
     input_value: str
+    retrieval_strategy: str
+    retrieval_constraints: str
     citation_style: str
     max_papers: int
     active_skill: str

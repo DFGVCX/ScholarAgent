@@ -11,6 +11,12 @@ class InputType(str, Enum):
     DOI = "doi"
 
 
+class RetrievalStrategy(str, Enum):
+    ONLINE = "online"
+    LOCAL = "local"
+    HYBRID = "hybrid"
+
+
 class CitationStyle(str, Enum):
     IEEE = "IEEE"
     APA = "APA"
@@ -41,8 +47,10 @@ class UserContext:
 @dataclass(frozen=True)
 class SurveyTaskRequest:
     topic: str
-    input_type: InputType
+    input_type: InputType = InputType.ARXIV
     input_value: str = ""
+    retrieval_strategy: RetrievalStrategy = RetrievalStrategy.ONLINE
+    retrieval_constraints: str = ""
     citation_style: CitationStyle = CitationStyle.IEEE
     max_papers: int = 12
     require_outline_confirmation: bool = False
@@ -54,6 +62,8 @@ class SurveyTaskRequest:
             topic=str(payload.get("topic", "")).strip(),
             input_type=InputType(str(payload.get("input_type", "arxiv")).lower()),
             input_value=str(payload.get("input_value", "")).strip(),
+            retrieval_strategy=RetrievalStrategy(str(payload.get("retrieval_strategy", "online")).lower()),
+            retrieval_constraints=str(payload.get("retrieval_constraints", "")).strip(),
             citation_style=CitationStyle(payload.get("citation_style", "IEEE")),
             max_papers=int(payload.get("max_papers", 12)),
             require_outline_confirmation=bool(payload.get("require_outline_confirmation", False)),

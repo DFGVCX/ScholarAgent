@@ -58,6 +58,11 @@ class _FakeMCPClient:
         return {"status": "ERROR", "error": "unexpected tool"}
 
 
+class _NoopIntentPlanner:
+    async def plan(self, **kwargs):
+        return None
+
+
 class ConversationToolLoopTest(unittest.IsolatedAsyncioTestCase):
     def test_cnki_query_removes_command_words_and_requested_count(self):
         self.assertEqual(
@@ -67,12 +72,15 @@ class ConversationToolLoopTest(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.previous_client = conversation_tool_loop.client
+        self.previous_planner = conversation_tool_loop.planner
         self.client = _FakeMCPClient()
         conversation_tool_loop.client = self.client
+        conversation_tool_loop.planner = _NoopIntentPlanner()
         self.conversation_id = None
 
     async def asyncTearDown(self):
         conversation_tool_loop.client = self.previous_client
+        conversation_tool_loop.planner = self.previous_planner
         if self.conversation_id:
             await archive_conversation(self.conversation_id, x_api_key="demo-key")
 

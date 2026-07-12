@@ -5,7 +5,12 @@ from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
-from browser_worker.cnki_adapter import _is_article_pdf, _looks_like_result_url, search_cnki
+from browser_worker.cnki_adapter import (
+    _download_candidate_rank,
+    _is_article_pdf,
+    _looks_like_result_url,
+    search_cnki,
+)
 from browser_worker.manager import _safe_segment
 
 
@@ -57,6 +62,15 @@ class BrowserWorkerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(_looks_like_result_url("https://kns.cnki.net/kcms2/article/abstract?v=1"))
         self.assertTrue(_looks_like_result_url("https://proxy.example/path?dbcode=CJFD&filename=demo"))
         self.assertFalse(_looks_like_result_url("https://www.cnki.net/index.html"))
+
+    def test_pdf_download_is_preferred_over_caj(self):
+        candidates = [
+            {"index": 0, "text": "CAJ下载"},
+            {"index": 1, "text": "PDF下载"},
+            {"index": 2, "text": "原版阅读"},
+        ]
+        ordered = sorted(candidates, key=_download_candidate_rank)
+        self.assertEqual([item["text"] for item in ordered], ["PDF下载", "原版阅读", "CAJ下载"])
 
     def test_cnki_ad_pdf_is_rejected(self):
         path = Path("storage/runtime/test-artifacts") / f"{uuid4().hex}.pdf"

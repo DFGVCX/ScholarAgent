@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
-from app.schemas import AgentMode, CitationStyle, InputType, SurveyTaskRequest
+from app.schemas import AgentMode, CitationStyle, InputType, RetrievalStrategy, SurveyTaskRequest
 from app.services.event_bus import event_bus
 from app.services.outline_approval import outline_approval_registry
 from app.services.repository import task_repository
@@ -20,12 +20,11 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 class SurveyTaskRequestDTO(BaseModel):
     topic: str = Field(..., min_length=1, max_length=300)
-    input_type: InputType
-    input_value: str = Field(default="", max_length=500)
+    retrieval_strategy: RetrievalStrategy = RetrievalStrategy.ONLINE
+    retrieval_constraints: str = Field(default="", max_length=2000)
     citation_style: CitationStyle = CitationStyle.IEEE
     max_papers: int = Field(default=12, ge=1, le=1500)
     require_outline_confirmation: bool = False
-    agent_mode: AgentMode = AgentMode.AUTO
 
 
 class OutlineApprovalDTO(BaseModel):
@@ -50,12 +49,12 @@ async def create_survey_task(
         record = await task_service.create_survey_task(
             SurveyTaskRequest(
                 topic=request.topic,
-                input_type=request.input_type,
-                input_value=request.input_value or request.topic,
+                retrieval_strategy=request.retrieval_strategy,
+                retrieval_constraints=request.retrieval_constraints,
                 citation_style=request.citation_style,
                 max_papers=request.max_papers,
                 require_outline_confirmation=request.require_outline_confirmation,
-                agent_mode=request.agent_mode,
+                agent_mode=AgentMode.AUTO,
             ),
             user,
         )

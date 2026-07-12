@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import unittest
+import shutil
+from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import URLError
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from app.schemas import UserContext
 from app.services.institutional_access.service import (
     InstitutionalAccessError,
+    _knowledge_source_url,
+    _persist_pdf_only,
     _request_bytes,
     institutional_access_service,
 )
@@ -80,6 +85,91 @@ class InstitutionalAccessTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(reader.call_args_list[0].kwargs["direct"])
         self.assertTrue(reader.call_args_list[1].kwargs["direct"])
 
+    def test_failed_caj_conversion_leaves_no_caj_asset(self):
+        root = Path("storage/runtime/test-artifacts") / uuid4().hex
+        root.mkdir(parents=True)
+        try:
+            with patch(
+                "app.services.institutional_access.service._convert_caj_to_pdf",
+                return_value=False,
+            ):
+                with self.assertRaises(InstitutionalAccessError) as context:
+                    _persist_pdf_only(
+                        b"CAJViewer" + b"0" * 2048,
+                        "caj",
+                        root,
+                        "Conversion failure",
+                        "https://kns.cnki.net/article",
+                    )
+                self.assertEqual(context.exception.code, "CAJ_CONVERSION_FAILED")
+                self.assertEqual(list(root.iterdir()), [])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    async def test_browser_caj_is_converted_and_only_pdf_is_saved(self):
+        root = Path("storage/runtime/test-artifacts") / uuid4().hex
+        root.mkdir(parents=True)
+        try:
+            settings = SimpleNamespace(storage_dir=root)
+            user = UserContext(tenant_id="tenant_caj", user_id="user_caj")
+            session_id = "session_caj"
+            source = (
+                root / "browser-downloads" / user.tenant_id / user.user_id
+                / session_id / "paper.caj"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"CAJViewer" + b"0" * 4096)
+
+            def convert(_source: Path, destination: Path) -> bool:
+                destination.write_bytes(b"%PDF-1.4\n" + b"0" * 4096)
+                return True
+
+            saver = AsyncMock(side_effect=lambda paper: paper.to_dict())
+            with patch(
+                "app.services.institutional_access.service.get_settings",
+                return_value=settings,
+            ), patch(
+                "app.services.institutional_access.service._convert_caj_to_pdf",
+                side_effect=convert,
+            ), patch(
+                "app.services.institutional_access.service._validate_article_pdf",
+            ), patch(
+                "app.services.institutional_access.service._extract_pdf_text",
+                return_value="converted paper text",
+            ), patch(
+                "mcp_server.scholar_mcp.store.knowledge_store.save_paper",
+                saver,
+            ):
+                saved = await institutional_access_service.ingest_browser_download(
+                    user,
+                    session_id,
+                    {
+                        "title": "Converted paper",
+                        "file_path": str(source),
+                        "detail_url": "https://download.example/paper.caj",
+                    },
+                )
+
+            stored = Path(saved["file_path"])
+            self.assertEqual(stored.suffix.lower(), ".pdf")
+            self.assertTrue(stored.exists())
+            self.assertFalse(source.exists())
+            self.assertEqual(saved["metadata"]["document_format"], "pdf")
+            self.assertEqual(saved["metadata"]["content_type"], "application/pdf")
+            self.assertTrue(saved["metadata"]["converted_from_caj"])
+            self.assertNotIn("original_file_path", saved["metadata"])
+            self.assertEqual(saved["url"], "")
+            self.assertEqual(list(root.rglob("*.caj")), [])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_caj_download_url_is_not_stored_as_knowledge_source(self):
+        self.assertEqual(_knowledge_source_url("https://example.test/paper.caj"), "")
+        self.assertEqual(
+            _knowledge_source_url("https://kns.cnki.net/kcms2/article/abstract?v=1"),
+            "https://kns.cnki.net/kcms2/article/abstract?v=1",
+        )
+
     async def test_confirmed_pdf_is_validated_and_saved_to_knowledge(self):
         with patch("app.services.institutional_access.service._validate_public_url"):
             plan = institutional_access_service.prepare_download(
@@ -100,7 +190,7 @@ class InstitutionalAccessTest(unittest.IsolatedAsyncioTestCase):
         with patch(
             "app.services.institutional_access.service._request_bytes",
             return_value=(fake_pdf, "application/pdf", "https://publisher.example/paper.pdf"),
-        ):
+        ), patch("app.services.institutional_access.service._validate_article_pdf"):
             result = await institutional_access_service.confirm_download(
                 self.user,
                 plan["download_id"],

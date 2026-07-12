@@ -33,6 +33,7 @@ def _default_state() -> dict[str, Any]:
         "pending_action": None,
         "last_route": None,
         "last_successful_tool": "",
+        "last_search_query": "",
         "last_error": "",
         "artifacts": [],
         "recent_results": [],
@@ -112,9 +113,11 @@ class ConversationStateService:
         result = result or {}
         if tool_name == "search_cnki_papers":
             state.update(active_domain="literature", active_source="cnki")
+            state["last_search_query"] = str(arguments.get("query") or "")[:500]
             state["phase"] = "selection_ready" if status == "succeeded" else "search_failed"
         elif tool_name == "search_papers":
             state.update(active_domain="literature", active_source=str(arguments.get("source") or "all"))
+            state["last_search_query"] = str(arguments.get("query") or "")[:500]
             state["phase"] = "selection_ready" if status == "succeeded" else "search_failed"
         elif tool_name in {"download_cnki_selections", "download_institution_url", "acquire_paper_to_knowledge"}:
             state["phase"] = "awaiting_confirmation" if status == "awaiting_confirmation" else (

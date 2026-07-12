@@ -23,6 +23,7 @@ docs/*
 docs/product/*
 !docs/product/PRODUCT_ARCHITECTURE.md
 !docs/product/CONTEXT_AND_ORCHESTRATION_ARCHITECTURE.md
+!docs/product/AGENT_EFFICIENCY_AND_EVOLUTION.md
 !docs/operations/
 docs/operations/*
 !docs/operations/STARTUP_CN.md

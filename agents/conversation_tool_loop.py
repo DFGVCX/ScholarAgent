@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
-from agents.factory import model_factory
+from agents.intent_planner import IntentPlanner, intent_planner
+from agents.evolution import skill_evolution_service
 from app.schemas import UserContext
 from app.services.conversation_tool_store import conversation_tool_call_store
 from app.services.conversation_state_service import conversation_state_service
@@ -30,8 +31,14 @@ class ToolLoopOutcome:
 
 
 class ConversationToolLoop:
-    def __init__(self, client: ScholarMCPClient | None = None) -> None:
+    def __init__(
+        self,
+        client: ScholarMCPClient | None = None,
+        planner: IntentPlanner | None = None,
+    ) -> None:
         self.client = client or ScholarMCPClient()
+        self.planner = planner or intent_planner
+        self._tool_cache: tuple[int, float, list[dict[str, Any]]] = (0, 0.0, [])
 
     async def run(
         self,
@@ -41,9 +48,14 @@ class ConversationToolLoop:
         messages: list[dict[str, Any]],
     ) -> ToolLoopOutcome | None:
         normalized = content.strip()
+        previous_state = conversation_state_service.get(user, conversation_id)
         working_state = conversation_state_service.observe_user_message(
             user, conversation_id, normalized
         )
+        planner_state = {
+            **working_state,
+            "previous_goal": previous_state.get("current_goal") or "",
+        }
         pending = conversation_tool_call_store.latest_pending(user, conversation_id)
         if pending and normalized.lower() in _CONFIRM_WORDS:
             return await self.confirm(user, conversation_id, pending["call_id"], approved=True)
@@ -56,27 +68,45 @@ class ConversationToolLoop:
                 arguments=pending.get("arguments") or {}, status="cancelled",
                 call_id=pending["call_id"],
             )
+            self._learn(user, conversation_id, pending["tool_name"], pending.get("arguments") or {}, "cancelled")
             return ToolLoopOutcome(
                 "已取消该操作，未修改你的知识库。",
                 {"kind": "tool_cancelled", "tool_call": {**pending, "status": "cancelled"}},
             )
 
-        tools = await self.client.list_tools()
+        tools = await self._available_tools()
         available = {str(tool.get("name")) for tool in tools}
         ledger_has_cnki = conversation_tool_call_store.has_succeeded(
             user, conversation_id, "search_cnki_papers"
         )
 
+        model_plan = self._safe_fast_plan(
+            normalized, messages, ledger_has_cnki=ledger_has_cnki
+        )
+        if model_plan is None and self._should_model_plan(normalized, planner_state):
+            model_plan = await self.planner.plan(
+                content=normalized,
+                tools=tools,
+                messages=messages,
+                working_state=planner_state,
+                scope={
+                    "trace_id": f"conversation:{conversation_id}",
+                    "tenant_id": user.tenant_id,
+                    "user_id": user.user_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+
         state_has_cnki = working_state.get("active_source") == "cnki"
-        combined = self._combined_cnki_plan(
+        combined = self._model_cnki_pipeline(model_plan) or self._combined_cnki_plan(
             normalized, allow_implicit_cnki=ledger_has_cnki or state_has_cnki
         )
         if combined and {"search_cnki_papers", "download_cnki_selections"}.issubset(available):
             route_state = conversation_state_service.record_route(
                 user, conversation_id, intent="search_and_download", target="cnki_pipeline",
                 execution_mode="tool_pipeline",
-                reasons=["active_source_cnki", "explicit_search", "explicit_download", "selection_index_resolved"],
-                confidence=0.99,
+                reasons=list((model_plan or {}).get("reasons") or ["active_source_cnki", "explicit_search", "explicit_download", "selection_index_resolved"]),
+                confidence=float((model_plan or {}).get("confidence") or 0.99),
                 planned_steps=["search_cnki_papers", "download_cnki_selections", "await_user_confirmation"],
             )
             search_outcome = await self._execute(
@@ -116,9 +146,11 @@ class ConversationToolLoop:
                 },
             )
 
-        plan = self._deterministic_plan(normalized, messages, ledger_has_cnki=ledger_has_cnki)
-        if plan is None and _ACTION_PATTERN.search(normalized):
-            plan = await self._llm_plan(normalized, tools)
+        plan = model_plan if model_plan and not self._model_cnki_pipeline(model_plan) else None
+        if plan is None:
+            plan = self._deterministic_plan(
+                normalized, messages, ledger_has_cnki=ledger_has_cnki
+            )
         if plan is None:
             return None
 
@@ -174,6 +206,7 @@ class ConversationToolLoop:
                 user, conversation_id, tool_name=call["tool_name"],
                 arguments=call.get("arguments") or {}, status="cancelled", call_id=call_id,
             )
+            self._learn(user, conversation_id, call["tool_name"], call.get("arguments") or {}, "cancelled")
             return ToolLoopOutcome("已取消该操作，未修改你的知识库。", {"kind": "tool_cancelled", "tool_call": updated})
 
         arguments = dict(call["arguments"])
@@ -189,6 +222,7 @@ class ConversationToolLoop:
                 user, conversation_id, tool_name=call["tool_name"],
                 arguments=arguments, status="failed", error=str(exc), call_id=call_id,
             )
+            self._learn(user, conversation_id, call["tool_name"], arguments, "failed")
             return ToolLoopOutcome(
                 f"工具执行失败：{exc}",
                 {"kind": "tool_error", "tool_call": updated, "error": str(exc)},
@@ -200,6 +234,7 @@ class ConversationToolLoop:
             user, conversation_id, tool_name=call["tool_name"], arguments=arguments,
             status="succeeded", result=result, call_id=call_id,
         )
+        self._learn(user, conversation_id, call["tool_name"], arguments, "succeeded")
         return ToolLoopOutcome(
             self._result_message(call["tool_name"], result),
             {"kind": "tool_result", "tool_call": updated, "result": result},
@@ -225,6 +260,7 @@ class ConversationToolLoop:
                 user, conversation_id, tool_name=tool_name, arguments=arguments,
                 status="failed", error=str(exc), call_id=call["call_id"],
             )
+            self._learn(user, conversation_id, tool_name, arguments, "failed")
             return ToolLoopOutcome(
                 f"工具执行失败：{exc}",
                 {"kind": "tool_error", "tool_call": updated, "error": str(exc)},
@@ -261,10 +297,93 @@ class ConversationToolLoop:
             error=str(result.get("error") or "") if status == "failed" else "",
             call_id=call["call_id"],
         )
+        self._learn(user, conversation_id, tool_name, arguments, status)
         return ToolLoopOutcome(
             self._result_message(tool_name, result),
             {"kind": "tool_result", "tool_call": updated, "result": result},
         )
+
+    async def _available_tools(self) -> list[dict[str, Any]]:
+        client_id, created_at, tools = self._tool_cache
+        if client_id == id(self.client) and tools and time.monotonic() - created_at < 60:
+            return tools
+        tools = await self.client.list_tools()
+        self._tool_cache = (id(self.client), time.monotonic(), tools)
+        return tools
+
+    @staticmethod
+    def _learn(
+        user: UserContext,
+        conversation_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        status: str,
+    ) -> None:
+        try:
+            skill_evolution_service.record_tool_outcome(
+                user, conversation_id, tool_name, arguments, status
+            )
+        except Exception:
+            # Learning is observational and must never break the user operation.
+            return
+
+    def _safe_fast_plan(
+        self,
+        content: str,
+        messages: list[dict[str, Any]],
+        *,
+        ledger_has_cnki: bool,
+    ) -> dict[str, Any] | None:
+        """Resolve only unambiguous commands without spending a planning call."""
+        normalized = re.sub(r"[，。！？!?,\s]+", "", content).lower()
+        if normalized in {"查看机构访问状态", "机构访问状态", "机构会话状态", "学校vpn状态"}:
+            return {"tool_name": "institution_session_status", "arguments": {}, "confidence": 1.0, "reasons": ["deterministic_exact_command"]}
+        if normalized in {"连接机构", "启动机构登录", "连接学校", "机构登录"}:
+            return {"tool_name": "start_institution_login", "arguments": {}, "confidence": 1.0, "reasons": ["deterministic_exact_command"]}
+        if normalized in {"登录完成", "已经登录", "已完成登录", "我登录好了"}:
+            return {"tool_name": "confirm_institution_browser_login", "arguments": {}, "confidence": 1.0, "reasons": ["deterministic_exact_command"]}
+        if normalized in {"查看知识库有什么论文", "知识库有什么论文", "看看知识库", "查看知识库"}:
+            return {
+                "tool_name": "search_papers",
+                "arguments": {"query": "", "source": "local", "limit": 10, "persist_results": False},
+                "confidence": 1.0,
+                "reasons": ["deterministic_exact_command"],
+            }
+        if _PAPER_ID_PATTERN.fullmatch(content.strip()):
+            return {
+                "tool_name": "search_papers",
+                "arguments": {"query": content.strip(), "source": "local", "limit": 5},
+                "confidence": 1.0,
+                "reasons": ["deterministic_paper_id"],
+            }
+        return None
+
+    @staticmethod
+    def _should_model_plan(content: str, state: dict[str, Any]) -> bool:
+        if _ACTION_PATTERN.search(content):
+            return True
+        if state.get("active_domain") == "literature" and any(
+            marker in content
+            for marker in ("换成", "改成", "改搜", "重新", "还是", "第一篇", "前几篇")
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _model_cnki_pipeline(plan: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not plan or plan.get("execution_mode") != "tool_pipeline":
+            return None
+        steps = plan.get("steps") or []
+        if [step.get("tool_name") for step in steps] != [
+            "search_cnki_papers",
+            "download_cnki_selections",
+        ]:
+            return None
+        query = str((steps[0].get("arguments") or {}).get("query") or "").strip()
+        indexes = list((steps[1].get("arguments") or {}).get("indexes") or [])
+        if not query or not indexes:
+            return None
+        return {"query": query, "indexes": indexes[:5]}
 
     def _deterministic_plan(
         self,
@@ -363,41 +482,6 @@ class ConversationToolLoop:
             return None
         indexes = self._extract_indexes(content) or [1]
         return {"query": self._clean_query(content), "indexes": indexes}
-
-    async def _llm_plan(self, content: str, tools: list[dict[str, Any]]) -> dict[str, Any] | None:
-        allowed = {
-            "search_papers", "search_cnki_papers", "institution_session_status",
-            "start_institution_login", "confirm_institution_browser_login",
-        }
-        safe_tools = [
-            {"name": item.get("name"), "description": item.get("description")}
-            for item in tools if item.get("name") in allowed
-        ]
-        prompt = (
-            "你是工具调用规划器。仅当用户明确要求执行操作时选择工具。"
-            "只输出 JSON：{\"action\":\"tool|none\",\"tool_name\":\"\",\"arguments\":{}}。"
-            "禁止构造论文信息，禁止选择保存、下载或删除等有副作用工具。\n"
-            f"可用工具：{json.dumps(safe_tools, ensure_ascii=False)}\n用户请求：{content}"
-        )
-        try:
-            response = await model_factory.generate_text("tool_planning", prompt, {})
-            payload = self._extract_json(response.content)
-        except Exception:
-            return None
-        if payload.get("action") != "tool":
-            return None
-        return {"tool_name": payload.get("tool_name"), "arguments": payload.get("arguments") or {}}
-
-    @staticmethod
-    def _extract_json(text: str) -> dict[str, Any]:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            return {}
-        try:
-            value = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return {}
-        return value if isinstance(value, dict) else {}
 
     def _selected_candidate(self, content: str, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
         index = self._ordinal_index(content)
@@ -505,7 +589,7 @@ class ConversationToolLoop:
             indexes = arguments.get("indexes") or []
             return (
                 f"即将通过当前已登录的知网浏览器下载第 {', '.join(map(str, indexes))} 篇。"
-                "下载完成后会校验 PDF/CAJ、解析正文并自动写入个人知识库。请确认执行。"
+                "若来源为 CAJ，系统会先临时转换并校验 PDF；知识库只保存 PDF。请确认执行。"
             )
         if tool_name == "revoke_institution_session":
             return "即将断开当前机构访问会话。确认后临时认证状态将失效。"
