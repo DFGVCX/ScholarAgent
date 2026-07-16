@@ -31,6 +31,7 @@ class PostgresRetrievalRepository:
                     AND c.content_version=p.current_content_version
                     AND (:query='' OR c.search_vector @@ plainto_tsquery('simple', :query)
                          OR c.content ILIKE :pattern OR p.title ILIKE :pattern
+                         OR p.paper_id ILIKE :pattern
                          OR p.abstract ILIKE :pattern)
                 ORDER BY score DESC, p.updated_at DESC, c.chunk_index
                 LIMIT :candidate_limit"""

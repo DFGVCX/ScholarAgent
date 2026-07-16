@@ -42,12 +42,12 @@ SECRET_KEYS: frozenset[str] = frozenset(
 )
 
 SELECT_OPTIONS: dict[str, tuple[str, ...]] = {
-    "SCHOLAR_STORAGE_BACKEND": ("auto", "sqlite"),
+    "SCHOLAR_STORAGE_BACKEND": ("postgresql",),
     "SCHOLAR_ALLOW_MOCK_DATA": ("false", "true"),
     "SCHOLAR_EXTERNAL_SOURCE_PROVIDER": ("real", "mock"),
-    "SCHOLAR_RAG_INDEX_BACKEND": ("auto", "chromadb"),
-    "SCHOLAR_RAG_RETRIEVAL_MODE": ("hybrid", "lexical", "vector"),
-    "SCHOLAR_RAG_EMBEDDING_PROVIDER": ("lexical", "hybrid", "openai-compatible", "bge", "jina", "cohere", "mock-hash"),
+    "SCHOLAR_RAG_INDEX_BACKEND": ("pgvector",),
+    "SCHOLAR_RAG_RETRIEVAL_MODE": ("hybrid_rrf", "lexical"),
+    "SCHOLAR_RAG_EMBEDDING_PROVIDER": ("qwen",),
     "SCHOLAR_RAG_CHUNK_STRATEGY": ("paragraph", "fixed"),
     "SCHOLAR_PRIMARY_MODEL_PROVIDER": (
         "none",

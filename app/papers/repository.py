@@ -57,6 +57,80 @@ class PaperRepository:
         )
         return [self._record(row) for row in result.mappings().all()]
 
+    async def get_document(
+        self, tenant_id: str, user_id: str, paper_id: str
+    ) -> dict[str, Any] | None:
+        rows = await self.list_documents(tenant_id, user_id, query=paper_id, limit=10)
+        return next((row for row in rows if row["paper_id"] == paper_id), None)
+
+    async def list_documents(
+        self, tenant_id: str, user_id: str, *, query: str = "", limit: int = 50
+    ) -> list[dict[str, Any]]:
+        result = await self.session.execute(
+            text(
+                """SELECT p.paper_id, p.source, p.title, p.authors, p.abstract,
+                    pc.full_text, p.published_at, p.normalized_doi AS doi,
+                    p.normalized_arxiv_id AS arxiv_id, p.canonical_url AS url,
+                    p.in_knowledge_base, p.ingestion_status, p.metadata,
+                    asset.file_uri, asset.file_name, asset.mime_type, asset.file_size
+                FROM papers p
+                LEFT JOIN paper_contents pc ON pc.paper_uuid=p.paper_uuid
+                    AND pc.tenant_id=p.tenant_id AND pc.user_id=p.user_id
+                    AND pc.content_version=p.current_content_version
+                LEFT JOIN LATERAL (
+                    SELECT file_uri, file_name, mime_type, file_size FROM paper_assets a
+                    WHERE a.paper_uuid=p.paper_uuid AND a.tenant_id=p.tenant_id AND a.user_id=p.user_id
+                    ORDER BY a.created_at DESC LIMIT 1
+                ) asset ON true
+                WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id AND p.deleted_at IS NULL
+                    AND (:query='' OR p.paper_id ILIKE :pattern OR p.title ILIKE :pattern
+                         OR p.abstract ILIKE :pattern)
+                ORDER BY p.updated_at DESC LIMIT :limit"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "query": query.strip(),
+                "pattern": f"%{query.strip()}%",
+                "limit": max(1, min(limit, 200)),
+            },
+        )
+        documents: list[dict[str, Any]] = []
+        for row in result.mappings().all():
+            authors = row.get("authors") or []
+            metadata = dict(row.get("metadata") or {})
+            if row.get("file_uri"):
+                metadata.update(
+                    {
+                        "file_path": row["file_uri"],
+                        "file_name": row.get("file_name"),
+                        "content_type": row.get("mime_type"),
+                        "content_length": row.get("file_size"),
+                    }
+                )
+            published_at = row.get("published_at")
+            documents.append(
+                {
+                    "paper_id": row["paper_id"],
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "source": row["source"],
+                    "title": row["title"],
+                    "authors": list(authors),
+                    "abstract": row.get("abstract") or "",
+                    "full_text": row.get("full_text") or "",
+                    "published_at": published_at.isoformat() if hasattr(published_at, "isoformat") else published_at,
+                    "doi": row.get("doi"),
+                    "arxiv_id": row.get("arxiv_id"),
+                    "url": row.get("url"),
+                    "file_path": row.get("file_uri") or "",
+                    "in_knowledge_base": bool(row.get("in_knowledge_base")),
+                    "ingestion_status": row.get("ingestion_status"),
+                    "metadata": metadata,
+                }
+            )
+        return documents
+
     async def save(self, tenant_id: str, user_id: str, paper: PaperInput) -> PaperRecord:
         result = await self.session.execute(
             text(
@@ -199,6 +273,116 @@ class PaperRepository:
             {"version": version, "tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
         )
         return ContentVersion(paper_uuid, content_uuid, version, len(chunks))
+
+    async def save_asset(self, tenant_id: str, user_id: str, paper_uuid: UUID, paper: PaperInput) -> None:
+        if not paper.file_uri:
+            return
+        if not paper.file_sha256 or paper.file_size is None or not paper.mime_type:
+            raise ValueError("file_uri requires file_sha256, file_size, and mime_type")
+        await self.session.execute(
+            text(
+                """INSERT INTO paper_assets (
+                    tenant_id, user_id, paper_uuid, file_uri, file_name, mime_type,
+                    sha256, file_size, validation_status
+                ) VALUES (
+                    :tenant_id, :user_id, :paper_uuid, :file_uri, :file_name, :mime_type,
+                    :sha256, :file_size, 'valid'
+                ) ON CONFLICT (tenant_id, user_id, sha256) DO UPDATE SET
+                    paper_uuid=EXCLUDED.paper_uuid, file_uri=EXCLUDED.file_uri,
+                    file_name=EXCLUDED.file_name, mime_type=EXCLUDED.mime_type,
+                    file_size=EXCLUDED.file_size, validation_status='valid', updated_at=now()"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "file_uri": paper.file_uri,
+                "file_name": paper.file_name or paper.file_uri.rsplit("/", 1)[-1],
+                "mime_type": paper.mime_type,
+                "sha256": paper.file_sha256,
+                "file_size": paper.file_size,
+            },
+        )
+
+    async def set_embeddings(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID,
+        content_uuid: UUID,
+        embeddings: Sequence[Sequence[float]],
+        *,
+        model: str,
+    ) -> None:
+        for position, embedding in enumerate(embeddings):
+            vector = "[" + ",".join(format(float(value), ".9g") for value in embedding) + "]"
+            await self.session.execute(
+                text(
+                    "UPDATE paper_chunks SET embedding=CAST(:embedding AS vector), "
+                    "embedding_model=:model, embedding_status='ready', embedding_error=NULL, updated_at=now() "
+                    "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid "
+                    "AND content_uuid=:content_uuid AND chunk_index=:position"
+                ),
+                {
+                    "embedding": vector,
+                    "model": model,
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "paper_uuid": paper_uuid,
+                    "content_uuid": content_uuid,
+                    "position": position,
+                },
+            )
+        await self.session.execute(
+            text(
+                "UPDATE papers SET ingestion_status='ready', last_error=NULL, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid"
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
+        )
+
+    async def mark_embedding_failed(
+        self, tenant_id: str, user_id: str, paper_uuid: UUID, content_uuid: UUID, error: str
+    ) -> None:
+        await self.session.execute(
+            text(
+                "UPDATE paper_chunks SET embedding_status='failed', embedding_error=:error, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid "
+                "AND content_uuid=:content_uuid"
+            ),
+            {
+                "error": error[:4000],
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "content_uuid": content_uuid,
+            },
+        )
+        await self.session.execute(
+            text(
+                "UPDATE papers SET ingestion_status='failed', last_error=:error, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid"
+            ),
+            {"error": error[:4000], "tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
+        )
+
+    async def stats(self, tenant_id: str, user_id: str) -> dict[str, int]:
+        result = await self.session.execute(
+            text(
+                """SELECT
+                    COUNT(DISTINCT p.paper_uuid) FILTER (WHERE p.deleted_at IS NULL) AS paper_count,
+                    COUNT(c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL AND c.content_version=p.current_content_version
+                    ) AS chunk_count,
+                    COUNT(*) FILTER (WHERE p.ingestion_status='failed' AND p.deleted_at IS NULL) AS failed_papers
+                FROM papers p LEFT JOIN paper_chunks c ON c.paper_uuid=p.paper_uuid
+                    AND c.tenant_id=p.tenant_id AND c.user_id=p.user_id
+                WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id},
+        )
+        row = result.mappings().first() or {}
+        return {key: int(row.get(key) or 0) for key in ("paper_count", "chunk_count", "failed_papers")}
 
     @staticmethod
     def _record(row: Mapping[str, Any]) -> PaperRecord:

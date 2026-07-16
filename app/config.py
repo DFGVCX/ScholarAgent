@@ -14,7 +14,7 @@ class Settings:
     api_keys: str = "demo-key:tenant_demo:user_demo"
     allow_mock_data: bool = False
     database_url: str = "postgresql+psycopg://scholar:scholar@localhost:5432/scholar_agent"
-    storage_backend: str = "auto"
+    storage_backend: str = "postgresql"
     primary_model_provider: str = "none"
     secondary_model_provider: str = "none"
     llm_base_url: str = ""
@@ -25,8 +25,8 @@ class Settings:
     anthropic_model: str = ""
     external_source_provider: str = "real"
     external_source_timeout_seconds: float = 8.0
-    rag_index_backend: str = "auto"
-    rag_retrieval_mode: str = "hybrid"
+    rag_index_backend: str = "pgvector"
+    rag_retrieval_mode: str = "hybrid_rrf"
     rag_embedding_provider: str = "qwen"
     rag_embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
     rag_embedding_api_key: str = ""
@@ -110,7 +110,7 @@ def get_settings() -> Settings:
         api_keys=_setting_value(overrides, "SCHOLAR_API_KEYS", "demo-key:tenant_demo:user_demo"),
         allow_mock_data=_setting_bool(overrides, "SCHOLAR_ALLOW_MOCK_DATA", False),
         database_url=database_url,
-        storage_backend=_setting_value(overrides, "SCHOLAR_STORAGE_BACKEND", "auto"),
+        storage_backend="postgresql",
         primary_model_provider=_setting_value(overrides, "SCHOLAR_PRIMARY_MODEL_PROVIDER", "none").strip().lower(),
         secondary_model_provider=_setting_value(overrides, "SCHOLAR_SECONDARY_MODEL_PROVIDER", "none").strip().lower(),
         llm_base_url=_setting_value(overrides, "SCHOLAR_LLM_BASE_URL", "").strip(),
@@ -121,8 +121,10 @@ def get_settings() -> Settings:
         anthropic_model=_setting_value(overrides, "SCHOLAR_ANTHROPIC_MODEL", "").strip(),
         external_source_provider=_setting_value(overrides, "SCHOLAR_EXTERNAL_SOURCE_PROVIDER", "real").strip().lower(),
         external_source_timeout_seconds=_setting_float(overrides, "SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS", 8.0),
-        rag_index_backend=_setting_value(overrides, "SCHOLAR_RAG_INDEX_BACKEND", "auto").strip().lower(),
-        rag_retrieval_mode=_setting_value(overrides, "SCHOLAR_RAG_RETRIEVAL_MODE", "hybrid").strip().lower(),
+        rag_index_backend="pgvector",
+        rag_retrieval_mode=_setting_value(
+            overrides, "SCHOLAR_RAG_RETRIEVAL_MODE", "hybrid_rrf"
+        ).strip().lower(),
         rag_embedding_provider=_setting_value(overrides, "SCHOLAR_RAG_EMBEDDING_PROVIDER", "qwen").strip().lower(),
         rag_embedding_base_url=_setting_value(
             overrides,
