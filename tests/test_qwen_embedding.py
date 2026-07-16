@@ -64,6 +64,20 @@ class QwenEmbeddingTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(EmbeddingResponseError, "1024"):
             await client.embed(["query"])
 
+    async def test_duplicate_response_indexes_are_rejected(self) -> None:
+        vector = [1.0] + [0.0] * 1023
+        session = _Session(
+            _Response({"data": [
+                {"index": 0, "embedding": vector},
+                {"index": 0, "embedding": vector},
+            ]})
+        )
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example", api_key="secret", session_factory=lambda **_: session
+        )
+        with self.assertRaisesRegex(EmbeddingResponseError, "indexes"):
+            await client.embed(["first", "second"])
+
 
 if __name__ == "__main__":
     unittest.main()

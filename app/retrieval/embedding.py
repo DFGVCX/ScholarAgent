@@ -96,6 +96,8 @@ class QwenEmbeddingClient:
                 f"expected {expected_count} embedding rows, received {len(rows) if isinstance(rows, list) else 0}"
             )
         ordered = sorted(rows, key=lambda row: int(row.get("index", 0)))
+        if [int(row.get("index", -1)) for row in ordered] != list(range(expected_count)):
+            raise EmbeddingResponseError("Qwen embedding response indexes are incomplete or duplicated")
         normalized: list[list[float]] = []
         for row in ordered:
             raw = row.get("embedding")
@@ -103,7 +105,10 @@ class QwenEmbeddingClient:
                 raise EmbeddingResponseError(
                     f"Qwen embedding must contain exactly {self.dimensions} dimensions"
                 )
-            vector = [float(value) for value in raw]
+            try:
+                vector = [float(value) for value in raw]
+            except (TypeError, ValueError) as exc:
+                raise EmbeddingResponseError("Qwen embedding contains a non-numeric value") from exc
             if not all(math.isfinite(value) for value in vector):
                 raise EmbeddingResponseError("Qwen embedding contains a non-finite value")
             norm = math.sqrt(math.fsum(value * value for value in vector))
