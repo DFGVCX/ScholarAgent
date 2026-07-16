@@ -52,7 +52,7 @@ py -3.12 -m venv .venv
 pip install -r requirements.txt
 ```
 
-当前核心依赖包括 FastAPI、Uvicorn、PyMySQL、Redis 客户端、aiohttp、pypdf 等。
+当前核心依赖包括 FastAPI、Uvicorn、SQLAlchemy、psycopg、pgvector、Redis 客户端、aiohttp、pypdf 等。
 
 ### 2.3 启动 Browser Worker
 
@@ -109,12 +109,12 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 - 个人知识库
 - 个人中心
 
-## 4. MySQL 与 Redis
+## 4. PostgreSQL/pgvector 与 Redis
 
-项目支持 MySQL 优先、JSON fallback。
+项目使用 PostgreSQL 作为唯一关系数据与检索事实源，不提供 SQLite、JSON 或 Chroma 回退。
 
-- MySQL 可用时：任务、会话、知识库、RAG、事件、审计等数据写入 MySQL。
-- MySQL 不可用时：部分开发数据会写入 `storage/runtime/*.json`。
+- PostgreSQL/pgvector 保存任务、会话、论文、切片、向量、事件和审计数据。
+- PostgreSQL 不可用时后端健康检查失败，不写入其他本地数据库。
 - Redis 可用时：用于限流和任务事件流增强。
 - Redis 不可用时：会回退到内存实现，但重启后内存状态会丢失。
 
@@ -123,21 +123,21 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 可以复制 `.env.example` 中的配置，或在 PowerShell 中临时设置：
 
 ```powershell
-$env:SCHOLAR_MYSQL_URL="mysql://scholar:scholar@127.0.0.1:3306/scholar_agent?charset=utf8mb4"
+$env:SCHOLAR_DATABASE_URL="postgresql+psycopg://scholar:scholar@127.0.0.1:5432/scholar_agent"
 $env:SCHOLAR_REDIS_URL="redis://127.0.0.1:6379/0"
-$env:SCHOLAR_STORAGE_BACKEND="auto"
+$env:SCHOLAR_STORAGE_BACKEND="postgresql"
 $env:SCHOLAR_ALLOW_MOCK_DATA="false"
 $env:SCHOLAR_EXTERNAL_SOURCE_PROVIDER="real"
 ```
 
-### 4.2 初始化 MySQL
+### 4.2 初始化 PostgreSQL
 
-如果本机已经有 MySQL，可以使用管理员连接串初始化数据库、业务用户和表结构：
+启动 PostgreSQL/pgvector 后，使用 Alembic 创建表结构：
 
 ```powershell
-$env:SCHOLAR_MYSQL_ADMIN_URL="mysql://root:你的root密码@127.0.0.1:3306/mysql?charset=utf8mb4"
-$env:SCHOLAR_MYSQL_URL="mysql://scholar:scholar@127.0.0.1:3306/scholar_agent?charset=utf8mb4"
-.\.venv\Scripts\python.exe scripts\bootstrap_mysql.py
+$env:SCHOLAR_DATABASE_URL="postgresql+psycopg://scholar:scholar@127.0.0.1:5432/scholar_agent"
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe scripts\init_infra.py
 ```
 
 初始化会创建或校验以下核心表：
@@ -163,7 +163,7 @@ $env:SCHOLAR_MYSQL_URL="mysql://scholar:scholar@127.0.0.1:3306/scholar_agent?cha
 2. 使用 `demo / demo123 / tenant_demo` 登录。
 3. 进入“个人中心”。
 4. 在模型、数据库、RAG、论文源相关区域填写配置。
-5. 使用 MySQL 初始化或模型探测功能验证连接。
+5. 使用基础设施健康检查或模型探测功能验证连接。
 
 运行配置默认保存到：
 
@@ -254,9 +254,9 @@ $env:SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS="8"
 
 ## 8. Docker 启动
 
-如果你希望用容器启动 MySQL、Redis、后端和前端，可以使用 Docker Compose。
+如果你希望用容器启动 PostgreSQL/pgvector、Redis、后端和前端，可以使用 Docker Compose。
 
-### 8.1 启动 MySQL 和 Redis
+### 8.1 启动 PostgreSQL/pgvector 和 Redis
 
 ```powershell
 docker compose --profile prod-deps up -d db redis
@@ -306,7 +306,8 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/health/infra
 
 重点看：
 
-- `mysql.available`
+- `database.available`
+- `database.pgvector`
 - `redis.available`
 - `runtime_backend.storage`
 - `runtime_backend.rag`
@@ -355,10 +356,10 @@ frontend/dist/app.html
 tenant_demo / demo / demo123
 ```
 
-如果启用了 MySQL，检查 `scholar_users` 和 `scholar_tenants` 是否初始化成功。也可以重新执行：
+检查 `scholar_users` 和 `scholar_tenants` 是否初始化成功。也可以重新执行：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\bootstrap_mysql.py
+.\.venv\Scripts\python.exe scripts\init_infra.py
 ```
 
 ### 10.3 写作任务失败
@@ -368,7 +369,7 @@ tenant_demo / demo / demo123
 - 模型是否已配置。
 - 外部论文源是否可访问。
 - 当前租户知识库是否有论文。
-- MySQL 是否可用。
+- PostgreSQL/pgvector 是否可用。
 
 如果外部论文源不可用，可以先在“个人知识库”上传论文，再提交写作专项。
 
@@ -376,12 +377,12 @@ tenant_demo / demo / demo123
 
 Redis 不可用时系统会退回内存限流和事件队列。开发阶段可以继续使用，但重启后状态会丢失。需要稳定运行时请启动 Redis。
 
-### 10.5 MySQL 不可用
+### 10.5 PostgreSQL 不可用
 
-系统会尝试 JSON fallback，但企业级运行建议使用 MySQL。检查连接串：
+系统不会回退到本地文件数据库。检查连接串并确认 migration 已执行：
 
 ```text
-SCHOLAR_MYSQL_URL=mysql://用户:密码@主机:端口/数据库?charset=utf8mb4
+SCHOLAR_DATABASE_URL=postgresql+psycopg://用户:密码@主机:5432/数据库
 ```
 
 ### 10.6 模型探测失败
@@ -399,9 +400,9 @@ SCHOLAR_MYSQL_URL=mysql://用户:密码@主机:端口/数据库?charset=utf8mb4
 
 日常开发建议使用这个顺序：
 
-1. 启动 MySQL 和 Redis。
+1. 启动 PostgreSQL/pgvector 和 Redis。
 2. 激活 `.venv`。
-3. 执行 `scripts\bootstrap_mysql.py`。
+3. 执行 `python -m alembic upgrade head` 和 `scripts\init_infra.py`。
 4. 启动 `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`。
 5. 打开 `http://127.0.0.1:8000/app.html`。
 6. 登录 `tenant_demo / demo / demo123`。
@@ -414,5 +415,5 @@ SCHOLAR_MYSQL_URL=mysql://用户:密码@主机:端口/数据库?charset=utf8mb4
 - [架构学习导读](../ARCHITECTURE_LEARNING.md)
 - [项目结构规范](../PROJECT_STRUCTURE.md)
 - [扩展契约](../EXTENSION_CONTRACT.md)
-- [MySQL / Redis / RAG 初始化](MYSQL_REDIS_RAG_SETUP.md)
+- [PostgreSQL / Redis / RAG 初始化](../../deploy/README.md)
 - [部署资产说明](../../deploy/README.md)

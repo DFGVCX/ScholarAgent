@@ -241,10 +241,16 @@ def get_all_settings() -> dict[str, Any]:
     }
 
 
+def _set_tenant_context(cursor: Any, tenant_id: str, user_id: str) -> None:
+    cursor.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
+    cursor.execute("SELECT set_config('app.user_id', %s, true)", (user_id,))
+
+
 def save_annotations(
     tenant_id: str, user_id: str, paper_id: str, annotations: list[dict[str, Any]]
 ) -> int:
     with connection() as conn, conn.cursor() as cursor:
+        _set_tenant_context(cursor, tenant_id, user_id)
         cursor.execute(
             _translate_sql(
                 "DELETE FROM paper_annotations WHERE tenant_id=? AND user_id=? "
@@ -279,15 +285,20 @@ def save_annotations(
 
 
 def get_annotations(tenant_id: str, user_id: str, paper_id: str) -> list[dict[str, Any]]:
-    rows = fetch_all(
-        "SELECT a.annotation_uuid AS id, a.page, a.annotation_type, a.color, "
-        "a.points AS points_json, a.content, a.created_at, a.updated_at "
-        "FROM paper_annotations a JOIN papers p ON p.paper_uuid=a.paper_uuid "
-        "AND p.tenant_id=a.tenant_id AND p.user_id=a.user_id "
-        "WHERE a.tenant_id=? AND a.user_id=? AND p.paper_id=? AND p.deleted_at IS NULL "
-        "ORDER BY a.page, a.created_at",
-        (tenant_id, user_id, paper_id),
-    )
+    with connection() as conn, conn.cursor() as cursor:
+        _set_tenant_context(cursor, tenant_id, user_id)
+        cursor.execute(
+            _translate_sql(
+                "SELECT a.annotation_uuid AS id, a.page, a.annotation_type, a.color, "
+                "a.points AS points_json, a.content, a.created_at, a.updated_at "
+                "FROM paper_annotations a JOIN papers p ON p.paper_uuid=a.paper_uuid "
+                "AND p.tenant_id=a.tenant_id AND p.user_id=a.user_id "
+                "WHERE a.tenant_id=? AND a.user_id=? AND p.paper_id=? AND p.deleted_at IS NULL "
+                "ORDER BY a.page, a.created_at"
+            ),
+            (tenant_id, user_id, paper_id),
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
     return [
         {
             "id": row["id"],
@@ -306,15 +317,21 @@ def get_annotations(tenant_id: str, user_id: str, paper_id: str) -> list[dict[st
 def get_translation(
     tenant_id: str, user_id: str, paper_id: str, source_hash: str, target_language: str
 ) -> dict[str, Any] | None:
-    return fetch_one(
-        "SELECT t.translation_uuid AS translation_id, source_text, source_language, "
-        "target_language, translated_text, provider, model, t.created_at "
-        "FROM paper_translations t JOIN papers p ON p.paper_uuid=t.paper_uuid "
-        "AND p.tenant_id=t.tenant_id AND p.user_id=t.user_id "
-        "WHERE t.tenant_id=? AND t.user_id=? AND p.paper_id=? AND t.source_hash=? "
-        "AND t.target_language=? AND p.deleted_at IS NULL",
-        (tenant_id, user_id, paper_id, source_hash, target_language),
-    )
+    with connection() as conn, conn.cursor() as cursor:
+        _set_tenant_context(cursor, tenant_id, user_id)
+        cursor.execute(
+            _translate_sql(
+                "SELECT t.translation_uuid AS translation_id, source_text, source_language, "
+                "target_language, translated_text, provider, model, t.created_at "
+                "FROM paper_translations t JOIN papers p ON p.paper_uuid=t.paper_uuid "
+                "AND p.tenant_id=t.tenant_id AND p.user_id=t.user_id "
+                "WHERE t.tenant_id=? AND t.user_id=? AND p.paper_id=? AND t.source_hash=? "
+                "AND t.target_language=? AND p.deleted_at IS NULL"
+            ),
+            (tenant_id, user_id, paper_id, source_hash, target_language),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
 
 def save_translation(
@@ -322,21 +339,26 @@ def save_translation(
     source_hash: str, source_text: str, source_language: str,
     target_language: str, translated_text: str, provider: str, model: str,
 ) -> None:
-    execute(
-        "INSERT INTO paper_translations "
-        "(translation_uuid, tenant_id, user_id, paper_uuid, source_hash, source_text, "
-        "source_language, target_language, translated_text, provider, model) "
-        "SELECT ?, ?, ?, paper_uuid, ?, ?, ?, ?, ?, ?, ? FROM papers "
-        "WHERE tenant_id=? AND user_id=? AND paper_id=? AND deleted_at IS NULL "
-        "ON CONFLICT (tenant_id, user_id, paper_uuid, source_hash, target_language) "
-        "DO UPDATE SET translated_text=EXCLUDED.translated_text, provider=EXCLUDED.provider, "
-        "model=EXCLUDED.model, updated_at=CURRENT_TIMESTAMP",
-        (
-            translation_id, tenant_id, user_id, source_hash, source_text,
-            source_language, target_language, translated_text, provider, model,
-            tenant_id, user_id, paper_id,
-        ),
-    )
+    with connection() as conn, conn.cursor() as cursor:
+        _set_tenant_context(cursor, tenant_id, user_id)
+        cursor.execute(
+            _translate_sql(
+                "INSERT INTO paper_translations "
+                "(translation_uuid, tenant_id, user_id, paper_uuid, source_hash, source_text, "
+                "source_language, target_language, translated_text, provider, model) "
+                "SELECT ?, ?, ?, paper_uuid, ?, ?, ?, ?, ?, ?, ? FROM papers "
+                "WHERE tenant_id=? AND user_id=? AND paper_id=? AND deleted_at IS NULL "
+                "ON CONFLICT (tenant_id, user_id, paper_uuid, source_hash, target_language) "
+                "DO UPDATE SET translated_text=EXCLUDED.translated_text, provider=EXCLUDED.provider, "
+                "model=EXCLUDED.model, updated_at=CURRENT_TIMESTAMP"
+            ),
+            (
+                translation_id, tenant_id, user_id, source_hash, source_text,
+                source_language, target_language, translated_text, provider, model,
+                tenant_id, user_id, paper_id,
+            ),
+        )
+        conn.commit()
 
 
 def migrate_annotations_json() -> int:

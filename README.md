@@ -11,7 +11,7 @@ ScholarAgent/
 ├── skills/              # 可插拔原子能力，每个能力独立目录
 ├── mcp_server/          # 论文源、检索、知识库工具边界
 ├── frontend/            # 前端源码与可部署静态页面
-├── deploy/              # Docker、Nginx、MySQL 初始化脚本
+├── deploy/              # Docker、Nginx 与 PostgreSQL 部署资产
 ├── scripts/             # 初始化与运维脚本
 └── tests/               # 单元测试、接口测试、工作流测试、E2E 说明
 ```
@@ -33,10 +33,11 @@ python -m venv .venv
 Copy-Item .env.example .env
 ```
 
-3. 初始化数据库和基础数据：
+3. 启动 PostgreSQL/pgvector、执行迁移并初始化基础数据：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\bootstrap_mysql.py
+docker compose up -d db
+.\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe scripts\init_infra.py
 ```
 

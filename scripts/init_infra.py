@@ -18,13 +18,13 @@ from mcp_server.scholar_mcp.models import PaperRecord
 from mcp_server.scholar_mcp.store import knowledge_store
 
 
-def _safe_mysql_url() -> str:
-    parsed = urlparse(get_settings().mysql_url)
+def _safe_postgres_url() -> str:
+    parsed = urlparse(get_settings().database_url)
     user = parsed.username or "scholar"
     host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 3306
+    port = parsed.port or 5432
     database = parsed.path.lstrip("/") or mysql_store.configured_database_name()
-    return f"mysql://{user}:***@{host}:{port}/{database}"
+    return f"postgresql://{user}:***@{host}:{port}/{database}"
 
 
 def _redis_status() -> dict[str, object]:
@@ -74,19 +74,19 @@ async def _seed_rag() -> dict[str, object]:
 
 async def main() -> int:
     try:
-        mysql_result = mysql_store.initialize_database(create_database=True)
+        postgres_result = mysql_store.initialize_database()
+        mysql_store.seed_demo_data()
     except Exception as exc:
         print(
             json.dumps(
                 {
-                    "mysql": {
-                        "url": _safe_mysql_url(),
+                    "postgresql": {
+                        "url": _safe_postgres_url(),
                         "available": False,
                         "error": str(exc),
                     },
                     "hint": (
-                        "Set SCHOLAR_MYSQL_URL, for example "
-                        "mysql://user:password@127.0.0.1:3306/scholar_agent?charset=utf8mb4"
+                        "Set SCHOLAR_DATABASE_URL and run `python -m alembic upgrade head` first"
                     ),
                 },
                 ensure_ascii=False,
@@ -98,10 +98,10 @@ async def main() -> int:
     login_profile = auth_service.login("demo", "demo123", "tenant_demo")
     rag_result = await _seed_rag()
     result = {
-        "mysql": {
-            "url": _safe_mysql_url(),
+        "postgresql": {
+            "url": _safe_postgres_url(),
             "available": True,
-            **mysql_result,
+            **postgres_result,
         },
         "redis": _redis_status(),
         "login": {

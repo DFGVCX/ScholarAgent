@@ -124,7 +124,7 @@ whose names begin with an underscore are templates and are not loaded.
 
 ### Langfuse baseline
 
-Local MySQL/JSON tracing remains authoritative. When the Langfuse switch and both
+Local PostgreSQL tracing remains authoritative. When the Langfuse switch and both
 credentials are configured, model calls and LangGraph workflow events are also
 sent through the official Langfuse SDK. API keys, tokens, secrets and passwords are
 redacted before export. A Langfuse outage is recorded as tracing status and does

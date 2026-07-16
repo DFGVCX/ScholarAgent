@@ -9,20 +9,6 @@ from app.schemas import UserContext
 from app.services import mysql_store
 
 
-STATE_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS scholar_conversation_working_state (
-    conversation_id TEXT NOT NULL,
-    tenant_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    state_version INTEGER NOT NULL DEFAULT 1,
-    state_json TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (tenant_id, user_id, conversation_id)
-)
-"""
-
-
 def _default_state() -> dict[str, Any]:
     return {
         "state_version": 0,
@@ -48,9 +34,7 @@ class ConversationStateService:
         self._schema_ready = False
 
     def ensure_schema(self) -> None:
-        if not self._schema_ready:
-            mysql_store.execute(STATE_SCHEMA_SQL)
-            self._schema_ready = True
+        self._schema_ready = True
 
     def get(self, user: UserContext, conversation_id: str) -> dict[str, Any]:
         self.ensure_schema()

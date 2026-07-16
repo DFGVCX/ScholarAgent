@@ -12,7 +12,7 @@ services:
       - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
       - SCHOLAR_REDIS_URL=${SCHOLAR_REDIS_URL:-redis://redis:6379/0}
       - SCHOLAR_TASK_EXECUTION_MODE=queue
-      - SCHOLAR_CHECKPOINT_BACKEND=sqlite
+      - SCHOLAR_CHECKPOINT_BACKEND=postgres
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}
       - SCHOLAR_PRIMARY_MODEL_PROVIDER=${SCHOLAR_PRIMARY_MODEL_PROVIDER:-none}
@@ -39,6 +39,8 @@ services:
     networks:
       - scholar_network
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
@@ -77,7 +79,7 @@ services:
       - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
       - SCHOLAR_REDIS_URL=${SCHOLAR_REDIS_URL:-redis://redis:6379/0}
       - SCHOLAR_TASK_EXECUTION_MODE=queue
-      - SCHOLAR_CHECKPOINT_BACKEND=sqlite
+      - SCHOLAR_CHECKPOINT_BACKEND=postgres
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}
       - SCHOLAR_PRIMARY_MODEL_PROVIDER=${SCHOLAR_PRIMARY_MODEL_PROVIDER:-none}
@@ -102,6 +104,8 @@ services:
     networks:
       - scholar_network
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
@@ -130,6 +134,8 @@ services:
     networks:
       - scholar_network
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
     healthcheck:
@@ -195,6 +201,20 @@ services:
       timeout: 5s
       retries: 15
       start_period: 30s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
+    networks:
+      - scholar_network
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   scholar_storage:

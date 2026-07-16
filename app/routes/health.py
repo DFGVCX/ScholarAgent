@@ -14,8 +14,22 @@ LOCAL_MODEL_PROVIDERS = {"ollama", "vllm", "lmstudio"}
 
 
 @router.get("")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "scholar-agent"}
+async def health() -> dict[str, object]:
+    available = mysql_store.is_available()
+    return {
+        "status": "ok" if available else "degraded",
+        "service": "scholar-agent",
+        "database": {
+            "engine": "postgresql",
+            "available": available,
+            "pgvector": available,
+        },
+        "retrieval": {
+            "backend": "pgvector",
+            "embedding_model": "Qwen3-Embedding-0.6B",
+            "embedding_dimensions": 1024,
+        },
+    }
 
 
 @router.get("/infra")

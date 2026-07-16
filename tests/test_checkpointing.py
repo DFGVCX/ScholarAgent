@@ -1,36 +1,43 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import unittest
-from uuid import uuid4
+from unittest.mock import AsyncMock, Mock, patch
 
-from agents.checkpointing import checkpoint_provider
+from agents.checkpointing import CheckpointProvider
+
+
+class _SaverContext:
+    def __init__(self, saver) -> None:
+        self.saver = saver
+        self.closed = False
+
+    async def __aenter__(self):
+        return self.saver
+
+    async def __aexit__(self, *args):
+        self.closed = True
 
 
 class CheckpointingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_sqlite_checkpointer_is_durable_backend(self) -> None:
-        path = Path("storage/runtime/test-artifacts") / f"checkpoint-{uuid4().hex}.db"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        old_backend = os.environ.get("SCHOLAR_CHECKPOINT_BACKEND")
-        old_path = os.environ.get("SCHOLAR_CHECKPOINT_SQLITE_PATH")
-        try:
-            os.environ["SCHOLAR_CHECKPOINT_BACKEND"] = "sqlite"
-            os.environ["SCHOLAR_CHECKPOINT_SQLITE_PATH"] = str(path)
-            saver = await checkpoint_provider.get()
-            self.assertEqual(type(saver).__name__, "AsyncSqliteSaver")
-            self.assertTrue(path.exists())
-        finally:
-            await checkpoint_provider.close()
-            if old_backend is None:
-                os.environ.pop("SCHOLAR_CHECKPOINT_BACKEND", None)
-            else:
-                os.environ["SCHOLAR_CHECKPOINT_BACKEND"] = old_backend
-            if old_path is None:
-                os.environ.pop("SCHOLAR_CHECKPOINT_SQLITE_PATH", None)
-            else:
-                os.environ["SCHOLAR_CHECKPOINT_SQLITE_PATH"] = old_path
-            path.unlink(missing_ok=True)
+    async def test_postgres_checkpointer_is_default_durable_backend(self) -> None:
+        provider = CheckpointProvider()
+        saver = Mock(setup=AsyncMock())
+        context = _SaverContext(saver)
+        with patch.dict(
+            os.environ,
+            {"SCHOLAR_DATABASE_URL": "postgresql+psycopg://u:p@db/scholar"},
+            clear=False,
+        ), patch(
+            "agents.checkpointing.AsyncPostgresSaver.from_conn_string", return_value=context
+        ) as factory:
+            result = await provider.get()
+            await provider.close()
+
+        self.assertIs(result, saver)
+        factory.assert_called_once_with("postgresql://u:p@db/scholar")
+        saver.setup.assert_awaited_once()
+        self.assertTrue(context.closed)
 
 
 if __name__ == "__main__":

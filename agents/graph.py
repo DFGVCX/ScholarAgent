@@ -112,7 +112,7 @@ _runtime_lock = asyncio.Lock()
 
 async def _get_runtime_app():
     global _runtime_app
-    if os.getenv("SCHOLAR_CHECKPOINT_BACKEND", "memory").strip().lower() != "sqlite":
+    if os.getenv("SCHOLAR_CHECKPOINT_BACKEND", "postgres").strip().lower() == "memory":
         return app
     async with _runtime_lock:
         if _runtime_app is None:
