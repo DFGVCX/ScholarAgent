@@ -4,8 +4,6 @@ from fastapi import APIRouter
 
 from app.config import get_settings
 from app.services import mysql_store
-from app.services.chroma_store import chroma_store
-from app.services.rag_service import rag_service
 from app.services.tracing import trace_recorder
 from skills.survey_generation.tools.formatter import CitationFormatter
 
@@ -25,41 +23,38 @@ async def infra_health() -> dict[str, object]:
     settings = get_settings()
     formatter = CitationFormatter()
     formatter.load()
-    sqlite_available = mysql_store.is_available()
-    sqlite_table_count = 0
-    if sqlite_available:
+    database_available = mysql_store.is_available()
+    database_info: dict[str, object] = {
+        "engine": "postgresql",
+        "database": mysql_store.configured_database_name(),
+        "available": database_available,
+        "pgvector": False,
+        "table_count": 0,
+    }
+    if database_available:
         try:
             row = mysql_store.fetch_one(
-                "SELECT COUNT(*) AS table_count FROM sqlite_master WHERE type='table' AND name LIKE 'scholar_%'"
+                "SELECT current_database() AS database, current_setting('server_version') AS version, "
+                "EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector') AS pgvector, "
+                "(SELECT COUNT(*) FROM pg_tables WHERE schemaname = 'public') AS table_count"
             )
-            sqlite_table_count = int((row or {}).get("table_count") or 0)
+            if row:
+                database_info.update(row)
+                database_info["table_count"] = int(row.get("table_count") or 0)
         except Exception:
-            sqlite_table_count = 0
-    # ChromaDB stats
-    chroma_stats: dict[str, object] = {"available": False, "chunk_count": 0, "paper_count": 0}
-    try:
-        stats = chroma_store._collection.count()
-        chroma_stats["available"] = True
-        chroma_stats["chunk_count"] = stats
-    except Exception:
-        pass
+            database_info["available"] = False
     return {
-        "status": "ok",
-        "sqlite": {
-            "database": str(mysql_store._db_path()),
-            "available": sqlite_available,
-            "table_count": sqlite_table_count,
-        },
-        "chromadb": chroma_stats,
-        "storage_backend": settings.storage_backend,
+        "status": "ok" if database_info["available"] else "degraded",
+        "database": database_info,
+        "storage_backend": "postgresql",
         "runtime_backend": {
-            "storage": "sqlite" if sqlite_available else "json",
-            "rag": rag_service.backend(),
+            "storage": "postgresql",
+            "rag": "pgvector",
             "tracing": trace_recorder.status(),
         },
         "rag": {
-            "index_backend": settings.rag_index_backend,
-            "runtime_backend": rag_service.backend(),
+            "index_backend": "pgvector",
+            "runtime_backend": "pgvector",
             "retrieval_mode": settings.rag_retrieval_mode,
             "embedding_provider": settings.rag_embedding_provider,
             "embedding_model": settings.rag_embedding_model,

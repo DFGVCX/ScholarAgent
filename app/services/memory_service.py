@@ -94,14 +94,18 @@ class UserMemoryService:
         ).hexdigest()[:32]
         memory_id = f"mem_{digest}"
         mysql_store.execute(
-            "INSERT OR REPLACE INTO scholar_memories "
+            "INSERT INTO scholar_memories "
             "(memory_id, tenant_id, user_id, conversation_id, memory_type, content, "
             "normalized_content, importance, confidence, source_message_id, metadata_json, "
             "access_count, last_accessed_at, status, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
             "COALESCE((SELECT access_count FROM scholar_memories WHERE memory_id=?), 0), "
             "(SELECT last_accessed_at FROM scholar_memories WHERE memory_id=?), 'active', "
-            "COALESCE((SELECT created_at FROM scholar_memories WHERE memory_id=?), datetime('now')), datetime('now'))",
+            "COALESCE((SELECT created_at FROM scholar_memories WHERE memory_id=?), datetime('now')), datetime('now')) "
+            "ON CONFLICT (memory_id) DO UPDATE SET conversation_id=EXCLUDED.conversation_id, "
+            "content=EXCLUDED.content, importance=EXCLUDED.importance, confidence=EXCLUDED.confidence, "
+            "source_message_id=EXCLUDED.source_message_id, metadata_json=EXCLUDED.metadata_json, "
+            "status='active', updated_at=CURRENT_TIMESTAMP",
             (
                 memory_id, user.tenant_id, user.user_id, conversation_id or None,
                 memory_type, content.strip(), normalized, float(importance), float(confidence),

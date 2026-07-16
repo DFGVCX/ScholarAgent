@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.config import get_settings
-
-
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+config.set_main_option(
+    "sqlalchemy.url",
+    os.getenv(
+        "SCHOLAR_DATABASE_URL",
+        config.get_main_option("sqlalchemy.url"),
+    ),
+)
 target_metadata = None
 
 

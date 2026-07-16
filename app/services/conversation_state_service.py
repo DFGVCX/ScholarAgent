@@ -159,11 +159,14 @@ class ConversationStateService:
         saved["state_version"] = int(saved.get("state_version") or 0) + 1
         saved["updated_at"] = datetime.now(timezone.utc).isoformat()
         mysql_store.execute(
-            "INSERT OR REPLACE INTO scholar_conversation_working_state "
+            "INSERT INTO scholar_conversation_working_state "
             "(conversation_id, tenant_id, user_id, state_version, state_json, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, "
             "COALESCE((SELECT created_at FROM scholar_conversation_working_state "
-            "WHERE tenant_id=? AND user_id=? AND conversation_id=?), datetime('now')), datetime('now'))",
+            "WHERE tenant_id=? AND user_id=? AND conversation_id=?), datetime('now')), datetime('now')) "
+            "ON CONFLICT (tenant_id, user_id, conversation_id) DO UPDATE SET "
+            "state_version=EXCLUDED.state_version, state_json=EXCLUDED.state_json, "
+            "updated_at=CURRENT_TIMESTAMP",
             (
                 conversation_id, user.tenant_id, user.user_id, saved["state_version"],
                 json.dumps(saved, ensure_ascii=False),

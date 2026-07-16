@@ -2,83 +2,97 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
-import sqlite3
 import threading
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlparse
+
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+class PostgreSQLUnavailable(RuntimeError):
+    """Raised when the configured PostgreSQL database is not reachable or ready."""
 
 
-
-class MySQLUnavailable(RuntimeError):
-    """Raised when MySQL is configured but not reachable."""
-
-
-# ---------------------------------------------------------------------------
-# Connection management (per-thread sqlite3 connection)
-# ---------------------------------------------------------------------------
-
-_storage_path: Path | None = None
-_local = threading.local()
-
-
-def _db_path() -> Path:
-    global _storage_path
-    if _storage_path is not None:
-        return _storage_path
-    import os as _os
-    storage_dir = Path(_os.getenv("SCHOLAR_STORAGE_DIR", "storage/runtime"))
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    _storage_path = storage_dir / "scholar.db"
-    return _storage_path
-
-
-def _get_conn() -> sqlite3.Connection:
-    if not hasattr(_local, "conn") or _local.conn is None:
-        _local.conn = sqlite3.connect(str(_db_path()))
-        _local.conn.row_factory = sqlite3.Row
-        _local.conn.execute("PRAGMA journal_mode=WAL")
-        _local.conn.execute("PRAGMA foreign_keys=ON")
-    return _local.conn
+# Kept as an import-compatible alias while callers are renamed incrementally.
+MySQLUnavailable = PostgreSQLUnavailable
 
 
 # ---------------------------------------------------------------------------
-# SQL translation: MySQL -> SQLite
+# PostgreSQL connection pool
+# ---------------------------------------------------------------------------
+
+_pool: ConnectionPool | None = None
+_pool_lock = threading.Lock()
+_availability: bool | None = None
+
+
+def _sync_database_url() -> str:
+    url = os.getenv(
+        "SCHOLAR_DATABASE_URL",
+        "postgresql+psycopg://scholar:scholar@localhost:5432/scholar_agent",
+    )
+    if not url.startswith(("postgresql://", "postgresql+psycopg://")):
+        raise ValueError("SCHOLAR_DATABASE_URL must use PostgreSQL")
+    return url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+
+def _get_pool() -> ConnectionPool:
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = ConnectionPool(
+                    conninfo=_sync_database_url(),
+                    min_size=1,
+                    max_size=10,
+                    timeout=3,
+                    kwargs={"row_factory": dict_row},
+                    open=False,
+                )
+                _pool.open(wait=False)
+    return _pool
+
+
+# ---------------------------------------------------------------------------
+# Temporary SQL compatibility: legacy call sites -> PostgreSQL
 # ---------------------------------------------------------------------------
 
 def _translate_sql(sql: str) -> str:
-    sql = re.sub(r'\s+ENGINE=\S+', '', sql)
-    sql = re.sub(r'\s+DEFAULT\s+CHARSET=\S+', '', sql)
-    sql = re.sub(r'\s+COLLATE=\S+', '', sql)
-    sql = sql.replace('AUTO_INCREMENT', 'AUTOINCREMENT')
-    sql = re.sub(r'\bJSON\b', 'TEXT', sql)
-    sql = re.sub(r'\bMEDIUMTEXT\b', 'TEXT', sql)
-    sql = re.sub(r'\bTINYINT\(1\)\b', 'INTEGER', sql)
-    sql = re.sub(r'\bDECIMAL\(\d+,\s*\d+\)', 'REAL', sql)
-    sql = re.sub(r'\s+ON\s+UPDATE\s+CURRENT_TIMESTAMP', '', sql)
-    sql = re.sub(r',?\s*FULLTEXT\s+KEY\s+\S+\s+\([^)]+\)', '', sql)
-    sql = re.sub(r'UNIQUE\s+KEY\s+(\S+)\s+\(', r'UNIQUE (', sql)
-    sql = re.sub(r',?\s*KEY\s+\S+\s+\([^)]+\)', '', sql)
-    sql = re.sub(
-        r',?\s*CONSTRAINT\s+\S+\s+FOREIGN\s+KEY\s+\([^)]+\)\s+REFERENCES\s+\S+\s*\([^)]+\)(\s+ON\s+DELETE\s+\S+)?',
-        '', sql,
-    )
-    sql = re.sub(r'/\*.*?\*/', '', sql, flags=re.DOTALL)
-    # Convert MySQL placeholders to SQLite placeholders
-    sql = sql.replace('%s', '?')
-    # Convert ON DUPLICATE KEY UPDATE to SQLite ON CONFLICT ... DO UPDATE SET
-    pk_match = re.search(r'INSERT\s+INTO\s+\S+\s*\((\w+)', sql, re.IGNORECASE)
-    if pk_match:
-        pk_col = pk_match.group(1)
-        sql = re.sub(
-            r'ON\s+DUPLICATE\s+KEY\s+UPDATE\s+',
-            f'ON CONFLICT({pk_col}) DO UPDATE SET ',
-            sql,
-            flags=re.IGNORECASE,
-        )
-        sql = re.sub(r'VALUES\((\w+)\)', r'excluded.\1', sql)
-    return sql
+    translated = re.sub(r"datetime\(\s*'now'\s*\)", "CURRENT_TIMESTAMP", sql, flags=re.I)
+    translated = translated.replace("`", '"')
+    translated = re.sub(r"\bINSERT\s+OR\s+IGNORE\b", "INSERT", translated, flags=re.I)
+    translated = re.sub(r"\bVALUES\((\w+)\)", r"EXCLUDED.\1", translated, flags=re.I)
+
+    result: list[str] = []
+    single_quoted = False
+    double_quoted = False
+    index = 0
+    while index < len(translated):
+        char = translated[index]
+        next_char = translated[index + 1] if index + 1 < len(translated) else ""
+        if char == "'" and not double_quoted:
+            result.append(char)
+            if single_quoted and next_char == "'":
+                result.append(next_char)
+                index += 2
+                continue
+            single_quoted = not single_quoted
+        elif char == '"' and not single_quoted:
+            result.append(char)
+            if double_quoted and next_char == '"':
+                result.append(next_char)
+                index += 2
+                continue
+            double_quoted = not double_quoted
+        elif char == "?" and not single_quoted and not double_quoted:
+            result.append("%s")
+        else:
+            result.append(char)
+        index += 1
+    return "".join(result)
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +108,6 @@ def _adapt_params(params: Any) -> Any:
 
 
 def _adapt_single(v: Any) -> Any:
-    if isinstance(v, bool):
-        return 1 if v else 0
     if isinstance(v, (list, dict)):
         return json.dumps(v, ensure_ascii=False)
     return v
@@ -129,64 +141,67 @@ def _json_loads(value: Any, fallback: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 def configured_database_name() -> str:
-    return "scholar_agent"
+    return urlparse(_sync_database_url()).path.lstrip("/") or "scholar_agent"
 
 
 def should_use_mysql() -> bool:
-    return True
+    return False
 
 
 def reset_availability_cache() -> None:
-    pass
+    global _availability
+    _availability = None
 
 
 @contextmanager
 def connection(with_database: bool = True) -> Iterator[Any]:
-    """Yield the per-thread sqlite3 connection (backward compatible API)."""
-    conn = _get_conn()
-    try:
+    """Yield a pooled PostgreSQL connection (legacy signature retained)."""
+    del with_database
+    with _get_pool().connection() as conn:
         yield conn
-    finally:
-        pass  # connection is reused per thread
 
 
 def is_available() -> bool:
-    return True
+    global _availability
+    if _availability is not None:
+        return _availability
+    try:
+        with connection() as conn, conn.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            _availability = cursor.fetchone() is not None
+    except Exception:
+        _availability = False
+    return _availability
 
 
 def execute(
     sql: str,
     params: tuple[Any, ...] | dict[str, Any] | None = None,
 ) -> int:
-    conn = _get_conn()
-    sql = _translate_sql(sql)
-    params = _adapt_params(params)
-    cursor = conn.execute(sql, params)
-    conn.commit()
-    return cursor.rowcount
+    with connection() as conn, conn.cursor() as cursor:
+        cursor.execute(_translate_sql(sql), _adapt_params(params))
+        affected = cursor.rowcount
+        conn.commit()
+        return affected
 
 
 def fetch_one(
     sql: str,
     params: tuple[Any, ...] | dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    conn = _get_conn()
-    sql = _translate_sql(sql)
-    params = _adapt_params(params)
-    cursor = conn.execute(sql, params)
-    row = cursor.fetchone()
-    return dict(row) if row else None
+    with connection() as conn, conn.cursor() as cursor:
+        cursor.execute(_translate_sql(sql), _adapt_params(params))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
 
 def fetch_all(
     sql: str,
     params: tuple[Any, ...] | dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    conn = _get_conn()
-    sql = _translate_sql(sql)
-    params = _adapt_params(params)
-    cursor = conn.execute(sql, params)
-    return [dict(row) for row in cursor.fetchall()]
+    with connection() as conn, conn.cursor() as cursor:
+        cursor.execute(_translate_sql(sql), _adapt_params(params))
+        return [dict(row) for row in cursor.fetchall()]
 
 
 # ---------------------------------------------------------------------------
@@ -430,17 +445,22 @@ _INDEXES_SQL: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 def initialize_database(create_database: bool = True) -> dict[str, Any]:
-    conn = _get_conn()
-    for statement in SCHEMA_SQL:
-        conn.execute(statement)
-    for index_sql in _INDEXES_SQL:
-        conn.execute(index_sql)
-    seed_demo_data()
-    migrated = migrate_annotations_json()
-    result = {"database": "scholar_agent", "tables": len(SCHEMA_SQL)}
-    if migrated:
-        result["migrated_annotations"] = migrated
-    return result
+    del create_database
+    if not is_available():
+        raise PostgreSQLUnavailable("PostgreSQL is unavailable")
+    row = fetch_one(
+        "SELECT current_database() AS database, "
+        "EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector') AS vector_enabled, "
+        "to_regclass('public.alembic_version') IS NOT NULL AS migration_table"
+    ) or {}
+    if not row.get("vector_enabled") or not row.get("migration_table"):
+        raise PostgreSQLUnavailable("run 'alembic upgrade head' before starting ScholarAgent")
+    revision = fetch_one("SELECT version_num FROM alembic_version LIMIT 1") or {}
+    return {
+        "database": row.get("database") or configured_database_name(),
+        "pgvector": True,
+        "revision": revision.get("version_num"),
+    }
 
 
 def seed_demo_data() -> None:
@@ -454,20 +474,21 @@ def seed_demo_data() -> None:
         ("user_acme", "tenant_acme", "acme", password_hash("acme123"),
          "Acme Analyst", ["researcher"], "acme-key"),
     )
-    conn = _get_conn()
     for tid, name, meta in tenants:
-        conn.execute(
-            "INSERT OR REPLACE INTO scholar_tenants (tenant_id, name, metadata_json) VALUES (?, ?, ?)",
+        execute(
+            "INSERT INTO scholar_tenants (tenant_id, name, metadata_json) VALUES (?, ?, ?) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET name = EXCLUDED.name, metadata_json = EXCLUDED.metadata_json",
             (tid, name, json.dumps(meta, ensure_ascii=False)),
         )
     for u in users:
-        conn.execute(
-            "INSERT OR REPLACE INTO scholar_users "
+        execute(
+            "INSERT INTO scholar_users "
             "(user_id, tenant_id, username, password_hash, display_name, roles_json, api_key) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name, "
+            "roles_json = EXCLUDED.roles_json, api_key = EXCLUDED.api_key",
             (*u[:5], json.dumps(u[5], ensure_ascii=False), u[6]),
         )
-    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +516,8 @@ def get_setting(key: str, default: Any = None) -> Any:
 
 def set_setting(key: str, value: Any) -> None:
     execute(
-        "INSERT OR REPLACE INTO scholar_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+        "INSERT INTO scholar_settings (key, value, updated_at) VALUES (?, ?, datetime('now')) "
+        "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=CURRENT_TIMESTAMP",
         (key, encode_json(value)),
     )
 
@@ -515,22 +537,20 @@ def get_all_settings() -> dict[str, Any]:
 def save_annotations(tenant_id: str, user_id: str, paper_id: str,
                      annotations: list[dict[str, Any]]) -> int:
     """Replace all annotations for a paper (transactional). Returns count saved."""
-    conn = _get_conn()
-    # Flush any pending implicit transaction so we can start a clean one
-    if conn.in_transaction:
-        conn.execute("COMMIT")
-    conn.execute("BEGIN")
-    try:
-        conn.execute(
-            "DELETE FROM scholar_annotations WHERE tenant_id = ? AND user_id = ? AND paper_id = ?",
+    with connection() as conn, conn.cursor() as cursor:
+        cursor.execute(
+            _translate_sql(
+                "DELETE FROM scholar_annotations WHERE tenant_id = ? AND user_id = ? AND paper_id = ?"
+            ),
             (tenant_id, user_id, paper_id),
         )
-        count = 0
         for ann in annotations:
-            conn.execute(
+            cursor.execute(
+                _translate_sql(
                 "INSERT INTO scholar_annotations "
                 "(paper_id, tenant_id, user_id, page, annotation_type, color, points_json, content) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                ),
                 (
                     paper_id, tenant_id, user_id,
                     int(ann.get("page", 0)),
@@ -540,12 +560,8 @@ def save_annotations(tenant_id: str, user_id: str, paper_id: str,
                     str(ann.get("content", "")),
                 ),
             )
-            count += 1
-        conn.execute("COMMIT")
-        return count
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
+        conn.commit()
+    return len(annotations)
 
 
 def get_annotations(tenant_id: str, user_id: str, paper_id: str) -> list[dict[str, Any]]:
@@ -590,65 +606,18 @@ def save_translation(
     target_language: str, translated_text: str, provider: str, model: str,
 ) -> None:
     execute(
-        "INSERT OR REPLACE INTO scholar_translations "
+        "INSERT INTO scholar_translations "
         "(translation_id, tenant_id, user_id, paper_id, source_hash, source_text, "
         "source_language, target_language, translated_text, provider, model) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (tenant_id, user_id, paper_id, source_hash, target_language) "
+        "DO UPDATE SET translated_text=EXCLUDED.translated_text, provider=EXCLUDED.provider, "
+        "model=EXCLUDED.model, created_at=CURRENT_TIMESTAMP",
         (translation_id, tenant_id, user_id, paper_id, source_hash, source_text,
          source_language, target_language, translated_text, provider, model),
     )
 
 
 def migrate_annotations_json() -> int:
-    """Migrate legacy JSON annotation files to SQLite. Returns count of migrated papers."""
-    import os as _os
-    from pathlib import Path as _Path
-    annotations_root = _Path(_os.getenv("SCHOLAR_STORAGE_DIR", "storage/runtime")) / "annotations"
-    if not annotations_root.exists():
-        return 0
-    count = 0
-    for json_file in annotations_root.rglob("*.json"):
-        try:
-            data = json.loads(json_file.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        paper_id = data.get("paper_id", "")
-        if not paper_id:
-            continue
-        # Read tenant_id/user_id from directory structure: annotations/{tenant}/{user}/{digest}.json
-        parts = json_file.relative_to(annotations_root).parts
-        if len(parts) < 2:
-            continue
-        tenant_id, user_id = parts[0], parts[1]
-        strokes = data.get("strokes", [])
-        notes = data.get("notes", "")
-        # Convert old format to new: each stroke becomes an annotation row
-        annotations: list[dict[str, Any]] = []
-        for stroke in strokes:
-            annotations.append({
-                "page": stroke.get("page", 0),
-                "annotation_type": stroke.get("type", "highlight"),
-                "color": stroke.get("color"),
-                "points": stroke.get("points", []),
-                "content": "",
-            })
-        if notes:
-            annotations.append({
-                "page": 0,
-                "annotation_type": "note",
-                "color": None,
-                "points": [],
-                "content": notes,
-            })
-        if annotations:
-            try:
-                save_annotations(tenant_id, user_id, paper_id, annotations)
-                count += 1
-            except Exception:
-                continue  # skip papers that don't exist yet
-        # Rename migrated file
-        try:
-            json_file.rename(json_file.with_suffix(".json.bak"))
-        except OSError:
-            pass
-    return count
+    """Legacy no-op: the PostgreSQL branch intentionally starts from a fresh database."""
+    return 0

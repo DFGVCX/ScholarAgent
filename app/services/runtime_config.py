@@ -260,14 +260,9 @@ def public_runtime_config() -> dict[str, Any]:
                 "options": list(SELECT_OPTIONS.get(key, ())),
             }
         )
-    # Determine storage backend info
-    try:
-        from app.services import mysql_store
-        db_path = str(mysql_store._db_path())
-        storage_backend = "sqlite"
-    except Exception:
-        db_path = str(runtime_config_path())
-        storage_backend = "json"
+    from app.services import mysql_store
+    db_path = mysql_store.configured_database_name()
+    storage_backend = "postgresql"
     return {
         "path": db_path,
         "storage_backend": storage_backend,

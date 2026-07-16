@@ -35,14 +35,14 @@ class JsonTaskRepository:
                 INSERT INTO scholar_tasks
                     (task_id, tenant_id, user_id, status, phase, percent, trace_id, request_json, result_json, error)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    status = VALUES(status),
-                    phase = VALUES(phase),
-                    percent = VALUES(percent),
-                    trace_id = VALUES(trace_id),
-                    request_json = VALUES(request_json),
-                    result_json = VALUES(result_json),
-                    error = VALUES(error)
+                ON CONFLICT (task_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    phase = EXCLUDED.phase,
+                    percent = EXCLUDED.percent,
+                    trace_id = EXCLUDED.trace_id,
+                    request_json = EXCLUDED.request_json,
+                    result_json = EXCLUDED.result_json,
+                    error = EXCLUDED.error
                 """,
                 (
                     record.task_id,
