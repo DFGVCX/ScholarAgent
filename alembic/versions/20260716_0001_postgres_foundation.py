@@ -132,6 +132,103 @@ RUNTIME_INDEXES = (
     "CREATE INDEX idx_scholar_trace_events_trace ON scholar_trace_events(trace_id, trace_event_id)",
 )
 
+PAPER_TABLES = (
+    """CREATE TABLE papers (
+        paper_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, paper_id TEXT NOT NULL, source TEXT NOT NULL,
+        source_identifier TEXT, normalized_doi TEXT, normalized_arxiv_id TEXT,
+        title TEXT NOT NULL, authors JSONB NOT NULL DEFAULT '[]'::jsonb,
+        abstract TEXT NOT NULL DEFAULT '', published_at TIMESTAMPTZ, canonical_url TEXT,
+        in_knowledge_base BOOLEAN NOT NULL DEFAULT true,
+        ingestion_status TEXT NOT NULL DEFAULT 'metadata_only'
+            CHECK (ingestion_status IN ('metadata_only','acquiring','parsing','embedding','ready','failed')),
+        current_content_version INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        deleted_at TIMESTAMPTZ, UNIQUE (tenant_id, user_id, paper_id),
+        UNIQUE (tenant_id, user_id, paper_uuid))""",
+    """CREATE TABLE paper_assets (
+        asset_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, paper_uuid UUID NOT NULL, asset_kind TEXT NOT NULL DEFAULT 'source',
+        file_uri TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL,
+        sha256 TEXT NOT NULL, file_size BIGINT NOT NULL CHECK (file_size >= 0), page_count INTEGER,
+        validation_status TEXT NOT NULL DEFAULT 'pending', parser_name TEXT, parser_version TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        FOREIGN KEY (tenant_id, user_id, paper_uuid)
+            REFERENCES papers(tenant_id, user_id, paper_uuid) ON DELETE CASCADE,
+        UNIQUE (tenant_id, user_id, sha256))""",
+    """CREATE TABLE paper_contents (
+        content_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, paper_uuid UUID NOT NULL, content_version INTEGER NOT NULL,
+        full_text TEXT NOT NULL, content_hash TEXT NOT NULL, language TEXT,
+        extraction_method TEXT NOT NULL, extraction_quality DOUBLE PRECISION,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        FOREIGN KEY (tenant_id, user_id, paper_uuid)
+            REFERENCES papers(tenant_id, user_id, paper_uuid) ON DELETE CASCADE,
+        UNIQUE (paper_uuid, content_version), UNIQUE (tenant_id, user_id, content_uuid))""",
+    """CREATE TABLE paper_chunks (
+        chunk_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, paper_uuid UUID NOT NULL, content_uuid UUID NOT NULL,
+        content_version INTEGER NOT NULL, chunk_index INTEGER NOT NULL, section_path TEXT,
+        page_start INTEGER, page_end INTEGER, content TEXT NOT NULL, content_hash TEXT NOT NULL,
+        token_count INTEGER NOT NULL, embedding vector(1024), embedding_model TEXT,
+        embedding_status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (embedding_status IN ('pending','ready','failed')),
+        embedding_error TEXT,
+        search_vector tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content, ''))) STORED,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        FOREIGN KEY (tenant_id, user_id, paper_uuid)
+            REFERENCES papers(tenant_id, user_id, paper_uuid) ON DELETE CASCADE,
+        FOREIGN KEY (tenant_id, user_id, content_uuid)
+            REFERENCES paper_contents(tenant_id, user_id, content_uuid) ON DELETE CASCADE,
+        UNIQUE (content_uuid, chunk_index))""",
+    """CREATE TABLE paper_ingestion_jobs (
+        job_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, paper_uuid UUID NOT NULL, job_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','running','retry','completed','failed')),
+        attempt_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3,
+        available_at TIMESTAMPTZ NOT NULL DEFAULT now(), locked_at TIMESTAMPTZ,
+        locked_by TEXT, last_error TEXT, payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        completed_at TIMESTAMPTZ,
+        FOREIGN KEY (tenant_id, user_id, paper_uuid)
+            REFERENCES papers(tenant_id, user_id, paper_uuid) ON DELETE CASCADE)""",
+    """CREATE TABLE paper_annotations (
+        annotation_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, paper_uuid UUID NOT NULL, page INTEGER NOT NULL DEFAULT 0,
+        annotation_type TEXT NOT NULL DEFAULT 'highlight', color TEXT,
+        points JSONB NOT NULL DEFAULT '[]'::jsonb, content TEXT NOT NULL DEFAULT '',
+        anchor JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        FOREIGN KEY (tenant_id, user_id, paper_uuid)
+            REFERENCES papers(tenant_id, user_id, paper_uuid) ON DELETE CASCADE)""",
+    """CREATE TABLE paper_translations (
+        translation_uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, paper_uuid UUID NOT NULL, source_hash TEXT NOT NULL,
+        source_text TEXT NOT NULL, source_language TEXT NOT NULL, target_language TEXT NOT NULL,
+        translated_text TEXT NOT NULL, provider TEXT, model TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        FOREIGN KEY (tenant_id, user_id, paper_uuid)
+            REFERENCES papers(tenant_id, user_id, paper_uuid) ON DELETE CASCADE,
+        UNIQUE (tenant_id, user_id, paper_uuid, source_hash, target_language))""",
+)
+
+PAPER_INDEXES = (
+    "CREATE UNIQUE INDEX uq_papers_doi ON papers(tenant_id, user_id, normalized_doi) WHERE normalized_doi IS NOT NULL AND deleted_at IS NULL",
+    "CREATE UNIQUE INDEX uq_papers_arxiv ON papers(tenant_id, user_id, normalized_arxiv_id) WHERE normalized_arxiv_id IS NOT NULL AND deleted_at IS NULL",
+    "CREATE INDEX idx_papers_tenant_user ON papers(tenant_id, user_id, in_knowledge_base, updated_at DESC) WHERE deleted_at IS NULL",
+    "CREATE INDEX idx_paper_chunks_tenant_user ON paper_chunks(tenant_id, user_id, paper_uuid, content_version)",
+    "CREATE INDEX idx_paper_chunks_search ON paper_chunks USING gin(search_vector)",
+    "CREATE INDEX idx_paper_chunks_embedding ON paper_chunks USING hnsw (embedding vector_cosine_ops) WHERE embedding_status = 'ready'",
+    "CREATE INDEX idx_ingestion_jobs_claim ON paper_ingestion_jobs(status, available_at, created_at) WHERE status IN ('pending','retry')",
+)
+
+PAPER_RLS_TABLES = (
+    "papers", "paper_assets", "paper_contents", "paper_chunks",
+    "paper_ingestion_jobs", "paper_annotations", "paper_translations",
+)
+
 
 revision = "20260716_0001"
 down_revision = None
@@ -146,9 +243,25 @@ def upgrade() -> None:
         op.execute(statement)
     for statement in RUNTIME_INDEXES:
         op.execute(statement)
+    for statement in PAPER_TABLES:
+        op.execute(statement)
+    for statement in PAPER_INDEXES:
+        op.execute(statement)
+    for table in PAPER_RLS_TABLES:
+        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        op.execute(
+            f"CREATE POLICY {table}_tenant_user_policy ON {table} "
+            "USING (tenant_id = current_setting('app.tenant_id', true) "
+            "AND user_id = current_setting('app.user_id', true)) "
+            "WITH CHECK (tenant_id = current_setting('app.tenant_id', true) "
+            "AND user_id = current_setting('app.user_id', true))"
+        )
 
 
 def downgrade() -> None:
+    for table in reversed(PAPER_RLS_TABLES):
+        op.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
     for table in reversed(
         (
             "scholar_institution_downloads", "scholar_institution_sessions",
