@@ -1,13 +1,13 @@
 # ScholarAgent 中文启动说明
 
-> 本文用于在本地或 Docker 环境启动 ScholarAgent。当前项目的主要访问入口是后端挂载的企业控制台：`http://127.0.0.1:8000/app.html`。
+> 本文用于在本地或 Docker 环境启动 ScholarAgent。Docker 环境的主要访问入口是：`http://127.0.0.1:3000`。
 
 ## 1. 启动前确认
 
 请先进入项目根目录：
 
 ```powershell
-cd D:\研究生生活\2603~2\成长报告\实习\Agent实习求职\Program\ScholarAgent
+cd E:\code\ScholarAgent
 ```
 
 确认当前目录下存在这些文件和目录：
@@ -155,20 +155,22 @@ $env:SCHOLAR_DATABASE_URL="postgresql+psycopg://scholar:scholar@127.0.0.1:5432/s
 - `scholar_user_preferences`
 - `scholar_trace_events`
 
-### 4.3 通过前端初始化
+### 4.3 通过网页配置模型
 
-也可以在前端完成配置：
+数据库由 Docker Compose 和 Alembic 初始化；网页不接收数据库管理员凭据。模型配置流程如下：
 
-1. 打开 `http://127.0.0.1:8000/app.html`。
+1. 打开 `http://127.0.0.1:3000`。
 2. 使用 `demo / demo123 / tenant_demo` 登录。
 3. 进入“个人中心”。
-4. 在模型、数据库、RAG、论文源相关区域填写配置。
-5. 使用基础设施健康检查或模型探测功能验证连接。
+4. 在“模型路由”填写 Agent provider、Base URL、API Key 和模型名，先点“测试 Agent 模型”。
+5. 在“知识检索”填写千问 Embedding Base URL、API Key 和模型名，先点“测试 Embedding”。
+6. 测试通过后保存。API Key 输入框留空会保留服务端现有密钥，不会回显明文。
+7. 更换 Embedding 模型或服务地址后，点击“重新生成向量”并观察 ready/stale/failed/pending 计数。
 
-运行配置默认保存到：
+运行配置按部署保存到 PostgreSQL：
 
 ```text
-storage/runtime/runtime_config.json
+scholar_settings
 ```
 
 ## 5. 模型配置
@@ -195,22 +197,22 @@ Header: X-API-Key: demo-key
 
 ## 6. RAG 配置
 
-默认 RAG 使用关键词和全文检索，适合本地快速启动：
+RAG 固定使用 PostgreSQL 全文检索和 pgvector，向量服务固定为千问兼容接口：
 
 ```powershell
-$env:SCHOLAR_RAG_INDEX_BACKEND="auto"
-$env:SCHOLAR_RAG_RETRIEVAL_MODE="hybrid"
-$env:SCHOLAR_RAG_EMBEDDING_PROVIDER="lexical"
+$env:SCHOLAR_RAG_INDEX_BACKEND="pgvector"
+$env:SCHOLAR_RAG_RETRIEVAL_MODE="hybrid_rrf"
+$env:SCHOLAR_RAG_EMBEDDING_PROVIDER="qwen"
 ```
 
-如果需要远程 embedding，可以配置 OpenAI-compatible embedding：
+配置千问 Embedding：
 
 ```powershell
-$env:SCHOLAR_RAG_RETRIEVAL_MODE="hybrid"
-$env:SCHOLAR_RAG_EMBEDDING_PROVIDER="openai-compatible"
-$env:SCHOLAR_RAG_EMBEDDING_BASE_URL="https://你的embedding服务地址"
+$env:SCHOLAR_RAG_RETRIEVAL_MODE="hybrid_rrf"
+$env:SCHOLAR_RAG_EMBEDDING_PROVIDER="qwen"
+$env:SCHOLAR_RAG_EMBEDDING_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode"
 $env:SCHOLAR_RAG_EMBEDDING_API_KEY="你的embedding密钥"
-$env:SCHOLAR_RAG_EMBEDDING_MODEL="你的embedding模型"
+$env:SCHOLAR_RAG_EMBEDDING_MODEL="Qwen3-Embedding-0.6B"
 $env:SCHOLAR_RAG_EMBEDDING_DIMENSIONS="1024"
 ```
 
@@ -256,16 +258,10 @@ $env:SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS="8"
 
 如果你希望用容器启动 PostgreSQL/pgvector、Redis、后端和前端，可以使用 Docker Compose。
 
-### 8.1 启动 PostgreSQL/pgvector 和 Redis
+### 8.1 启动完整网站
 
 ```powershell
-docker compose --profile prod-deps up -d db redis
-```
-
-### 8.2 启动后端和前端
-
-```powershell
-docker compose up --build backend frontend
+docker compose up -d --build
 ```
 
 访问：
@@ -277,14 +273,14 @@ docker compose up --build backend frontend
 
 前端宿主机端口可通过 `.env` 中的 `SCHOLAR_FRONTEND_PORT` 修改；默认使用 `3000`，以避免和本机已有的 nginx/IIS 服务争用端口 `80`。
 
-### 8.3 可选启动 Worker 和 MCP Server
+### 8.2 查看状态和日志
 
 ```powershell
-docker compose --profile worker up --build worker
-docker compose --profile mcp up --build mcp_server
+docker compose ps
+docker compose logs -f backend frontend worker
 ```
 
-当前本地开发模式下，后端 `TaskService` 会直接创建后台任务；独立 Worker 更适合后续生产化部署或任务执行拆分。
+Compose 会先运行 migration，再启动后端、worker、MCP、browser worker 和前端。网页运行配置会被服务动态读取；修改 `.env` 后则需要执行 `docker compose up -d --force-recreate`。
 
 ## 9. 常用验证命令
 
@@ -406,7 +402,7 @@ SCHOLAR_DATABASE_URL=postgresql+psycopg://用户:密码@主机:5432/数据库
 2. 激活 `.venv`。
 3. 执行 `python -m alembic upgrade head` 和 `scripts\init_infra.py`。
 4. 启动 `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`。
-5. 打开 `http://127.0.0.1:8000/app.html`。
+5. 打开 `http://127.0.0.1:3000`（本地仅启动后端时也可使用 `http://127.0.0.1:8000/app.html`）。
 6. 登录 `tenant_demo / demo / demo123`。
 7. 在个人中心检查模型、数据库、RAG。
 8. 在个人知识库上传或保存论文。
