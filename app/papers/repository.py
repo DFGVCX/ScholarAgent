@@ -479,6 +479,22 @@ class PaperRepository:
             {"error": error[:4000], "tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
         )
 
+    async def mark_parsing_failed(
+        self, tenant_id: str, user_id: str, paper_uuid: UUID, error: str
+    ) -> None:
+        await self.session.execute(
+            text(
+                "UPDATE papers SET ingestion_status='failed', last_error=:error, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid"
+            ),
+            {
+                "error": error[:4000],
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+            },
+        )
+
     async def mark_embeddings_stale(
         self, tenant_id: str, user_id: str, active_model: str, *, force: bool = False
     ) -> int:

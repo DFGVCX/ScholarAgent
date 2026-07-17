@@ -84,7 +84,7 @@ def _chunk_text(text: str, size: int | None = None, overlap: int | None = None) 
     settings = get_settings()
     max_chars = int(size or settings.rag_chunk_size)
     overlap_chars = int(overlap if overlap is not None else settings.rag_chunk_overlap)
-    if settings.rag_chunk_strategy == "fixed":
+    if settings.rag_chunk_strategy in {"fixed", "legacy_fixed"}:
         return [item.content for item in chunk_text(text, max_chars, overlap_chars)]
     chunks: list[str] = []
     for paragraph in re.split(r"\n\s*\n", text):
@@ -141,6 +141,9 @@ class RagService:
                 "chunk_count": result.chunk_count,
                 "embedding_status": result.embedding_status,
                 "warning": result.warning,
+                "parse_status": result.parse_status,
+                "parser_strategy": result.parser_strategy,
+                "chunk_strategy": result.chunk_strategy,
             }
         ]
 

@@ -23,6 +23,8 @@ class PostgreSQLConfigTest(unittest.TestCase):
         self.assertEqual(settings.rag_embedding_provider, "qwen")
         self.assertEqual(settings.rag_embedding_model, "Qwen3-Embedding-0.6B")
         self.assertEqual(settings.rag_embedding_dimensions, 1024)
+        self.assertEqual(settings.pdf_parse_strategy, "structure_aware_v1")
+        self.assertEqual(settings.rag_chunk_strategy, "structure_aware_v1")
 
     def test_database_url_must_be_postgresql(self) -> None:
         with patch.dict(
