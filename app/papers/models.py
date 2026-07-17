@@ -82,3 +82,8 @@ class ContentVersion:
     content_uuid: UUID
     content_version: int
     chunk_count: int
+    parse_status: str = "ready"
+    parser_name: str = "legacy_fixed"
+    parser_version: str = "1"
+    chunk_strategy: str = "legacy_fixed"
+    chunker_version: str = "1"

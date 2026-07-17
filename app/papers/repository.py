@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.papers.chunking import ChunkDraft
 from app.papers.models import ContentVersion, PaperInput, PaperRecord, normalize_arxiv_id, normalize_doi
+from app.papers.parsing import ParsedPaper
 
 
 _PAPER_COLUMNS = """
@@ -72,6 +73,15 @@ class PaperRepository:
                     pc.full_text, p.published_at, p.normalized_doi AS doi,
                     p.normalized_arxiv_id AS arxiv_id, p.canonical_url AS url,
                     p.in_knowledge_base, p.ingestion_status, p.metadata,
+                    pc.parse_status, pc.parser_name, pc.parser_version,
+                    pc.chunk_strategy, pc.chunker_version, pc.extraction_quality,
+                    pc.parse_manifest,
+                    COALESCE((SELECT COUNT(*) FROM paper_pages pp
+                        WHERE pp.content_uuid=pc.content_uuid AND pp.tenant_id=pc.tenant_id
+                          AND pp.user_id=pc.user_id), 0) AS page_count,
+                    COALESCE((SELECT COUNT(*) FROM paper_sections ps
+                        WHERE ps.content_uuid=pc.content_uuid AND ps.tenant_id=pc.tenant_id
+                          AND ps.user_id=pc.user_id), 0) AS section_count,
                     asset.file_uri, asset.file_name, asset.mime_type, asset.file_size
                 FROM papers p
                 LEFT JOIN paper_contents pc ON pc.paper_uuid=p.paper_uuid
@@ -126,6 +136,17 @@ class PaperRepository:
                     "file_path": row.get("file_uri") or "",
                     "in_knowledge_base": bool(row.get("in_knowledge_base")),
                     "ingestion_status": row.get("ingestion_status"),
+                    "parsing": {
+                        "status": row.get("parse_status"),
+                        "parser_name": row.get("parser_name"),
+                        "parser_version": row.get("parser_version"),
+                        "chunk_strategy": row.get("chunk_strategy"),
+                        "chunker_version": row.get("chunker_version"),
+                        "quality_score": row.get("extraction_quality"),
+                        "page_count": int(row.get("page_count") or 0),
+                        "section_count": int(row.get("section_count") or 0),
+                        "manifest": dict(row.get("parse_manifest") or {}),
+                    },
                     "metadata": metadata,
                 }
             )
@@ -209,6 +230,11 @@ class PaperRepository:
         chunks: Sequence[ChunkDraft],
         *,
         extraction_method: str,
+        parsed: ParsedPaper | None = None,
+        parser_name: str = "legacy_fixed",
+        parser_version: str = "1",
+        chunk_strategy: str = "legacy_fixed",
+        chunker_version: str = "1",
     ) -> ContentVersion:
         locked = await self.session.execute(
             text(
@@ -225,10 +251,12 @@ class PaperRepository:
             text(
                 """INSERT INTO paper_contents (
                     tenant_id, user_id, paper_uuid, content_version, full_text, content_hash,
-                    extraction_method
+                    language, extraction_method, extraction_quality, parser_name, parser_version,
+                    chunk_strategy, chunker_version, parse_status, parse_manifest
                 ) VALUES (
                     :tenant_id, :user_id, :paper_uuid, :version, :full_text, :content_hash,
-                    :extraction_method
+                    :language, :extraction_method, :extraction_quality, :parser_name, :parser_version,
+                    :chunk_strategy, :chunker_version, :parse_status, CAST(:parse_manifest AS jsonb)
                 ) RETURNING content_uuid"""
             ),
             {
@@ -239,18 +267,87 @@ class PaperRepository:
                 "full_text": full_text,
                 "content_hash": content_hash,
                 "extraction_method": extraction_method,
+                "language": str((parsed.metadata if parsed else {}).get("language") or "") or None,
+                "extraction_quality": parsed.quality_score if parsed else None,
+                "parser_name": parser_name,
+                "parser_version": parser_version,
+                "chunk_strategy": chunk_strategy,
+                "chunker_version": chunker_version,
+                "parse_status": parsed.status if parsed else "ready",
+                "parse_manifest": json.dumps(parsed.to_manifest() if parsed else {}, ensure_ascii=False),
             },
         )
         content_uuid = inserted.scalar_one()
+        if parsed is not None:
+            for page in parsed.pages:
+                await self.session.execute(
+                    text(
+                        """INSERT INTO paper_pages (
+                            tenant_id, user_id, paper_uuid, content_uuid, content_version,
+                            page_number, text, text_hash, extraction_method, quality_status,
+                            searchable_chars, blocks
+                        ) VALUES (
+                            :tenant_id, :user_id, :paper_uuid, :content_uuid, :version,
+                            :page_number, :text, :text_hash, :page_extraction_method,
+                            :quality_status, :searchable_chars, CAST(:blocks AS jsonb))"""
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "paper_uuid": paper_uuid,
+                        "content_uuid": content_uuid,
+                        "version": version,
+                        "page_number": page.page_number,
+                        "text": page.text,
+                        "text_hash": page.text_hash,
+                        "page_extraction_method": page.extraction_method,
+                        "quality_status": page.quality_status,
+                        "searchable_chars": page.searchable_chars,
+                        "blocks": json.dumps([block.to_dict() for block in page.blocks], ensure_ascii=False),
+                    },
+                )
+            for section in parsed.sections:
+                await self.session.execute(
+                    text(
+                        """INSERT INTO paper_sections (
+                            tenant_id, user_id, paper_uuid, content_uuid, content_version,
+                            section_id, section_index, kind, title, page_start, page_end,
+                            content, char_count, char_start, char_end, text_hash
+                        ) VALUES (
+                            :tenant_id, :user_id, :paper_uuid, :content_uuid, :version,
+                            :section_id, :section_index, :kind, :title, :page_start, :page_end,
+                            :content, :char_count, :char_start, :char_end, :text_hash)"""
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "paper_uuid": paper_uuid,
+                        "content_uuid": content_uuid,
+                        "version": version,
+                        "section_id": section.section_id,
+                        "section_index": section.index,
+                        "kind": section.kind,
+                        "title": section.title,
+                        "page_start": section.page_start,
+                        "page_end": section.page_end,
+                        "content": section.text,
+                        "char_count": len(section.text),
+                        "char_start": section.char_start,
+                        "char_end": section.char_end,
+                        "text_hash": section.text_hash,
+                    },
+                )
         for chunk in chunks:
             await self.session.execute(
                 text(
                     """INSERT INTO paper_chunks (
                         tenant_id, user_id, paper_uuid, content_uuid, content_version,
-                        chunk_index, content, content_hash, token_count
+                        chunk_index, section_id, section_path, page_start, page_end,
+                        char_start, char_end, content, content_hash, token_count
                     ) VALUES (
                         :tenant_id, :user_id, :paper_uuid, :content_uuid, :version,
-                        :position, :content, :content_hash, :token_count)"""
+                        :position, :section_id, :section_path, :page_start, :page_end,
+                        :char_start, :char_end, :content, :content_hash, :token_count)"""
                 ),
                 {
                     "tenant_id": tenant_id,
@@ -259,6 +356,12 @@ class PaperRepository:
                     "content_uuid": content_uuid,
                     "version": version,
                     "position": chunk.position,
+                    "section_id": chunk.section_id,
+                    "section_path": chunk.section_path,
+                    "page_start": chunk.page_start,
+                    "page_end": chunk.page_end,
+                    "char_start": chunk.char_start,
+                    "char_end": chunk.char_end,
                     "content": chunk.content,
                     "content_hash": chunk.content_hash,
                     "token_count": chunk.token_count,
@@ -272,7 +375,17 @@ class PaperRepository:
             ),
             {"version": version, "tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
         )
-        return ContentVersion(paper_uuid, content_uuid, version, len(chunks))
+        return ContentVersion(
+            paper_uuid,
+            content_uuid,
+            version,
+            len(chunks),
+            parsed.status if parsed else "ready",
+            parser_name,
+            parser_version,
+            chunk_strategy,
+            chunker_version,
+        )
 
     async def save_asset(self, tenant_id: str, user_id: str, paper_uuid: UUID, paper: PaperInput) -> None:
         if not paper.file_uri:
