@@ -37,11 +37,13 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("/app.html?v=", bridge)
 
     def test_rag_console_renders_canonical_chunk_fields(self) -> None:
-        self.assertIn("chunk_id: item.chunk_id", self.html)
-        self.assertIn("chunk_index: item.chunk_index", self.html)
-        self.assertIn("lexical: item.lexical_rank", self.html)
-        self.assertIn("vector: item.vector_rank", self.html)
-        self.assertIn("chunk: `${item.snippet || ''}`", self.html)
+        self.assertIn("<th>Chunk</th><th>命中片段</th><th>来源论文</th>", self.html)
+        self.assertIn("Chunk #${Number(item.chunk_index ?? 0)}", self.html)
+        self.assertIn("escapeHtml(item.chunk_id || '-')", self.html)
+        self.assertIn("escapeHtml(item.title || item.paper_id)", self.html)
+        self.assertIn("item.lexical_rank ?? '-'", self.html)
+        self.assertIn("item.vector_rank ?? '-'", self.html)
+        self.assertIn("escapeHtml(item.snippet || '').slice(0, 600)", self.html)
         self.assertIn("escapeHtml(item.snippet || '')", self.html)
 
 

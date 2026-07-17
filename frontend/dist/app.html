@@ -3492,6 +3492,26 @@
             background: #f1f6f6;
             color: #20313a;
         }
+        .rag-verify-table {
+            min-width: 980px;
+            table-layout: fixed;
+        }
+        .rag-verify-table th:nth-child(1) { width: 150px; }
+        .rag-verify-table th:nth-child(2) { width: 360px; }
+        .rag-verify-table th:nth-child(3) { width: 240px; }
+        .rag-verify-table th:nth-child(n+4) { width: 86px; }
+        .rag-verify-table .row-meta {
+            margin-top: 4px;
+            font-family: var(--font-mono);
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+        .rag-verify-snippet {
+            color: var(--ink-2);
+            line-height: 1.65;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
 
         /* Chat final polish: calmer typography, stronger message hierarchy, mature composer */
         #pageChat .chat-workbench {
@@ -8139,16 +8159,12 @@
             $('profileRagResult').textContent = '正在检索...';
             try {
                 const data = await api(`/knowledge/rag/search?query=${encodeURIComponent(query)}&limit=6`);
-                const rows = (data.items || []).map((item) => ({
-                    source_paper: item.title || item.paper_id,
-                    chunk_id: item.chunk_id,
-                    chunk_index: item.chunk_index,
-                    score: item.score,
-                    lexical: item.lexical_rank,
-                    vector: item.vector_rank,
-                    chunk: `${item.snippet || ''}`.slice(0, 220),
-                }));
-                $('profileRagResult').innerHTML = `<div class="subtle" style="margin-bottom:8px;">${escapeHtml(data.backend || '-')} / ${escapeHtml(data.retrieval_mode || '-')}</div>${renderOpsTable(['source_paper', 'chunk_id', 'chunk_index', 'score', 'lexical', 'vector', 'chunk'], rows)}`;
+                const items = data.items || [];
+                const summary = `<div class="subtle" style="margin-bottom:8px;">${escapeHtml(data.backend || '-')} / ${escapeHtml(data.retrieval_mode || '-')} · Top ${items.length} chunks</div>`;
+                const results = items.length
+                    ? `<table class="rag-verify-table"><thead><tr><th>Chunk</th><th>命中片段</th><th>来源论文</th><th>融合分</th><th>关键词排名</th><th>向量排名</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Chunk #${Number(item.chunk_index ?? 0)}</strong><div class="row-meta">${escapeHtml(item.chunk_id || '-')}</div></td><td><div class="rag-verify-snippet">${escapeHtml(item.snippet || '').slice(0, 600)}</div></td><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id || '-')}</div></td><td>${Number(item.score || 0).toFixed(6)}</td><td>${item.lexical_rank ?? '-'}</td><td>${item.vector_rank ?? '-'}</td></tr>`).join('')}</tbody></table>`
+                    : '<div class="subtle">查询成功，没有返回 chunk。</div>';
+                $('profileRagResult').innerHTML = summary + results;
             } catch (error) {
                 $('profileRagResult').textContent = `检索失败：${error.message}`;
                 toast(error.message, 'bad');
