@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import fitz
 
-from app.papers.parsing import parse_pdf, parse_pdf_legacy
+from app.papers.parsing import ParsedBlock, parse_pdf, parse_pdf_legacy
 
 
 def _write_text_pdf(path: Path, pages: list[list[str]]) -> Path:
@@ -47,6 +47,44 @@ def _write_image_only_pdf(path: Path) -> Path:
 
 
 class StructuredPdfParsingTest(unittest.TestCase):
+    def test_removes_postgresql_incompatible_nul_characters(self) -> None:
+        class FakeDocument:
+            metadata = {}
+
+            def __init__(self) -> None:
+                self.page = SimpleNamespace(rect=SimpleNamespace(width=595, height=842))
+
+            def __iter__(self):
+                return iter((self.page,))
+
+            def __len__(self) -> int:
+                return 1
+
+            def close(self) -> None:
+                pass
+
+        blocks = (
+            ParsedBlock(
+                1,
+                "body",
+                "A federated learning paragraph contains an embedded\x00font marker "
+                "but must remain completely storable and searchable after parsing. "
+                "The remaining text makes the page long enough for normal quality checks.",
+                (72.0, 110.0, 520.0, 160.0),
+                0,
+                11.0,
+            ),
+        )
+        with patch("fitz.open", return_value=FakeDocument()), patch(
+            "app.papers.parsing._page_blocks", return_value=blocks
+        ):
+            parsed = parse_pdf(Path("nul-text-layer.pdf"))
+
+        self.assertEqual(parsed.status, "ready")
+        self.assertNotIn("\x00", parsed.full_text)
+        self.assertNotIn("\x00", parsed.pages[0].text)
+        self.assertNotIn("\x00", parsed.sections[0].text)
+
     def test_preserves_pages_sections_and_provenance(self) -> None:
         from tempfile import TemporaryDirectory
 

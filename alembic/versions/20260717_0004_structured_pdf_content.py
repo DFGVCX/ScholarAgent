@@ -1,13 +1,13 @@
 """Add page- and section-aware PDF content persistence.
 
-Revision ID: 20260717_0002
-Revises: 20260716_0001
+Revision ID: 20260717_0004
+Revises: 20260717_0003
 """
 from alembic import op
 
 
-revision = "20260717_0002"
-down_revision = "20260716_0001"
+revision = "20260717_0004"
+down_revision = "20260717_0003"
 branch_labels = None
 depends_on = None
 

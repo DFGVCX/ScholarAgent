@@ -19,8 +19,13 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _sanitize_text(value: str) -> str:
+    """Keep extracted text valid for PostgreSQL while preserving word boundaries."""
+    return (value or "").replace("\x00", " ")
+
+
 def _normalize_space(value: str) -> str:
-    return re.sub(r"[ \t\f\v]+", " ", value or "").strip()
+    return re.sub(r"[ \t\f\v]+", " ", _sanitize_text(value)).strip()
 
 
 @dataclass(frozen=True)
@@ -224,7 +229,7 @@ def _ordered_body_blocks(page: _RawPage, repeated: set[str]) -> tuple[ParsedBloc
         in_margin = y1 <= page.height * 0.12 or y0 >= page.height * 0.88
         if in_margin and _margin_key(block.text) in repeated:
             continue
-        body.append(block)
+        body.append(replace(block, text=_sanitize_text(block.text)))
     if not body:
         return ()
 
@@ -486,7 +491,7 @@ def parse_pdf_legacy(path: Path) -> ParsedPaper:
         from pypdf import PdfReader
 
         reader = PdfReader(str(path))
-        page_texts = [str(page.extract_text() or "").strip() for page in reader.pages]
+        page_texts = [_sanitize_text(str(page.extract_text() or "")).strip() for page in reader.pages]
         pages = tuple(
             ParsedPage(
                 page_number=index + 1,
