@@ -29,7 +29,7 @@
 - Consumes: `RetrievalCandidate` rows produced by lexical/vector repository queries.
 - Produces: `LocalHit` objects containing `chunk_id`, `chunk_index`, `snippet`, ranks, and paper metadata.
 
-- [ ] **Step 1: Write the failing fusion test**
+- [x] **Step 1: Write the failing fusion test**
 
 Add two candidates with different `chunk_id` values but the same `paper_uuid`, then assert both appear when `limit=2`.
 
@@ -43,17 +43,17 @@ self.assertEqual([hit.chunk_id for hit in hits], ["a", "b"])
 self.assertEqual([hit.chunk_index for hit in hits], [0, 1])
 ```
 
-- [ ] **Step 2: Run the test and confirm the old paper deduplication fails it**
+- [x] **Step 2: Run the test and confirm the old paper deduplication fails it**
 
 Run: `python -m unittest tests.test_retrieval_service -v`
 
 Expected: FAIL because only one hit survives for paper `p1`.
 
-- [ ] **Step 3: Carry chunk indexes and remove paper-level deduplication**
+- [x] **Step 3: Carry chunk indexes and remove paper-level deduplication**
 
 Add `chunk_index: int` to `RetrievalCandidate` and `LocalHit`, select `c.chunk_index` in both repository queries, map it in `_candidate`, and remove the `seen_papers` guard from `_fuse`.
 
-- [ ] **Step 4: Run backend retrieval tests**
+- [x] **Step 4: Run backend retrieval tests**
 
 Run: `python -m unittest tests.test_retrieval_service tests.test_embedding_lifecycle -v`
 
@@ -69,7 +69,7 @@ Expected: PASS, with Top K measured in chunks.
 - Consumes: `items[]` containing `chunk_id`, `chunk_index`, `snippet`, `score`, `lexical_rank`, `vector_rank`, and paper metadata.
 - Produces: a verification table with one row per chunk and an explicit source-paper column.
 
-- [ ] **Step 1: Write the failing UI contract test**
+- [x] **Step 1: Write the failing UI contract test**
 
 ```python
 self.assertIn("item.snippet", self.html)
@@ -79,17 +79,17 @@ self.assertIn("item.lexical_rank", self.html)
 self.assertIn("item.vector_rank", self.html)
 ```
 
-- [ ] **Step 2: Run the test and confirm obsolete field names fail it**
+- [x] **Step 2: Run the test and confirm obsolete field names fail it**
 
 Run: `python -m unittest tests.test_model_settings_ui -v`
 
 Expected: FAIL because the page reads `content`, `lexical_score`, and `vector_score`.
 
-- [ ] **Step 3: Update both RAG result renderers**
+- [x] **Step 3: Update both RAG result renderers**
 
 Read `snippet`, `chunk_id`, `chunk_index`, `lexical_rank`, and `vector_rank`; display the paper title as source metadata rather than the result unit.
 
-- [ ] **Step 4: Run focused and live verification**
+- [x] **Step 4: Run focused and live verification**
 
 Run: `python -m unittest tests.test_retrieval_service tests.test_model_settings_ui -v`
 

@@ -7,9 +7,12 @@ from app.retrieval.models import RetrievalRequest, RetrievalCandidate
 from app.retrieval.service import RetrievalService, reciprocal_rank_fusion
 
 
-def _candidate(chunk_id: str, paper_id: str, score: float) -> RetrievalCandidate:
+def _candidate(
+    chunk_id: str, paper_id: str, score: float, chunk_index: int = 0
+) -> RetrievalCandidate:
     return RetrievalCandidate(
         chunk_id=chunk_id,
+        chunk_index=chunk_index,
         paper_uuid=f"uuid-{paper_id}",
         paper_id=paper_id,
         title=f"Title {paper_id}",
@@ -51,6 +54,19 @@ class _BrokenEmbedding:
 
 
 class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
+    def test_top_k_keeps_multiple_chunks_from_the_same_paper(self) -> None:
+        hits = RetrievalService._fuse(
+            [
+                _candidate("a", "p1", 0.9, chunk_index=0),
+                _candidate("b", "p1", 0.8, chunk_index=1),
+            ],
+            [],
+            2,
+        )
+
+        self.assertEqual([hit.chunk_id for hit in hits], ["a", "b"])
+        self.assertEqual([hit.chunk_index for hit in hits], [0, 1])
+
     def test_rrf_merges_by_id_without_recency(self) -> None:
         merged = reciprocal_rank_fusion([["a", "b"], ["b", "c"]], k=60)
         self.assertEqual(merged[0][0], "b")
@@ -66,6 +82,13 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(hit.can_cite for hit in response.local_hits))
         self.assertEqual(response.external_candidates, ())
         self.assertEqual(repository.embedding_model, "Qwen3-Embedding-4B")
+
+    async def test_hits_expose_chunk_index(self) -> None:
+        response = await RetrievalService(_Repository(), _Embedding()).search(
+            RetrievalRequest("t", "u", "retrieval", limit=1)
+        )
+
+        self.assertIn("chunk_index", response.to_dict()["local_hits"][0])
 
     async def test_embedding_failure_keeps_lexical_results(self) -> None:
         service = RetrievalService(_Repository(), _BrokenEmbedding())

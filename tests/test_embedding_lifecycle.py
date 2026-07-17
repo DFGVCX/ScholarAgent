@@ -37,6 +37,15 @@ class _Session:
 
 
 class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_lexical_query_selects_chunk_index(self) -> None:
+        session = _Session([_Result()])
+        repository = PostgresRetrievalRepository(session)
+
+        await repository.lexical_candidates(RetrievalRequest("tenant", "user", "query"))
+
+        sql, _ = session.calls[0]
+        self.assertIn("c.chunk_index AS chunk_index", sql)
+
     async def test_vector_query_filters_by_ready_status_and_active_model(self) -> None:
         session = _Session([_Result(), _Result()])
         repository = PostgresRetrievalRepository(session)

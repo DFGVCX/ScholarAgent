@@ -36,6 +36,14 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("frameVersion", bridge)
         self.assertIn("/app.html?v=", bridge)
 
+    def test_rag_console_renders_canonical_chunk_fields(self) -> None:
+        self.assertIn("chunk_id: item.chunk_id", self.html)
+        self.assertIn("chunk_index: item.chunk_index", self.html)
+        self.assertIn("lexical: item.lexical_rank", self.html)
+        self.assertIn("vector: item.vector_rank", self.html)
+        self.assertIn("chunk: `${item.snippet || ''}`", self.html)
+        self.assertIn("escapeHtml(item.snippet || '')", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

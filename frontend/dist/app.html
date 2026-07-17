@@ -8140,13 +8140,15 @@
             try {
                 const data = await api(`/knowledge/rag/search?query=${encodeURIComponent(query)}&limit=6`);
                 const rows = (data.items || []).map((item) => ({
-                    paper: item.title || item.paper_id,
+                    source_paper: item.title || item.paper_id,
+                    chunk_id: item.chunk_id,
+                    chunk_index: item.chunk_index,
                     score: item.score,
-                    lexical: item.lexical_score ?? '-',
-                    vector: item.vector_score ?? '-',
-                    chunk: `${item.content || ''}`.slice(0, 220),
+                    lexical: item.lexical_rank,
+                    vector: item.vector_rank,
+                    chunk: `${item.snippet || ''}`.slice(0, 220),
                 }));
-                $('profileRagResult').innerHTML = `<div class="subtle" style="margin-bottom:8px;">${escapeHtml(data.backend || '-')} / ${escapeHtml(data.retrieval_mode || '-')}</div>${renderOpsTable(['paper', 'score', 'lexical', 'vector', 'chunk'], rows)}`;
+                $('profileRagResult').innerHTML = `<div class="subtle" style="margin-bottom:8px;">${escapeHtml(data.backend || '-')} / ${escapeHtml(data.retrieval_mode || '-')}</div>${renderOpsTable(['source_paper', 'chunk_id', 'chunk_index', 'score', 'lexical', 'vector', 'chunk'], rows)}`;
             } catch (error) {
                 $('profileRagResult').textContent = `检索失败：${error.message}`;
                 toast(error.message, 'bad');
@@ -9473,7 +9475,7 @@
                 target.innerHTML = '<div class="list-row"><strong>暂无检索结果</strong><span class="row-meta">保存论文后会生成 RAG chunks</span></div>';
                 return;
             }
-            target.innerHTML = `<table class="table"><thead><tr><th>论文</th><th>相关度</th><th>片段</th><th>操作</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id)} #${Number(item.chunk_index || 0)}</div></td><td>${Number(item.score || 0)}</td><td>${escapeHtml(item.content || '').slice(0, 360)}</td><td><button class="plain" type="button" data-rag-paper="${escapeHtml(item.paper_id)}">查看</button></td></tr>`).join('')}</tbody></table>`;
+            target.innerHTML = `<table class="table"><thead><tr><th>Chunk</th><th>来源论文</th><th>相关度</th><th>命中片段</th><th>操作</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Chunk #${Number(item.chunk_index ?? 0)}</strong><div class="row-meta">${escapeHtml(item.chunk_id || '-')}</div></td><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id)}</div></td><td>${Number(item.score || 0)}</td><td>${escapeHtml(item.snippet || '').slice(0, 360)}</td><td><button class="plain" type="button" data-rag-paper="${escapeHtml(item.paper_id)}">查看论文</button></td></tr>`).join('')}</tbody></table>`;
             target.querySelectorAll('[data-rag-paper]').forEach((button) => button.addEventListener('click', () => {
                 const found = state.knowledge.find((paper) => paper.paper_id === button.dataset.ragPaper);
                 if (found) selectKnowledge(found.paper_id);

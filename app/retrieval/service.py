@@ -84,15 +84,12 @@ class RetrievalService:
         lexical_rank = {item.chunk_id: rank for rank, item in enumerate(lexical, start=1)}
         vector_rank = {item.chunk_id: rank for rank, item in enumerate(vector, start=1)}
         hits: list[LocalHit] = []
-        seen_papers: set[str] = set()
         for chunk_id, score in fused:
             candidate = candidates[chunk_id]
-            if candidate.paper_uuid in seen_papers:
-                continue
-            seen_papers.add(candidate.paper_uuid)
             hits.append(
                 LocalHit(
                     chunk_id=candidate.chunk_id,
+                    chunk_index=candidate.chunk_index,
                     paper_id=candidate.paper_id,
                     title=candidate.title,
                     authors=candidate.authors,

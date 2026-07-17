@@ -17,7 +17,7 @@ class PostgresRetrievalRepository:
         result = await self.session.execute(
             text(
                 """SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
-                    p.paper_id, p.title, p.authors, c.content, p.source,
+                    c.chunk_index AS chunk_index, p.paper_id, p.title, p.authors, c.content, p.source,
                     p.normalized_doi AS doi, p.normalized_arxiv_id AS arxiv_id,
                     p.canonical_url, p.published_at,
                     (CASE WHEN p.title ILIKE :pattern THEN 2.0 ELSE 0.0 END
@@ -57,7 +57,7 @@ class PostgresRetrievalRepository:
         result = await self.session.execute(
             text(
                 """SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
-                    p.paper_id, p.title, p.authors, c.content, p.source,
+                    c.chunk_index AS chunk_index, p.paper_id, p.title, p.authors, c.content, p.source,
                     p.normalized_doi AS doi, p.normalized_arxiv_id AS arxiv_id,
                     p.canonical_url, p.published_at,
                     1.0 - (c.embedding <=> CAST(:embedding AS vector)) AS score
@@ -89,6 +89,7 @@ class PostgresRetrievalRepository:
             authors = json.loads(authors)
         return RetrievalCandidate(
             chunk_id=str(row["chunk_id"]),
+            chunk_index=int(row["chunk_index"]),
             paper_uuid=str(row["paper_uuid"]),
             paper_id=row["paper_id"],
             title=row["title"],

@@ -25,6 +25,7 @@ class RetrievalRequest:
 @dataclass(frozen=True)
 class RetrievalCandidate:
     chunk_id: str
+    chunk_index: int
     paper_uuid: str
     paper_id: str
     title: str
@@ -41,6 +42,7 @@ class RetrievalCandidate:
 @dataclass(frozen=True)
 class LocalHit:
     chunk_id: str
+    chunk_index: int
     paper_id: str
     title: str
     authors: tuple[str, ...]
