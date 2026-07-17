@@ -61,7 +61,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.frontend
     ports:
-      - "80:80"
+      - "${SCHOLAR_FRONTEND_PORT:-3000}:80"
     depends_on:
       backend:
         condition: service_healthy

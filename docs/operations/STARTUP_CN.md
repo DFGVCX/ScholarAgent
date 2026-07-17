@@ -271,9 +271,11 @@ docker compose up --build backend frontend
 访问：
 
 ```text
-前端：http://127.0.0.1
+前端：http://127.0.0.1:3000
 后端：http://127.0.0.1:8000
 ```
+
+前端宿主机端口可通过 `.env` 中的 `SCHOLAR_FRONTEND_PORT` 修改；默认使用 `3000`，以避免和本机已有的 nginx/IIS 服务争用端口 `80`。
 
 ### 8.3 可选启动 Worker 和 MCP Server
 

@@ -6,8 +6,11 @@ ENV PYTHONUNBUFFERED=1
 ENV SCHOLAR_BROWSER_CHANNEL=
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
-RUN python -m playwright install --with-deps chromium
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --timeout 120 --retries 10 -r /app/requirements.txt
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' 'Acquire::Retries "5";' 'Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-scholar-network \
+    && PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 python -m playwright install --with-deps chromium
 
 COPY . /app
 EXPOSE 8002
