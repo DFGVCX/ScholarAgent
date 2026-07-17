@@ -35,6 +35,13 @@ async def get_async_session() -> AsyncIterator[AsyncSession]:
 
 
 @asynccontextmanager
+async def worker_transaction() -> AsyncIterator[AsyncSession]:
+    """Run narrowly scoped worker operations such as SECURITY DEFINER job claiming."""
+    async with async_session_factory() as session, session.begin():
+        yield session
+
+
+@asynccontextmanager
 async def tenant_transaction(tenant_id: str, user_id: str) -> AsyncIterator[AsyncSession]:
     if not tenant_id or not user_id:
         raise ValueError("tenant_id and user_id are required")

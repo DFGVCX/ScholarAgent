@@ -367,7 +367,7 @@ class PaperRepository:
         )
 
     async def mark_embeddings_stale(
-        self, tenant_id: str, user_id: str, active_model: str
+        self, tenant_id: str, user_id: str, active_model: str, *, force: bool = False
     ) -> int:
         result = await self.session.execute(
             text(
@@ -380,9 +380,14 @@ class PaperRepository:
                   AND p.deleted_at IS NULL
                   AND c.content_version=p.current_content_version
                   AND c.embedding_status='ready'
-                  AND c.embedding_model IS DISTINCT FROM :active_model"""
+                  AND (:force OR c.embedding_model IS DISTINCT FROM :active_model)"""
             ),
-            {"tenant_id": tenant_id, "user_id": user_id, "active_model": active_model},
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "active_model": active_model,
+                "force": force,
+            },
         )
         return int(getattr(result, "rowcount", 0) or 0)
 
@@ -418,6 +423,165 @@ class PaperRepository:
             key: int(row.get(key) or 0)
             for key in ("ready", "stale", "failed", "pending")
         }
+
+    async def enqueue_reembedding_jobs(
+        self, tenant_id: str, user_id: str
+    ) -> dict[str, int]:
+        existing_result = await self.session.execute(
+            text(
+                """SELECT COUNT(DISTINCT c.paper_uuid) AS existing
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version
+                  AND c.embedding_status='stale'
+                  AND EXISTS (
+                      SELECT 1 FROM paper_ingestion_jobs j
+                      WHERE j.tenant_id=c.tenant_id AND j.user_id=c.user_id
+                        AND j.paper_uuid=c.paper_uuid AND j.job_type='reembed'
+                        AND j.status IN ('pending','running','retry')
+                  )"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id},
+        )
+        existing_row = existing_result.mappings().first() or {}
+        inserted = await self.session.execute(
+            text(
+                """INSERT INTO paper_ingestion_jobs (
+                    tenant_id, user_id, paper_uuid, job_type, status, payload
+                )
+                SELECT DISTINCT c.tenant_id, c.user_id, c.paper_uuid,
+                    'reembed', 'pending', '{}'::jsonb
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version
+                  AND c.embedding_status='stale'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM paper_ingestion_jobs j
+                      WHERE j.tenant_id=c.tenant_id AND j.user_id=c.user_id
+                        AND j.paper_uuid=c.paper_uuid AND j.job_type='reembed'
+                        AND j.status IN ('pending','running','retry')
+                  )
+                ON CONFLICT DO NOTHING
+                RETURNING job_uuid"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id},
+        )
+        created = len(inserted.mappings().all())
+        return {"created": created, "existing": int(existing_row.get("existing") or 0)}
+
+    async def list_worker_scopes(self) -> list[tuple[str, str]]:
+        result = await self.session.execute(
+            text(
+                "SELECT tenant_id, user_id FROM scholar_users "
+                "WHERE status='active' ORDER BY tenant_id, user_id"
+            )
+        )
+        return [
+            (str(row["tenant_id"]), str(row["user_id"]))
+            for row in result.mappings().all()
+        ]
+
+    async def claim_reembedding_job(
+        self, worker_id: str, tenant_id: str, user_id: str
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            text(
+                """WITH candidate AS (
+                    SELECT job_uuid
+                    FROM paper_ingestion_jobs
+                    WHERE tenant_id=:tenant_id AND user_id=:user_id
+                      AND job_type='reembed'
+                      AND status IN ('pending','retry')
+                      AND available_at <= now()
+                    ORDER BY created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE paper_ingestion_jobs j
+                SET status='running', locked_at=now(), locked_by=:worker_id,
+                    attempt_count=j.attempt_count + 1, updated_at=now()
+                FROM candidate
+                WHERE j.job_uuid=candidate.job_uuid
+                RETURNING j.job_uuid, j.tenant_id, j.user_id, j.paper_uuid,
+                    j.attempt_count, j.max_attempts"""
+            ),
+            {"worker_id": worker_id, "tenant_id": tenant_id, "user_id": user_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def current_embedding_batch(
+        self, tenant_id: str, user_id: str, paper_uuid: UUID | str
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            text(
+                """SELECT c.content_uuid, c.chunk_index, c.content
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND c.paper_uuid=:paper_uuid AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version
+                ORDER BY c.chunk_index"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
+        )
+        rows = result.mappings().all()
+        if not rows:
+            return None
+        return {
+            "content_uuid": rows[0]["content_uuid"],
+            "chunks": [
+                {"chunk_index": int(row["chunk_index"]), "content": str(row["content"])}
+                for row in rows
+            ],
+        }
+
+    async def complete_ingestion_job(
+        self, tenant_id: str, user_id: str, job_uuid: UUID | str
+    ) -> None:
+        await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status='completed', completed_at=now(), locked_at=NULL,
+                    locked_by=NULL, last_error=NULL, updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id AND job_uuid=:job_uuid"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "job_uuid": job_uuid},
+        )
+
+    async def fail_ingestion_job(
+        self,
+        tenant_id: str,
+        user_id: str,
+        job: Mapping[str, Any],
+        error: str,
+    ) -> None:
+        retry = int(job.get("attempt_count") or 0) < int(job.get("max_attempts") or 1)
+        await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status=:status, last_error=:error, locked_at=NULL, locked_by=NULL,
+                    available_at=CASE WHEN :retry THEN now() + interval '1 minute' ELSE available_at END,
+                    completed_at=CASE WHEN :retry THEN NULL ELSE now() END,
+                    updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id AND job_uuid=:job_uuid"""
+            ),
+            {
+                "status": "retry" if retry else "failed",
+                "retry": retry,
+                "error": error[:4000],
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+            },
+        )
 
     async def stats(self, tenant_id: str, user_id: str) -> dict[str, int]:
         result = await self.session.execute(
