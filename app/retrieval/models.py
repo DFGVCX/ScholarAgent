@@ -37,6 +37,10 @@ class RetrievalCandidate:
     canonical_url: str | None
     published_at: datetime | str | None
     score: float
+    section_id: str | None = None
+    section_path: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,10 @@ class LocalHit:
     lexical_rank: int | None
     vector_rank: int | None
     can_cite: bool = True
+    section_id: str | None = None
+    section_path: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)

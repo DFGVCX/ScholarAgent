@@ -17,7 +17,8 @@ class PostgresRetrievalRepository:
         result = await self.session.execute(
             text(
                 """SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
-                    c.chunk_index AS chunk_index, p.paper_id, p.title, p.authors, c.content, p.source,
+                    c.chunk_index AS chunk_index, c.section_id, c.section_path,
+                    c.page_start, c.page_end, p.paper_id, p.title, p.authors, c.content, p.source,
                     p.normalized_doi AS doi, p.normalized_arxiv_id AS arxiv_id,
                     p.canonical_url, p.published_at,
                     (CASE WHEN p.title ILIKE :pattern THEN 2.0 ELSE 0.0 END
@@ -57,7 +58,8 @@ class PostgresRetrievalRepository:
         result = await self.session.execute(
             text(
                 """SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
-                    c.chunk_index AS chunk_index, p.paper_id, p.title, p.authors, c.content, p.source,
+                    c.chunk_index AS chunk_index, c.section_id, c.section_path,
+                    c.page_start, c.page_end, p.paper_id, p.title, p.authors, c.content, p.source,
                     p.normalized_doi AS doi, p.normalized_arxiv_id AS arxiv_id,
                     p.canonical_url, p.published_at,
                     1.0 - (c.embedding <=> CAST(:embedding AS vector)) AS score
@@ -101,4 +103,8 @@ class PostgresRetrievalRepository:
             canonical_url=row.get("canonical_url"),
             published_at=row.get("published_at"),
             score=float(row.get("score") or 0.0),
+            section_id=row.get("section_id"),
+            section_path=row.get("section_path"),
+            page_start=int(row["page_start"]) if row.get("page_start") is not None else None,
+            page_end=int(row["page_end"]) if row.get("page_end") is not None else None,
         )

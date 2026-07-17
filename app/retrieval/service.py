@@ -102,6 +102,10 @@ class RetrievalService:
                     score=score,
                     lexical_rank=lexical_rank.get(chunk_id),
                     vector_rank=vector_rank.get(chunk_id),
+                    section_id=candidate.section_id,
+                    section_path=candidate.section_path,
+                    page_start=candidate.page_start,
+                    page_end=candidate.page_end,
                 )
             )
             if len(hits) >= limit:
