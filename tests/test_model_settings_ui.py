@@ -31,6 +31,11 @@ class ModelSettingsUiTests(unittest.TestCase):
         ):
             self.assertIn(control, self.html)
 
+    def test_console_bridge_cache_busts_the_no_store_html(self) -> None:
+        bridge = Path("frontend/src/app/LegacyConsoleBridge.tsx").read_text(encoding="utf-8")
+        self.assertIn("frameVersion", bridge)
+        self.assertIn("/app.html?v=", bridge)
+
 
 if __name__ == "__main__":
     unittest.main()

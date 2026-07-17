@@ -19,6 +19,8 @@ class FrontendGatewayTests(unittest.TestCase):
             self.assertIn(prefix, nginx)
 
         self.assertIn("proxy_pass http://backend:8000", nginx)
+        self.assertIn("Cache-Control", nginx)
+        self.assertIn("no-store", nginx)
 
 
 if __name__ == "__main__":

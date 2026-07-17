@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -36,6 +37,14 @@ def _build_protocol_tool(name: str) -> Callable[..., Awaitable[dict[str, Any]]]:
 
 
 def create_mcp_server() -> FastMCP:
+    allowed_hosts = [
+        value.strip()
+        for value in os.getenv(
+            "SCHOLAR_MCP_ALLOWED_HOSTS",
+            "127.0.0.1:*,localhost:*,[::1]:*,mcp_server:*",
+        ).split(",")
+        if value.strip()
+    ]
     server = FastMCP(
         name="ScholarAgent Paper Tools",
         instructions=(
@@ -45,6 +54,15 @@ def create_mcp_server() -> FastMCP:
         stateless_http=True,
         json_response=True,
         streamable_http_path="/",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts,
+            allowed_origins=[
+                "http://127.0.0.1:*",
+                "http://localhost:*",
+                "http://[::1]:*",
+            ],
+        ),
     )
     for name in tool_registry.names():
         spec = tool_registry.get_spec(name)
