@@ -3,6 +3,11 @@ import unittest
 
 
 class FrontendGatewayTests(unittest.TestCase):
+    def test_gateway_allows_paper_uploads_up_to_backend_limit(self) -> None:
+        nginx = Path("deploy/nginx.conf").read_text(encoding="utf-8")
+
+        self.assertIn("client_max_body_size 32m;", nginx)
+
     def test_all_console_api_namespaces_are_proxied(self) -> None:
         nginx = Path("deploy/nginx.conf").read_text(encoding="utf-8")
 
