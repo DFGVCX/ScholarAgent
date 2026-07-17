@@ -232,10 +232,15 @@ class ModelFactory:
         if structured_planning:
             payload["response_format"] = {"type": "json_object"}
         timeout = aiohttp.ClientTimeout(total=60)
+        completions_url = (
+            f"{base_url}/chat/completions"
+            if base_url.endswith("/v1")
+            else f"{base_url}/v1/chat/completions"
+        )
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
-                    f"{base_url}/v1/chat/completions",
+                    completions_url,
                     json=payload,
                     headers={
                         **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
