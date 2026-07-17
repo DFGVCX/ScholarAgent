@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import fitz
 
@@ -127,6 +129,16 @@ class StructuredPdfParsingTest(unittest.TestCase):
 
         self.assertEqual(parsed.manifest["parser"]["name"], "legacy_fixed")
         self.assertIn("complete legacy extraction", parsed.full_text)
+
+    def test_legacy_parser_preserves_old_50000_character_baseline(self) -> None:
+        page = SimpleNamespace(extract_text=lambda: "x" * 60000)
+        reader = SimpleNamespace(pages=[page], metadata={})
+
+        with patch("pypdf.PdfReader", return_value=reader):
+            parsed = parse_pdf_legacy(Path("baseline.pdf"))
+
+        self.assertEqual(len(parsed.full_text), 50000)
+        self.assertTrue(parsed.manifest["coverage"]["text_truncated"])
 
 
 if __name__ == "__main__":

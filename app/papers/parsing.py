@@ -501,7 +501,9 @@ def parse_pdf_legacy(path: Path) -> ParsedPaper:
             )
             for index, text in enumerate(page_texts)
         )
-        full_text = "\n".join(text for text in page_texts if text).strip()
+        raw_full_text = "\n".join(text for text in page_texts if text).strip()
+        full_text = raw_full_text[:50000]
+        text_truncated = len(raw_full_text) > len(full_text)
         total_chars = len(re.sub(r"\s+", "", full_text))
         status = "ready" if total_chars >= 40 else "needs_ocr"
         warnings = () if status == "ready" else ("searchable_text_insufficient",)
@@ -528,7 +530,7 @@ def parse_pdf_legacy(path: Path) -> ParsedPaper:
                 "coverage": {
                     "total_pages": len(pages),
                     "pages_extracted": len(pages),
-                    "text_truncated": False,
+                    "text_truncated": text_truncated,
                 },
                 "text_hash": _hash_text(full_text),
             },
