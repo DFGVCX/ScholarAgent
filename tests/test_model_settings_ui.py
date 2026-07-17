@@ -1,0 +1,36 @@
+from pathlib import Path
+import unittest
+
+
+class ModelSettingsUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = Path("frontend/dist/app.html").read_text(encoding="utf-8")
+
+    def test_settings_ui_uses_postgres_pgvector_and_qwen_only(self) -> None:
+        self.assertIn("PostgreSQL 17 + pgvector", self.html)
+        self.assertIn('value="qwen"', self.html)
+        self.assertIn("测试 Agent 模型", self.html)
+        self.assertIn("测试 Embedding", self.html)
+        self.assertIn("重新生成向量", self.html)
+        for legacy in ("MySQL URL", "JSON 文件", "Jina Embeddings", "Cohere Embeddings"):
+            self.assertNotIn(legacy, self.html)
+
+    def test_candidate_values_are_sent_to_probe_routes(self) -> None:
+        self.assertIn("/settings/model/probe", self.html)
+        self.assertIn("/settings/embedding/probe", self.html)
+        self.assertIn("/settings/embedding/reindex", self.html)
+        for control in (
+            "cfgPrimaryProvider",
+            "cfgLlmBaseUrl",
+            "cfgLlmApiKey",
+            "cfgLlmModel",
+            "cfgRagEmbeddingBaseUrl",
+            "cfgRagEmbeddingApiKey",
+            "cfgRagEmbeddingModel",
+        ):
+            self.assertIn(control, self.html)
+
+
+if __name__ == "__main__":
+    unittest.main()

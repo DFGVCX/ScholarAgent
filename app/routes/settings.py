@@ -25,6 +25,15 @@ _EMBEDDING_RUNTIME_KEYS = {
     "SCHOLAR_RAG_EMBEDDING_MODEL",
     "SCHOLAR_RAG_EMBEDDING_DIMENSIONS",
 }
+_MODEL_RUNTIME_KEYS = {
+    "SCHOLAR_PRIMARY_MODEL_PROVIDER",
+    "SCHOLAR_LLM_BASE_URL",
+    "SCHOLAR_LLM_API_KEY",
+    "SCHOLAR_LLM_MODEL",
+    "SCHOLAR_ANTHROPIC_BASE_URL",
+    "SCHOLAR_ANTHROPIC_API_KEY",
+    "SCHOLAR_ANTHROPIC_MODEL",
+}
 
 
 class RuntimeConfigUpdateDTO(BaseModel):
@@ -68,6 +77,37 @@ def _embedding_candidate_values(values: dict[str, Any]) -> dict[str, Any]:
         "SCHOLAR_RAG_EMBEDDING_DIMENSIONS": "dimensions",
     }
     return {target: values[source] for source, target in mapping.items() if source in values}
+
+
+def _model_candidate_values(values: dict[str, Any]) -> dict[str, Any]:
+    mapping = {
+        "SCHOLAR_PRIMARY_MODEL_PROVIDER": "provider",
+        "SCHOLAR_LLM_BASE_URL": "base_url",
+        "SCHOLAR_LLM_API_KEY": "api_key",
+        "SCHOLAR_LLM_MODEL": "model",
+        "SCHOLAR_ANTHROPIC_BASE_URL": "anthropic_base_url",
+        "SCHOLAR_ANTHROPIC_API_KEY": "anthropic_api_key",
+        "SCHOLAR_ANTHROPIC_MODEL": "anthropic_model",
+    }
+    return {target: values[source] for source, target in mapping.items() if source in values}
+
+
+def _model_change_requested(values: dict[str, Any], current: Any) -> bool:
+    if not (_MODEL_RUNTIME_KEYS & values.keys()):
+        return False
+    checks = (
+        ("SCHOLAR_PRIMARY_MODEL_PROVIDER", current.primary_model_provider),
+        ("SCHOLAR_LLM_BASE_URL", current.llm_base_url),
+        ("SCHOLAR_LLM_MODEL", current.llm_model),
+        ("SCHOLAR_ANTHROPIC_BASE_URL", current.anthropic_base_url),
+        ("SCHOLAR_ANTHROPIC_MODEL", current.anthropic_model),
+    )
+    if any(key in values and str(values[key]).strip() != str(saved).strip() for key, saved in checks):
+        return True
+    return any(
+        bool(str(values.get(key, "") or "").strip())
+        for key in ("SCHOLAR_LLM_API_KEY", "SCHOLAR_ANTHROPIC_API_KEY")
+    )
 
 
 def _embedding_change_requested(values: dict[str, Any], current: Any) -> bool:
@@ -134,8 +174,23 @@ async def update_runtime_settings(
     profile = _require_tenant_admin(x_api_key)
     current = get_settings()
     embedding_changed = _embedding_change_requested(request.values, current)
+    model_changed = _model_change_requested(request.values, current)
     candidate = None
     try:
+        if model_changed:
+            model_candidate = resolve_model_candidate(
+                _model_candidate_values(request.values), current
+            )
+            try:
+                await model_factory.probe(
+                    model_candidate, "用一句中文回答：ScholarAgent 模型接入已连通。"
+                )
+            except Exception as exc:
+                detail = str(exc)
+                for secret in (model_candidate.api_key, model_candidate.anthropic_api_key):
+                    if secret:
+                        detail = detail.replace(secret, "***")
+                raise HTTPException(status_code=502, detail=detail[:1000]) from exc
         if embedding_changed:
             provider = str(
                 request.values.get("SCHOLAR_RAG_EMBEDDING_PROVIDER", "qwen") or "qwen"

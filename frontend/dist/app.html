@@ -3176,13 +3176,6 @@
         #pageProfile .profile-config-mount .settings-bootstrap .config-actions {
             margin: 0;
         }
-        #pageProfile #bootstrapMysqlBtn {
-            width: 100%;
-            min-height: 36px;
-            border-color: rgba(10,122,112,.54);
-            background: #0a7a70;
-            color: #fff;
-        }
         #pageProfile .profile-config-mount .settings-form-stack {
             min-height: 0;
             display: grid;
@@ -4221,15 +4214,6 @@
         }
         #pageProfile .profile-config-mount .settings-bootstrap .config-actions {
             margin: 0;
-        }
-        #pageProfile #bootstrapMysqlBtn {
-            width: 100%;
-            min-height: 34px;
-            border-color: rgba(10,122,112,.64);
-            border-radius: 9px;
-            background: var(--account-accent);
-            color: #fff;
-            font-weight: 900;
         }
         #pageProfile .profile-config-mount .settings-form-stack {
             min-height: 0;
@@ -7110,70 +7094,42 @@
                             <div class="config-section settings-overview">
                                 <div class="panel-head"><h2>配置域</h2><button id="reloadSettingsBtn" class="plain" type="button">刷新</button></div>
                                 <div id="settingsHealth" class="hidden"></div>
-                                <p>这里管理项目运行参数，保存后会写入运行配置文件。密钥字段留空时保持原值。</p>
+                                <p>这里管理部署级运行参数，保存到 PostgreSQL。密钥只写入服务端，留空时保持原值。</p>
                                 <div class="config-menu">
-                                    <button class="config-menu-item active" type="button" data-settings-pane="settingsStorage"><strong>数据底座</strong><span>MySQL / Redis / 只读查询</span></button>
+                                    <button class="config-menu-item active" type="button" data-settings-pane="settingsStorage"><strong>数据底座</strong><span>PostgreSQL / pgvector / Redis</span></button>
                                     <button class="config-menu-item" type="button" data-settings-pane="settingsModel"><strong>模型路由</strong><span>多供应商 / 密钥 / 连通性</span></button>
                                     <button class="config-menu-item" type="button" data-settings-pane="settingsRag"><strong>知识检索</strong><span>RAG / Embedding / 召回验证</span></button>
                                     <button class="config-menu-item" type="button" data-settings-pane="settingsInstitution"><strong>机构访问</strong><span>学校 VPN / WebVPN / 授权下载</span></button>
                                 </div>
                             </div>
                             <div class="config-section settings-bootstrap">
-                                <div class="panel-head"><h2>部署初始化</h2><span class="badge">Setup</span></div>
-                                <p>仅在首次部署或重建环境时使用；会创建数据库、应用账号、表结构、演示租户和 RAG 验证数据。</p>
-                                <div class="bootstrap-grid">
-                                    <div>
-                                        <label for="mysqlAdminUrl">Root 连接</label>
-                                        <input id="mysqlAdminUrl" type="password" placeholder="mysql://root:root@127.0.0.1:3306/mysql?charset=utf8mb4">
-                                    </div>
-                                    <div>
-                                        <label for="bootstrapMysqlUrl">应用连接</label>
-                                        <input id="bootstrapMysqlUrl" placeholder="mysql://scholar:scholar@127.0.0.1:3306/scholar_agent?charset=utf8mb4">
-                                    </div>
-                                </div>
-                                <div class="config-actions">
-                                    <button id="bootstrapMysqlBtn" class="secondary" type="button">初始化数据库</button>
-                                </div>
-                                <div id="bootstrapResult" class="subtle" style="margin-top:10px;"></div>
+                                <div class="panel-head"><h2>部署说明</h2><span class="badge">Docker</span></div>
+                                <p>数据库结构由 Alembic 在容器启动时迁移。网页只管理模型与检索运行参数，不接收数据库管理员凭据。</p>
                             </div>
                         </section>
                         <section class="settings-stack settings-form-stack">
                             <div id="settingsStorage" class="config-section settings-card active">
                                 <div class="panel-head"><h2>数据底座</h2><span class="badge">Storage</span></div>
                                 <div class="provider-matrix config-overview-cards">
-                                    <div><b>业务数据库</b><span>默认使用 MySQL 承载租户、任务、知识库、引用审计和 RAG chunk 索引。</span></div>
-                                    <div><b>缓存与事件</b><span>Redis 用于限流、事件缓存和流式任务状态，未连接时仅用于本地调试。</span></div>
-                                    <div><b>隔离策略</b><span>所有核心数据以 tenant_id / user_id 隔离，读写接口按登录态过滤。</span></div>
+                                    <div><b>业务数据库</b><span>PostgreSQL 17 + pgvector，统一保存论文、切片、向量、任务和运行配置。</span></div>
+                                    <div><b>缓存与事件</b><span>Redis 承载异步任务队列；向量重建任务同时持久化在 PostgreSQL。</span></div>
+                                    <div><b>隔离策略</b><span>tenant_id / user_id 与 PostgreSQL RLS 双重隔离，检索只读取当前用户数据。</span></div>
                                 </div>
                                 <div class="field-grid">
                                     <div>
                                         <label for="cfgStorageBackend">存储后端</label>
-                                        <select id="cfgStorageBackend" data-config-key="SCHOLAR_STORAGE_BACKEND">
-                                            <option value="auto">自动选择</option>
-                                            <option value="mysql">MySQL</option>
-                                            <option value="json">JSON 文件</option>
+                                        <select id="cfgStorageBackend" data-config-key="SCHOLAR_STORAGE_BACKEND" disabled>
+                                            <option value="postgresql">PostgreSQL 17</option>
                                         </select>
                                     </div>
                                     <div>
-                                        <label for="dbQueryLimit">查询返回上限</label>
-                                        <input id="dbQueryLimit" type="number" min="1" max="500" value="80">
+                                        <label for="cfgVectorBackend">向量索引</label>
+                                        <input id="cfgVectorBackend" value="pgvector / HNSW / vector(1024)" disabled>
                                     </div>
                                     <div class="span-2">
-                                        <label for="cfgMysqlUrl">MySQL URL</label>
-                                        <input id="cfgMysqlUrl" data-config-key="SCHOLAR_MYSQL_URL" placeholder="mysql://scholar:scholar@127.0.0.1:3306/scholar_agent?charset=utf8mb4">
+                                        <label for="cfgStorageScope">配置作用域</label>
+                                        <input id="cfgStorageScope" value="当前部署（仅 tenant_admin 可修改）" disabled>
                                     </div>
-                                    <div class="span-2">
-                                        <label for="cfgRedisUrl">Redis URL</label>
-                                        <input id="cfgRedisUrl" data-config-key="SCHOLAR_REDIS_URL" placeholder="redis://127.0.0.1:6379/0">
-                                    </div>
-                                </div>
-                                <div class="ops-console">
-                                    <div class="ops-console-head">
-                                        <div><strong>数据库只读查询</strong><span>验证连接、表结构和业务数据。</span></div>
-                                        <button id="dbQueryBtn" class="plain" type="button">执行查询</button>
-                                    </div>
-                                    <textarea id="dbQuerySql" spellcheck="false">SHOW TABLES</textarea>
-                                    <div id="dbQueryResult" class="ops-result ops-result-large">等待执行查询。</div>
                                 </div>
                             </div>
                             <div id="settingsModel" class="config-section settings-card">
@@ -7277,8 +7233,8 @@
                                 </div>
                                 <div class="ops-console">
                                     <div class="ops-console-head">
-                                        <div><strong>模型连通性探测</strong><span>保存配置后发起一次最小生成请求。</span></div>
-                                        <button id="modelProbeBtn" class="plain" type="button">探测模型</button>
+                                        <div><strong>Agent 模型连通性</strong><span>直接测试上方候选值，不会先保存或覆盖当前配置。</span></div>
+                                        <button id="modelProbeBtn" class="plain" type="button">测试 Agent 模型</button>
                                     </div>
                                     <textarea id="modelProbePrompt">用一句中文回答：ScholarAgent 模型接入已连通。</textarea>
                                     <div id="modelProbeResult" class="ops-result">等待探测。</div>
@@ -7287,25 +7243,22 @@
                             <div id="settingsRag" class="config-section settings-card">
                                 <div class="panel-head"><h2>知识检索</h2><span class="badge">RAG</span></div>
                                 <div class="provider-matrix config-overview-cards">
-                                    <div><b>索引数据库</b><span id="ragBackendSummary">自动选择 MySQL；不可用时回退本地 JSON 索引。</span></div>
-                                    <div><b>向量模型</b><span id="ragEmbeddingSummary">默认词法检索；配置 Embedding 后可启用向量或混合召回。</span></div>
-                                    <div><b>切片策略</b><span id="ragChunkSummary">按正文长度切片并保存关键词、token 计数和 embedding_json。</span></div>
+                                    <div><b>索引数据库</b><span id="ragBackendSummary">PostgreSQL 17 + pgvector，词法与向量检索共用一致的数据版本。</span></div>
+                                    <div><b>向量模型</b><span id="ragEmbeddingSummary">仅使用千问 Embedding；模型可换，但向量维度固定为 1024。</span></div>
+                                    <div><b>切换策略</b><span id="ragChunkSummary">新旧模型向量严格隔离；重建期间自动使用全文检索兜底。</span></div>
                                 </div>
                                 <div class="field-grid">
                                     <div>
                                         <label for="cfgRagIndexBackend">索引后端</label>
-                                        <select id="cfgRagIndexBackend" data-config-key="SCHOLAR_RAG_INDEX_BACKEND">
-                                            <option value="auto">自动：优先 MySQL</option>
-                                            <option value="mysql">MySQL RAG 表</option>
-                                            <option value="json">本地 JSON 索引</option>
+                                        <select id="cfgRagIndexBackend" data-config-key="SCHOLAR_RAG_INDEX_BACKEND" disabled>
+                                            <option value="pgvector">PostgreSQL + pgvector</option>
                                         </select>
                                     </div>
                                     <div>
                                         <label for="cfgRagRetrievalMode">召回模式</label>
                                         <select id="cfgRagRetrievalMode" data-config-key="SCHOLAR_RAG_RETRIEVAL_MODE">
-                                            <option value="hybrid">混合召回</option>
+                                            <option value="hybrid_rrf">混合召回（RRF）</option>
                                             <option value="lexical">关键词召回</option>
-                                            <option value="vector">向量召回</option>
                                         </select>
                                     </div>
                                     <div>
@@ -7316,21 +7269,17 @@
                                     </div>
                                     <div>
                                         <label for="cfgRagEmbedding">Embedding 方案</label>
-                                        <select id="cfgRagEmbedding" data-config-key="SCHOLAR_RAG_EMBEDDING_PROVIDER">
-                                            <option value="lexical">词法检索</option>
-                                            <option value="openai-compatible">OpenAI 兼容 Embedding</option>
-                                            <option value="bge">BGE / 本地兼容服务</option>
-                                            <option value="jina">Jina Embeddings</option>
-                                            <option value="cohere">Cohere Embeddings</option>
+                                        <select id="cfgRagEmbedding" data-config-key="SCHOLAR_RAG_EMBEDDING_PROVIDER" disabled>
+                                            <option value="qwen">通义千问 / DashScope</option>
                                         </select>
                                     </div>
                                     <div>
                                         <label for="cfgRagEmbeddingBaseUrl">Embedding Base URL</label>
-                                        <input id="cfgRagEmbeddingBaseUrl" data-config-key="SCHOLAR_RAG_EMBEDDING_BASE_URL" placeholder="https://api.openai.com">
+                                        <input id="cfgRagEmbeddingBaseUrl" data-config-key="SCHOLAR_RAG_EMBEDDING_BASE_URL" placeholder="https://dashscope.aliyuncs.com/compatible-mode">
                                     </div>
                                     <div>
                                         <label for="cfgRagEmbeddingModel">Embedding 模型</label>
-                                        <input id="cfgRagEmbeddingModel" data-config-key="SCHOLAR_RAG_EMBEDDING_MODEL" placeholder="text-embedding-3-small / bge-m3">
+                                        <input id="cfgRagEmbeddingModel" data-config-key="SCHOLAR_RAG_EMBEDDING_MODEL" placeholder="Qwen3-Embedding-0.6B">
                                     </div>
                                     <div class="span-2">
                                         <label for="cfgRagEmbeddingApiKey">Embedding API Key</label>
@@ -7338,7 +7287,7 @@
                                     </div>
                                     <div>
                                         <label for="cfgRagEmbeddingDimensions">向量维度</label>
-                                        <input id="cfgRagEmbeddingDimensions" type="number" min="0" step="1" data-config-key="SCHOLAR_RAG_EMBEDDING_DIMENSIONS" placeholder="0 表示使用模型默认维度">
+                                        <input id="cfgRagEmbeddingDimensions" type="number" value="1024" data-config-key="SCHOLAR_RAG_EMBEDDING_DIMENSIONS" disabled>
                                     </div>
                                     <div>
                                         <label for="cfgExternalTimeout">外部源超时</label>
@@ -7360,6 +7309,22 @@
                                         <label for="cfgRagCandidateLimit">候选集上限</label>
                                         <input id="cfgRagCandidateLimit" type="number" min="20" max="5000" data-config-key="SCHOLAR_RAG_CANDIDATE_LIMIT" placeholder="800">
                                     </div>
+                                </div>
+                                <div id="embeddingModelWarning" class="alert hidden">模型或服务地址发生变化。保存后旧向量会停止参与语义检索，完成重建前仍可使用全文检索。</div>
+                                <div class="provider-matrix config-overview-cards">
+                                    <div><b>当前模型</b><span id="embeddingActiveModel">等待读取</span></div>
+                                    <div><b>向量状态</b><span id="embeddingStatusCounts">ready 0 / stale 0 / failed 0 / pending 0</span></div>
+                                    <div><b>重建任务</b><span id="embeddingReindexStatus">无需重建</span></div>
+                                </div>
+                                <div class="ops-console">
+                                    <div class="ops-console-head">
+                                        <div><strong>Embedding 连通性</strong><span>测试候选 Key、地址和模型，成功后再保存。</span></div>
+                                        <div class="config-actions">
+                                            <button id="embeddingProbeBtn" class="plain" type="button">测试 Embedding</button>
+                                            <button id="reindexEmbeddingsBtn" class="secondary" type="button">重新生成向量</button>
+                                        </div>
+                                    </div>
+                                    <div id="embeddingProbeResult" class="ops-result">等待测试。</div>
                                 </div>
                                 <div class="ops-console">
                                     <div class="ops-console-head">
@@ -7429,7 +7394,7 @@
     <script>
         const storageKey = 'scholar.session.v1';
         const sidebarStorageKey = 'scholar.sidebar.collapsed.v1';
-        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
+        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, embeddingStatus: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
         const routeTitles = { chat: '智能会话', tasks: '写作专项', audit: '引用审计', knowledge: '个人知识库', profile: '个人中心' };
         const sourceDefaults = {
             online: { label: '附加约束（可选）', placeholder: '例如：优先近三年、中文核心、包含公开数据集' },
@@ -7909,7 +7874,7 @@
         }
         function renderDashboard() {
             const infra = state.infra || {};
-            const mysqlOk = Boolean(infra.mysql?.available);
+            const databaseOk = Boolean(infra.database?.available);
             const redisOk = Boolean(infra.redis?.available);
             const modelReady = Boolean(infra.model?.configured);
             const mockAllowed = Boolean(infra.mock_data?.allowed);
@@ -7917,14 +7882,14 @@
             const storage = infra.runtime_backend?.storage || infra.storage_backend || '-';
             const rag = infra.runtime_backend?.rag || '-';
             if ($('dashTenant')) $('dashTenant').textContent = state.session?.tenant_name || state.session?.tenant_id || '-';
-            if ($('dashStorage')) $('dashStorage').textContent = mysqlOk ? `${storage} 已连接` : `${storage} 兜底`;
+            if ($('dashStorage')) $('dashStorage').textContent = databaseOk ? `${storage} 已连接` : `${storage} 不可用`;
             if ($('dashModel')) $('dashModel').textContent = modelReady ? `${infra.model?.primary_provider || 'model'}` : '待配置';
             if ($('dashTrust')) $('dashTrust').textContent = (!mockAllowed && !externalMock) ? '真实数据' : 'Mock 开启';
-            if ($('profileRagKpi')) $('profileRagKpi').textContent = rag === 'mysql' ? 'MySQL 索引' : '本地索引';
+            if ($('profileRagKpi')) $('profileRagKpi').textContent = rag === 'pgvector' ? 'pgvector 索引' : rag;
             if ($('dashboardHealth')) {
                 $('dashboardHealth').innerHTML = [
-                    healthTile('MySQL', mysqlOk, mysqlOk ? `生产存储已连接，${infra.mysql?.table_count || 0} 张业务表` : '未连接，系统会退回本地 JSON 存储'),
-                    healthTile('RAG', true, rag === 'mysql' ? '知识库检索使用 MySQL 持久化索引' : '知识库检索使用本地索引'),
+                    healthTile('PostgreSQL', databaseOk, databaseOk ? `生产存储已连接，${infra.database?.table_count || 0} 张业务表` : '数据库未连接'),
+                    healthTile('RAG', Boolean(infra.database?.pgvector), '知识库使用 PostgreSQL 全文检索与 pgvector 向量索引'),
                     healthTile('大模型', modelReady, modelReady ? '主模型已配置，可生成全文' : '待配置模型供应商与密钥'),
                     healthTile('Redis', redisOk, redisOk ? '限流与事件缓存已接入' : '未接入 Redis，当前使用内存限流'),
                     healthTile('外部论文源', !externalMock, externalMock ? 'Mock 开启，仅适合演示' : '真实论文源检索已启用'),
@@ -7957,16 +7922,16 @@
         function renderSettingsHealth() {
             if (!$('settingsHealth') || !state.infra) return;
             const infra = state.infra;
-            const mysqlOk = Boolean(infra.mysql?.available);
+            const databaseOk = Boolean(infra.database?.available);
             const redisOk = Boolean(infra.redis?.available);
             const modelReady = Boolean(infra.model?.configured);
             const externalMock = infra.mock_data?.external_source_provider === 'mock';
             const mockAllowed = Boolean(infra.mock_data?.allowed);
             const tiles = [
-                ['MySQL', mysqlOk, mysqlOk ? `已连接，${infra.mysql?.table_count || 0} 张业务表` : '未连接，使用本地存储兜底'],
+                ['PostgreSQL', databaseOk, databaseOk ? `已连接，${infra.database?.table_count || 0} 张业务表` : '数据库未连接'],
                 ['Redis', redisOk, redisOk ? '已接入限流与事件缓存' : '未接入，使用内存限流'],
                 ['大模型', modelReady, modelReady ? '已配置，可生成全文' : '待配置供应商、模型名与密钥'],
-                ['RAG', true, `${infra.runtime_backend?.rag === 'mysql' ? 'MySQL 持久化索引' : '本地索引'} / ${infra.mock_data?.rag_embedding_provider || 'lexical'}`],
+                ['RAG', Boolean(infra.database?.pgvector), `pgvector / ${infra.rag?.embedding_provider || 'qwen'} / vector(1024)`],
                 ['外部论文源', !externalMock, externalMock ? 'Mock 开启，仅适合演示' : '真实论文源已启用'],
                 ['引用格式化', Boolean(infra.citeadapt?.loaded), infra.citeadapt?.loaded ? 'CiteAdapt 已接入' : '规则格式化兜底'],
                 ['Mock 数据', !mockAllowed && !externalMock, mockAllowed || externalMock ? '已开启，生产验收前需要关闭' : '关闭'],
@@ -7981,16 +7946,16 @@
         function renderInfra() {
             const infra = state.infra;
             if (!infra) return;
-            const mysqlOk = Boolean(infra.mysql?.available);
+            const databaseOk = Boolean(infra.database?.available);
             const redisOk = Boolean(infra.redis?.available);
             const mockAllowed = Boolean(infra.mock_data?.allowed);
             const externalMock = infra.mock_data?.external_source_provider === 'mock';
             const modelReady = Boolean(infra.model?.configured);
             const storage = infra.runtime_backend?.storage || infra.storage_backend || '-';
             const rag = infra.runtime_backend?.rag || '-';
-            const compactOk = mysqlOk && redisOk && modelReady && !mockAllowed && !externalMock;
-            if ($('stripStorage')) $('stripStorage').textContent = mysqlOk ? `${storage} / 已连接` : `${storage} / 兜底`;
-            if ($('stripRag')) $('stripRag').textContent = rag === 'mysql' ? 'MySQL 索引' : '本地索引';
+            const compactOk = databaseOk && modelReady && !mockAllowed && !externalMock;
+            if ($('stripStorage')) $('stripStorage').textContent = databaseOk ? `${storage} / 已连接` : `${storage} / 不可用`;
+            if ($('stripRag')) $('stripRag').textContent = rag === 'pgvector' ? 'pgvector 索引' : rag;
             if ($('stripModel')) $('stripModel').textContent = modelReady ? `${infra.model?.primary_provider || '模型'} 已配置` : '待配置';
             if ($('stripRedis')) $('stripRedis').textContent = redisOk ? '已接入' : '未接入';
             if ($('loginInfra')) {
@@ -8031,18 +7996,38 @@
                     control.value = item.effective_value;
                 }
             }
-            if ($('bootstrapMysqlUrl')) {
-                $('bootstrapMysqlUrl').value = configItem('SCHOLAR_MYSQL_URL').effective_value || $('cfgMysqlUrl')?.value || '';
-            }
             if ($('runtimeConfigMeta')) {
-                $('runtimeConfigMeta').textContent = config?.path ? `配置文件：${config.path}` : '';
+                $('runtimeConfigMeta').textContent = config?.path ? `配置存储：PostgreSQL / ${config.path}` : '配置存储：PostgreSQL';
             }
+            updateEmbeddingChangeWarning();
+        }
+        function renderEmbeddingStatus(embedding) {
+            state.embeddingStatus = embedding || null;
+            const counts = embedding?.counts || {};
+            if ($('embeddingActiveModel')) $('embeddingActiveModel').textContent = embedding?.active_model || '未配置';
+            if ($('embeddingStatusCounts')) {
+                $('embeddingStatusCounts').textContent = `ready ${counts.ready || 0} / stale ${counts.stale || 0} / failed ${counts.failed || 0} / pending ${counts.pending || 0}`;
+            }
+            if ($('embeddingReindexStatus')) {
+                $('embeddingReindexStatus').textContent = (counts.stale || 0) > 0 ? '需要重新生成向量' : '无需重建';
+            }
+            updateEmbeddingChangeWarning();
+        }
+        function updateEmbeddingChangeWarning() {
+            const warning = $('embeddingModelWarning');
+            if (!warning) return;
+            const savedModel = state.embeddingStatus?.active_model || configItem('SCHOLAR_RAG_EMBEDDING_MODEL').effective_value || '';
+            const savedBaseUrl = configItem('SCHOLAR_RAG_EMBEDDING_BASE_URL').effective_value || '';
+            const modelChanged = ($('cfgRagEmbeddingModel')?.value.trim() || '') !== savedModel;
+            const baseChanged = ($('cfgRagEmbeddingBaseUrl')?.value.trim() || '').replace(/\/$/, '') !== savedBaseUrl.replace(/\/$/, '');
+            warning.classList.toggle('hidden', !(modelChanged || baseChanged));
         }
         async function loadRuntimeConfig() {
             if (!state.session) return;
             try {
                 const data = await api('/settings/runtime');
                 populateRuntimeConfig(data.config);
+                renderEmbeddingStatus(data.embedding);
             } catch (error) {
                 if ($('runtimeConfigMeta')) $('runtimeConfigMeta').textContent = `配置读取失败：${error.message}`;
             }
@@ -8071,6 +8056,7 @@
                     body: JSON.stringify({ values: collectRuntimeConfig() }),
                 });
                 populateRuntimeConfig(data.config);
+                if (data.embedding) renderEmbeddingStatus(data.embedding);
                 await loadInfra();
                 toast('运行配置已保存', 'ok');
             } catch (error) {
@@ -8079,57 +8065,10 @@
                 $('saveRuntimeConfigBtn').disabled = false;
             }
         }
-        async function bootstrapMysql() {
-            const adminUrl = $('mysqlAdminUrl').value.trim();
-            const mysqlUrl = $('bootstrapMysqlUrl').value.trim() || $('cfgMysqlUrl').value.trim();
-            if (!adminUrl) {
-                toast('请填写管理员 MySQL URL', 'bad');
-                return;
-            }
-            try {
-                $('bootstrapMysqlBtn').disabled = true;
-                $('bootstrapResult').textContent = '正在创建数据库、账号、表结构和 RAG 验证数据...';
-                const data = await api('/settings/mysql/bootstrap', {
-                    method: 'POST',
-                    body: JSON.stringify({ admin_url: adminUrl, mysql_url: mysqlUrl, seed_rag: true }),
-                });
-                populateRuntimeConfig(data.config);
-                await loadInfra();
-                $('bootstrapResult').textContent = `完成：${data.schema?.database || data.bootstrap?.database || '-'} / ${data.tables?.scholar_table_count || data.schema?.tables || 0} tables / RAG ${data.rag?.search_count ?? 0} results`;
-                toast('MySQL 初始化完成', 'ok');
-            } catch (error) {
-                $('bootstrapResult').textContent = `初始化失败：${error.message}`;
-                toast(error.message, 'bad');
-            } finally {
-                $('bootstrapMysqlBtn').disabled = false;
-            }
-        }
         function renderOpsTable(columns, rows) {
             if (!rows?.length) return '<div class="subtle">查询成功，没有返回行。</div>';
             const safeColumns = columns?.length ? columns : Object.keys(rows[0] || {});
             return `<table><thead><tr>${safeColumns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${safeColumns.map((column) => `<td>${escapeHtml(String(row[column] ?? ''))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-        }
-        async function runDatabaseQuery() {
-            const sql = $('dbQuerySql')?.value.trim() || '';
-            if (!sql) {
-                toast('请输入只读 SQL', 'bad');
-                return;
-            }
-            const limit = Math.max(1, Math.min(500, Number($('dbQueryLimit')?.value || 80)));
-            $('dbQueryBtn').disabled = true;
-            $('dbQueryResult').textContent = '正在查询...';
-            try {
-                const data = await api('/settings/mysql/query', {
-                    method: 'POST',
-                    body: JSON.stringify({ sql, limit }),
-                });
-                $('dbQueryResult').innerHTML = renderOpsTable(data.columns || [], data.rows || []);
-            } catch (error) {
-                $('dbQueryResult').textContent = `查询失败：${error.message}`;
-                toast(error.message, 'bad');
-            } finally {
-                $('dbQueryBtn').disabled = false;
-            }
         }
         async function probeModel() {
             $('modelProbeBtn').disabled = true;
@@ -8137,7 +8076,16 @@
             try {
                 const data = await api('/settings/model/probe', {
                     method: 'POST',
-                    body: JSON.stringify({ prompt: $('modelProbePrompt')?.value || '' }),
+                    body: JSON.stringify({
+                        provider: $('cfgPrimaryProvider')?.value || '',
+                        base_url: $('cfgLlmBaseUrl')?.value.trim() || '',
+                        api_key: $('cfgLlmApiKey')?.value.trim() || '',
+                        model: $('cfgLlmModel')?.value.trim() || '',
+                        anthropic_base_url: $('cfgAnthropicBaseUrl')?.value.trim() || '',
+                        anthropic_api_key: $('cfgAnthropicApiKey')?.value.trim() || '',
+                        anthropic_model: $('cfgAnthropicModel')?.value.trim() || '',
+                        prompt: $('modelProbePrompt')?.value || '',
+                    }),
                 });
                 $('modelProbeResult').innerHTML = `<strong>${escapeHtml(data.provider)} / ${escapeHtml(data.model)}</strong>\n${escapeHtml(data.content || '')}`;
                 toast('模型探测成功', 'ok');
@@ -8146,6 +8094,43 @@
                 toast(error.message, 'bad');
             } finally {
                 $('modelProbeBtn').disabled = false;
+            }
+        }
+        async function probeEmbedding() {
+            $('embeddingProbeBtn').disabled = true;
+            $('embeddingProbeResult').textContent = '正在测试千问 Embedding...';
+            try {
+                const data = await api('/settings/embedding/probe', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        base_url: $('cfgRagEmbeddingBaseUrl')?.value.trim() || '',
+                        api_key: $('cfgRagEmbeddingApiKey')?.value.trim() || '',
+                        model: $('cfgRagEmbeddingModel')?.value.trim() || '',
+                        dimensions: 1024,
+                    }),
+                });
+                $('embeddingProbeResult').textContent = `${data.model} / ${data.dimensions} 维 / 已连通`;
+                toast('Embedding 测试成功', 'ok');
+            } catch (error) {
+                $('embeddingProbeResult').textContent = `测试失败：${error.message}`;
+                toast(error.message, 'bad');
+            } finally {
+                $('embeddingProbeBtn').disabled = false;
+            }
+        }
+        async function reindexEmbeddings() {
+            $('reindexEmbeddingsBtn').disabled = true;
+            $('embeddingReindexStatus').textContent = '正在创建重建任务...';
+            try {
+                const data = await api('/settings/embedding/reindex', { method: 'POST' });
+                $('embeddingReindexStatus').textContent = `已创建 ${data.created || 0}，已有 ${data.existing || 0}`;
+                toast('向量重建任务已入队', 'ok');
+                await loadRuntimeConfig();
+            } catch (error) {
+                $('embeddingReindexStatus').textContent = `入队失败：${error.message}`;
+                toast(error.message, 'bad');
+            } finally {
+                $('reindexEmbeddingsBtn').disabled = false;
             }
         }
         async function searchProfileRag() {
@@ -9790,16 +9775,17 @@
         $('reloadSettingsBtn').addEventListener('click', async () => { await loadInfra(); await loadRuntimeConfig(); });
         $('saveRuntimeConfigBtn').addEventListener('click', saveRuntimeConfig);
         $('resetConfigFormBtn').addEventListener('click', loadRuntimeConfig);
-        $('bootstrapMysqlBtn').addEventListener('click', bootstrapMysql);
-        $('dbQueryBtn')?.addEventListener('click', runDatabaseQuery);
         $('modelProbeBtn')?.addEventListener('click', probeModel);
+        $('embeddingProbeBtn')?.addEventListener('click', probeEmbedding);
+        $('reindexEmbeddingsBtn')?.addEventListener('click', reindexEmbeddings);
+        $('cfgRagEmbeddingModel')?.addEventListener('input', updateEmbeddingChangeWarning);
+        $('cfgRagEmbeddingBaseUrl')?.addEventListener('input', updateEmbeddingChangeWarning);
         $('profileRagSearchBtn')?.addEventListener('click', searchProfileRag);
         $('saveInstitutionBtn')?.addEventListener('click', saveInstitutionProfile);
         $('connectInstitutionBtn')?.addEventListener('click', connectInstitution);
         $('browserLoginDoneBtn')?.addEventListener('click', completeBrowserLogin);
         $('verifyInstitutionBtn')?.addEventListener('click', verifyInstitution);
         $('revokeInstitutionBtn')?.addEventListener('click', revokeInstitution);
-        $('dbQuerySql')?.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) runDatabaseQuery(); });
         $('profileRagQuery')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') searchProfileRag(); });
         document.querySelectorAll('[data-settings-pane]').forEach((button) => button.addEventListener('click', () => setSettingsPane(button.dataset.settingsPane)));
         setSource('online');
