@@ -37,7 +37,40 @@ class _Session:
         return self.response
 
 
+class _BatchSession:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    def post(self, url, *, json, headers):
+        inputs = list(json["input"])
+        self.requests.append(inputs)
+        vector = [1.0] + [0.0] * 1023
+        return _Response(
+            {"data": [{"index": index, "embedding": vector} for index in range(len(inputs))]}
+        )
+
+
 class QwenEmbeddingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_more_than_twenty_inputs_are_batched_in_order(self) -> None:
+        session = _BatchSession()
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example/compatible-mode",
+            api_key="secret",
+            session_factory=lambda **_: session,
+        )
+        texts = [f"chunk-{index}" for index in range(21)]
+
+        vectors = await client.embed(texts)
+
+        self.assertEqual([len(batch) for batch in session.requests], [20, 1])
+        self.assertEqual(len(vectors), 21)
+
     async def test_qwen_model_name_can_change_but_dimensions_remain_1024(self) -> None:
         session = _Session(
             _Response({"data": [{"index": 0, "embedding": [1.0] + [0.0] * 1023}]})

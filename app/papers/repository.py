@@ -436,7 +436,7 @@ class PaperRepository:
                 WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
                   AND p.deleted_at IS NULL
                   AND c.content_version=p.current_content_version
-                  AND c.embedding_status='stale'
+                  AND c.embedding_status IN ('stale','failed')
                   AND EXISTS (
                       SELECT 1 FROM paper_ingestion_jobs j
                       WHERE j.tenant_id=c.tenant_id AND j.user_id=c.user_id
@@ -460,7 +460,7 @@ class PaperRepository:
                 WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
                   AND p.deleted_at IS NULL
                   AND c.content_version=p.current_content_version
-                  AND c.embedding_status='stale'
+                  AND c.embedding_status IN ('stale','failed')
                   AND NOT EXISTS (
                       SELECT 1 FROM paper_ingestion_jobs j
                       WHERE j.tenant_id=c.tenant_id AND j.user_id=c.user_id

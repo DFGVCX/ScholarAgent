@@ -77,6 +77,16 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("embedding_model=:active_model", sql)
         self.assertEqual(params["active_model"], "active-model")
 
+    async def test_reindex_jobs_include_failed_chunks(self) -> None:
+        session = _Session([_Result([{"existing": 0}]), _Result()])
+        repository = PaperRepository(session)
+
+        await repository.enqueue_reembedding_jobs("tenant", "user")
+
+        self.assertEqual(len(session.calls), 2)
+        for sql, _ in session.calls:
+            self.assertIn("embedding_status IN ('stale','failed')", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

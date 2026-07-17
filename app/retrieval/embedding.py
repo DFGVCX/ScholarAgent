@@ -20,6 +20,7 @@ class EmbeddingResponseError(EmbeddingUnavailable):
 class QwenEmbeddingClient:
     MODEL = "Qwen3-Embedding-0.6B"
     DIMENSIONS = 1024
+    MAX_BATCH_SIZE = 20
 
     def __init__(
         self,
@@ -61,31 +62,37 @@ class QwenEmbeddingClient:
         if any(not value for value in values):
             raise ValueError("embedding input cannot be empty")
 
-        payload = {
-            "model": self.model,
-            "input": values,
-            "dimensions": self.dimensions,
-        }
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+        vectors: list[list[float]] = []
         try:
             async with self.session_factory(timeout=timeout) as session:
-                async with session.post(
-                    f"{self.base_url}/v1/embeddings", json=payload, headers=headers
-                ) as response:
-                    data = await response.json()
-                    if response.status >= 400:
-                        raise EmbeddingUnavailable(
-                            f"Qwen embedding returned HTTP {response.status}: {data}"
-                        )
+                for start in range(0, len(values), self.MAX_BATCH_SIZE):
+                    batch = values[start : start + self.MAX_BATCH_SIZE]
+                    payload = {
+                        "model": self.model,
+                        "input": batch,
+                        "dimensions": self.dimensions,
+                    }
+                    async with session.post(
+                        f"{self.base_url}/v1/embeddings", json=payload, headers=headers
+                    ) as response:
+                        data = await response.json()
+                        if response.status >= 400:
+                            raise EmbeddingUnavailable(
+                                f"Qwen embedding returned HTTP {response.status}: {data}"
+                            )
+                    vectors.extend(
+                        self._validate_and_normalize(data, expected_count=len(batch))
+                    )
         except EmbeddingUnavailable:
             raise
         except (aiohttp.ClientError, TimeoutError, OSError) as exc:
             raise EmbeddingUnavailable(f"Qwen embedding request failed: {exc}") from exc
 
-        return self._validate_and_normalize(data, expected_count=len(values))
+        return vectors
 
     def _validate_and_normalize(
         self, payload: dict[str, Any], *, expected_count: int
