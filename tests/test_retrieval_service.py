@@ -25,19 +25,27 @@ def _candidate(chunk_id: str, paper_id: str, score: float) -> RetrievalCandidate
 
 
 class _Repository:
+    def __init__(self):
+        self.embedding_model = None
+
     async def lexical_candidates(self, request):
         return [_candidate("a", "p1", 0.9), _candidate("b", "p2", 0.8)]
 
-    async def vector_candidates(self, request, vector):
+    async def vector_candidates(self, request, vector, embedding_model):
+        self.embedding_model = embedding_model
         return [_candidate("b", "p2", 0.95), _candidate("c", "p3", 0.7)]
 
 
 class _Embedding:
+    model = "Qwen3-Embedding-4B"
+
     async def embed(self, texts):
         return [[1.0] + [0.0] * 1023]
 
 
 class _BrokenEmbedding:
+    model = "Qwen3-Embedding-4B"
+
     async def embed(self, texts):
         raise EmbeddingUnavailable("offline")
 
@@ -49,13 +57,15 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(merged[0][1], 1 / 62 + 1 / 61)
 
     async def test_hybrid_results_are_fused_and_citeable(self) -> None:
-        service = RetrievalService(_Repository(), _Embedding())
+        repository = _Repository()
+        service = RetrievalService(repository, _Embedding())
         response = await service.search(RetrievalRequest("t", "u", "retrieval", limit=3))
 
         self.assertEqual(response.mode, "hybrid")
         self.assertEqual(response.local_hits[0].paper_id, "p2")
         self.assertTrue(all(hit.can_cite for hit in response.local_hits))
         self.assertEqual(response.external_candidates, ())
+        self.assertEqual(repository.embedding_model, "Qwen3-Embedding-4B")
 
     async def test_embedding_failure_keeps_lexical_results(self) -> None:
         service = RetrievalService(_Repository(), _BrokenEmbedding())

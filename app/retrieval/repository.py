@@ -47,7 +47,10 @@ class PostgresRetrievalRepository:
         return [self._candidate(row) for row in result.mappings().all()]
 
     async def vector_candidates(
-        self, request: RetrievalRequest, embedding: Sequence[float]
+        self,
+        request: RetrievalRequest,
+        embedding: Sequence[float],
+        embedding_model: str,
     ) -> list[RetrievalCandidate]:
         await self.session.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
         vector = "[" + ",".join(format(float(value), ".9g") for value in embedding) + "]"
@@ -65,6 +68,7 @@ class PostgresRetrievalRepository:
                     AND p.deleted_at IS NULL AND p.in_knowledge_base=true
                     AND c.content_version=p.current_content_version
                     AND c.embedding_status='ready' AND c.embedding IS NOT NULL
+                    AND c.embedding_model=:embedding_model
                 ORDER BY c.embedding <=> CAST(:embedding AS vector)
                 LIMIT :candidate_limit"""
             ),
@@ -72,6 +76,7 @@ class PostgresRetrievalRepository:
                 "tenant_id": request.tenant_id,
                 "user_id": request.user_id,
                 "embedding": vector,
+                "embedding_model": embedding_model,
                 "candidate_limit": request.candidate_limit,
             },
         )

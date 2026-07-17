@@ -366,6 +366,59 @@ class PaperRepository:
             {"error": error[:4000], "tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
         )
 
+    async def mark_embeddings_stale(
+        self, tenant_id: str, user_id: str, active_model: str
+    ) -> int:
+        result = await self.session.execute(
+            text(
+                """UPDATE paper_chunks c
+                SET embedding=NULL, embedding_status='stale', embedding_error=NULL, updated_at=now()
+                FROM papers p
+                WHERE c.paper_uuid=p.paper_uuid
+                  AND c.tenant_id=p.tenant_id AND c.user_id=p.user_id
+                  AND c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version
+                  AND c.embedding_status='ready'
+                  AND c.embedding_model IS DISTINCT FROM :active_model"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "active_model": active_model},
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def embedding_stats(
+        self, tenant_id: str, user_id: str, active_model: str
+    ) -> dict[str, int]:
+        result = await self.session.execute(
+            text(
+                """SELECT
+                    COUNT(*) FILTER (
+                        WHERE c.embedding_status='ready'
+                          AND c.embedding_model=:active_model
+                          AND c.embedding IS NOT NULL
+                    ) AS ready,
+                    COUNT(*) FILTER (
+                        WHERE c.embedding_status='stale'
+                           OR (c.embedding_status='ready'
+                               AND c.embedding_model IS DISTINCT FROM :active_model)
+                    ) AS stale,
+                    COUNT(*) FILTER (WHERE c.embedding_status='failed') AS failed,
+                    COUNT(*) FILTER (WHERE c.embedding_status='pending') AS pending
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "active_model": active_model},
+        )
+        row = result.mappings().first() or {}
+        return {
+            key: int(row.get(key) or 0)
+            for key in ("ready", "stale", "failed", "pending")
+        }
+
     async def stats(self, tenant_id: str, user_id: str) -> dict[str, int]:
         result = await self.session.execute(
             text(

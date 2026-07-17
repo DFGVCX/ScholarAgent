@@ -17,7 +17,7 @@ class RetrievalRepository(Protocol):
     async def lexical_candidates(self, request: RetrievalRequest) -> list[RetrievalCandidate]: ...
 
     async def vector_candidates(
-        self, request: RetrievalRequest, embedding: Sequence[float]
+        self, request: RetrievalRequest, embedding: Sequence[float], embedding_model: str
     ) -> list[RetrievalCandidate]: ...
 
 
@@ -50,7 +50,9 @@ class RetrievalService:
         if request.query:
             try:
                 embeddings = await self.embedding.embed([request.query])
-                vector = await self.repository.vector_candidates(request, embeddings[0])
+                vector = await self.repository.vector_candidates(
+                    request, embeddings[0], self.embedding.model
+                )
                 mode = "hybrid"
             except EmbeddingUnavailable as exc:
                 warnings.append(f"semantic retrieval unavailable: {exc}")
