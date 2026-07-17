@@ -61,7 +61,8 @@ class PaperIngestionService:
             return IngestionResult(record, 0, "metadata_only")
 
         try:
-            vectors = await self._embedding().embed([chunk.content for chunk in chunks])
+            embedding_client = self._embedding()
+            vectors = await embedding_client.embed([chunk.content for chunk in chunks])
             async with self.transaction_factory(tenant_id, user_id) as session:
                 await self.repository_factory(session).set_embeddings(
                     tenant_id,
@@ -69,7 +70,7 @@ class PaperIngestionService:
                     record.paper_uuid,
                     content_version.content_uuid,
                     vectors,
-                    model=QwenEmbeddingClient.MODEL,
+                    model=embedding_client.model,
                 )
             embedding_status = "ready"
             warning = None

@@ -28,6 +28,7 @@ class _Repository:
         self.record = record
         self.failed = None
         self.vectors = None
+        self.embedding_model = None
 
     async def save(self, *args):
         return self.record
@@ -40,6 +41,7 @@ class _Repository:
 
     async def set_embeddings(self, *args, **kwargs):
         self.vectors = args[4]
+        self.embedding_model = kwargs["model"]
 
     async def mark_embedding_failed(self, *args):
         self.failed = args[-1]
@@ -49,6 +51,8 @@ class _Repository:
 
 
 class _Embedding:
+    model = "Qwen3-Embedding-4B"
+
     async def embed(self, texts):
         return [[1.0] + [0.0] * 1023 for _ in texts]
 
@@ -86,6 +90,7 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
         result, repository = await self._run(_Embedding())
         self.assertEqual(result.embedding_status, "ready")
         self.assertEqual(len(repository.vectors), 1)
+        self.assertEqual(repository.embedding_model, "Qwen3-Embedding-4B")
 
     async def test_embedding_failure_preserves_lexical_content(self) -> None:
         result, repository = await self._run(_BrokenEmbedding())

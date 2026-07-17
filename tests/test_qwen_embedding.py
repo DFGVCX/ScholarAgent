@@ -38,6 +38,35 @@ class _Session:
 
 
 class QwenEmbeddingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_qwen_model_name_can_change_but_dimensions_remain_1024(self) -> None:
+        session = _Session(
+            _Response({"data": [{"index": 0, "embedding": [1.0] + [0.0] * 1023}]})
+        )
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example/compatible-mode",
+            api_key="secret",
+            model="Qwen3-Embedding-4B",
+            dimensions=1024,
+            session_factory=lambda **_: session,
+        )
+
+        await client.embed(["probe"])
+
+        self.assertEqual(session.request[1]["model"], "Qwen3-Embedding-4B")
+        self.assertEqual(session.request[1]["dimensions"], 1024)
+
+    def test_non_1024_dimensions_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "1024"):
+            QwenEmbeddingClient(
+                base_url="https://embedding.example",
+                model="Qwen3-Embedding-4B",
+                dimensions=768,
+            )
+
+    def test_blank_model_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "model"):
+            QwenEmbeddingClient(base_url="https://embedding.example", model="")
+
     async def test_embedding_is_1024_dimensional_and_normalized(self) -> None:
         session = _Session(
             _Response({"data": [{"index": 0, "embedding": [2.0] + [0.0] * 1023}]})

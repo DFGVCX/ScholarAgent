@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 
 from agents.factory import ModelResponse
-from app.routes.settings import ModelProbeDTO, probe_model
+from app.routes.settings import EmbeddingProbeDTO, ModelProbeDTO, probe_embedding, probe_model
 from app.schemas import UserContext
 
 
@@ -59,6 +59,34 @@ class SettingsRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["provider"], "qwen")
         self.assertNotIn("api_key", result)
         self.assertNotIn("candidate-secret", str(result))
+
+    async def test_embedding_probe_uses_candidate_and_reports_dimensions(self) -> None:
+        request = EmbeddingProbeDTO(
+            base_url="https://candidate.example/compatible-mode",
+            api_key="embedding-secret",
+            model="Qwen3-Embedding-4B",
+            dimensions=1024,
+        )
+        profile = {"tenant_id": "tenant_demo", "user_id": "user_demo", "roles": ["tenant_admin"]}
+        current = SimpleNamespace(
+            rag_embedding_base_url="https://saved.example",
+            rag_embedding_api_key="saved-secret",
+            rag_embedding_model="Qwen3-Embedding-0.6B",
+            rag_embedding_dimensions=1024,
+        )
+        fake_client = SimpleNamespace(embed=AsyncMock(return_value=[[1.0] * 1024]))
+        with patch(
+            "app.routes.settings.authenticate_api_key",
+            return_value=UserContext("tenant_demo", "user_demo"),
+        ), patch("app.routes.settings.auth_service.profile_for", return_value=profile), patch(
+            "app.routes.settings.get_settings", return_value=current
+        ), patch("app.routes.settings.QwenEmbeddingClient", return_value=fake_client) as client_type:
+            result = await probe_embedding(request, x_api_key="demo-key")
+
+        self.assertEqual(client_type.call_args.kwargs["model"], "Qwen3-Embedding-4B")
+        self.assertEqual(client_type.call_args.kwargs["api_key"], "embedding-secret")
+        self.assertEqual(result["dimensions"], 1024)
+        self.assertNotIn("embedding-secret", str(result))
 
 
 if __name__ == "__main__":

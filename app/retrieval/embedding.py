@@ -33,13 +33,13 @@ class QwenEmbeddingClient:
     ) -> None:
         if not base_url.strip():
             raise ValueError("Qwen embedding base_url is required")
-        if model != self.MODEL:
-            raise ValueError(f"embedding model must be {self.MODEL}")
+        if not model.strip():
+            raise ValueError("Qwen embedding model is required")
         if dimensions != self.DIMENSIONS:
             raise ValueError(f"embedding dimensions must be {self.DIMENSIONS}")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
-        self.model = model
+        self.model = model.strip()
         self.dimensions = dimensions
         self.timeout_seconds = timeout_seconds
         self.session_factory = session_factory

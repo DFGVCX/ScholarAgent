@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 from agents.factory import model_factory
 from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
+from app.retrieval.embedding import QwenEmbeddingClient
 from app.services.auth_service import auth_service
-from app.services.model_configuration import resolve_model_candidate
+from app.services.model_configuration import resolve_embedding_candidate, resolve_model_candidate
 from app.services.runtime_config import public_runtime_config, update_runtime_config
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -28,6 +29,13 @@ class ModelProbeDTO(BaseModel):
     anthropic_api_key: str = ""
     anthropic_model: str = ""
     prompt: str = Field(default="用一句中文回答：ScholarAgent 模型接入已连通。", max_length=1000)
+
+
+class EmbeddingProbeDTO(BaseModel):
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    dimensions: int = 1024
 
 
 def _require_tenant_admin(api_key: str | None) -> dict[str, Any]:
@@ -91,4 +99,30 @@ async def probe_model(
         "provider": response.provider,
         "model": response.model,
         "content": response.content,
+    }
+
+
+@router.post("/embedding/probe")
+async def probe_embedding(
+    request: EmbeddingProbeDTO,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    profile = _require_tenant_admin(x_api_key)
+    try:
+        candidate = resolve_embedding_candidate(request.model_dump(), get_settings())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        vectors = await QwenEmbeddingClient(**candidate.client_kwargs()).embed(
+            ["ScholarAgent embedding probe"]
+        )
+    except Exception as exc:
+        detail = str(exc).replace(candidate.api_key, "***")
+        raise HTTPException(status_code=502, detail=detail[:1000]) from exc
+    return {
+        "status": "ok",
+        "profile": profile,
+        "provider": "qwen",
+        "model": candidate.model,
+        "dimensions": len(vectors[0]),
     }
