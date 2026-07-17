@@ -18,7 +18,7 @@ Alternatives rejected:
 Each local hit contains:
 
 - `chunk_id` and `chunk_index`
-- `snippet`, containing the matched chunk text
+- `snippet`, containing the complete stored chunk text without server-side preview truncation
 - `score`, `lexical_rank`, and `vector_rank`
 - `paper_id`, `title`, authors, source, DOI/arXiv ID, URL, and publication date
 
@@ -26,7 +26,7 @@ Each local hit contains:
 
 ## UI
 
-The RAG verification table displays chunk identity, matched text, fused score, lexical/vector rank, and the source paper title. It reads the canonical API fields rather than obsolete legacy names.
+The RAG verification table displays chunk identity, matched text, fused score, lexical/vector rank, and the source paper title. It reads the canonical API fields rather than obsolete legacy names. For chunk-quality debugging, it renders the complete `snippet` without client-side truncation; the result panel provides scrolling for long output.
 
 ## Tests
 
