@@ -26,7 +26,7 @@
 - Consumes: `RetrievalCandidate.content: str`
 - Produces: `LocalHit.snippet: str` containing the complete candidate content
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create a candidate whose content is longer than 1200 characters and assert the result snippet equals the entire content.
 
@@ -37,17 +37,17 @@ hit = RetrievalService._fuse([candidate], [], 1)[0]
 self.assertEqual(hit.snippet, long_content)
 ```
 
-- [ ] **Step 2: Run the test and verify it fails**
+- [x] **Step 2: Run the test and verify it fails**
 
 Run: `python -m unittest tests.test_retrieval_service.RetrievalServiceTest.test_hit_snippet_preserves_complete_chunk -v`
 
 Expected: FAIL because the current service returns 1200 of 1500 characters.
 
-- [ ] **Step 3: Remove server-side truncation**
+- [x] **Step 3: Remove server-side truncation**
 
 Set `snippet=candidate.content` when constructing `LocalHit`.
 
-- [ ] **Step 4: Run the backend test and verify it passes**
+- [x] **Step 4: Run the backend test and verify it passes**
 
 Run: `python -m unittest tests.test_retrieval_service -v`
 
@@ -63,24 +63,24 @@ Expected: PASS.
 - Consumes: `item.snippet` from `/knowledge/rag/search`
 - Produces: an escaped, untruncated chunk cell in the RAG verification table
 
-- [ ] **Step 1: Write the failing UI contract test**
+- [x] **Step 1: Write the failing UI contract test**
 
 ```python
 self.assertIn("<div class=\"rag-verify-snippet\">${escapeHtml(item.snippet || '')}</div>", self.html)
 self.assertNotIn("escapeHtml(item.snippet || '').slice(", self.html)
 ```
 
-- [ ] **Step 2: Run the test and verify it fails**
+- [x] **Step 2: Run the test and verify it fails**
 
 Run: `python -m unittest tests.test_model_settings_ui.ModelSettingsUiTests.test_rag_console_renders_complete_chunk_text -v`
 
 Expected: FAIL because the current UI calls `.slice(0, 600)`.
 
-- [ ] **Step 3: Remove client-side truncation**
+- [x] **Step 3: Remove client-side truncation**
 
 Render `${escapeHtml(item.snippet || '')}` directly in `.rag-verify-snippet`.
 
-- [ ] **Step 4: Run focused regression tests**
+- [x] **Step 4: Run focused regression tests**
 
 Run: `python -m unittest tests.test_model_settings_ui tests.test_retrieval_service tests.test_embedding_lifecycle -v`
 

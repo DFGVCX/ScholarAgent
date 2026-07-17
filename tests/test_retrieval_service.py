@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 
 from app.retrieval.embedding import EmbeddingUnavailable
@@ -54,6 +55,14 @@ class _BrokenEmbedding:
 
 
 class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
+    def test_hit_snippet_preserves_complete_chunk(self) -> None:
+        long_content = "x" * 1500
+        candidate = replace(_candidate("a", "p1", 1.0), content=long_content)
+
+        hit = RetrievalService._fuse([candidate], [], 1)[0]
+
+        self.assertEqual(hit.snippet, long_content)
+
     def test_top_k_keeps_multiple_chunks_from_the_same_paper(self) -> None:
         hits = RetrievalService._fuse(
             [

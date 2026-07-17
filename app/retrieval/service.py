@@ -93,7 +93,7 @@ class RetrievalService:
                     paper_id=candidate.paper_id,
                     title=candidate.title,
                     authors=candidate.authors,
-                    snippet=candidate.content[:1200],
+                    snippet=candidate.content,
                     source=candidate.source,
                     doi=candidate.doi,
                     arxiv_id=candidate.arxiv_id,

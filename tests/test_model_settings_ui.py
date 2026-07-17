@@ -43,8 +43,14 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("escapeHtml(item.title || item.paper_id)", self.html)
         self.assertIn("item.lexical_rank ?? '-'", self.html)
         self.assertIn("item.vector_rank ?? '-'", self.html)
-        self.assertIn("escapeHtml(item.snippet || '').slice(0, 600)", self.html)
         self.assertIn("escapeHtml(item.snippet || '')", self.html)
+
+    def test_rag_console_renders_complete_chunk_text(self) -> None:
+        self.assertIn(
+            "<div class=\"rag-verify-snippet\">${escapeHtml(item.snippet || '')}</div>",
+            self.html,
+        )
+        self.assertNotIn("escapeHtml(item.snippet || '').slice(", self.html)
 
 
 if __name__ == "__main__":
