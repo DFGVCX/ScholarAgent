@@ -6,8 +6,10 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from agents.factory import model_factory
+from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
 from app.services.auth_service import auth_service
+from app.services.model_configuration import resolve_model_candidate
 from app.services.runtime_config import public_runtime_config, update_runtime_config
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -18,6 +20,13 @@ class RuntimeConfigUpdateDTO(BaseModel):
 
 
 class ModelProbeDTO(BaseModel):
+    provider: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    anthropic_base_url: str = ""
+    anthropic_api_key: str = ""
+    anthropic_model: str = ""
     prompt: str = Field(default="用一句中文回答：ScholarAgent 模型接入已连通。", max_length=1000)
 
 
@@ -33,7 +42,9 @@ def _require_tenant_admin(api_key: str | None) -> dict[str, Any]:
 
 
 @router.get("/runtime")
-async def get_runtime_settings(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> dict[str, Any]:
+async def get_runtime_settings(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
     profile = _require_tenant_admin(x_api_key)
     return {"profile": profile, "config": public_runtime_config()}
 
@@ -61,19 +72,19 @@ async def probe_model(
     request: ModelProbeDTO,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
+    profile = _require_tenant_admin(x_api_key)
     try:
-        user = authenticate_api_key(x_api_key)
-        profile = auth_service.profile_for(user)
-    except AuthError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        candidate = resolve_model_candidate(request.model_dump(exclude={"prompt"}), get_settings())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
-        response = await model_factory.generate_text(
-            "config_probe",
-            request.prompt,
-            {"tenant_id": profile.get("tenant_id"), "user_id": profile.get("user_id")},
-        )
+        response = await model_factory.probe(candidate, request.prompt)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        detail = str(exc)
+        for secret in (candidate.api_key, candidate.anthropic_api_key):
+            if secret:
+                detail = detail.replace(secret, "***")
+        raise HTTPException(status_code=502, detail=detail[:1000]) from exc
     return {
         "status": "ok",
         "profile": profile,
