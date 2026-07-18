@@ -2484,6 +2484,7 @@
             background: #e6ebf0;
             overflow: hidden;
         }
+        .reader-canvas.structured-content { overflow-y: auto; overflow-x: hidden; }
         .document-stage {
             background: #dfe6ec;
             overflow: auto;
@@ -9574,6 +9575,7 @@
             const item = selectedPaper();
             const viewer = $('paperViewer');
             const editor = $('paperEditor');
+            viewer.classList.toggle('structured-content', ['text', 'assets'].includes(state.paperViewMode));
             if (!item) {
                 $('paperPreviewTitle').textContent = '文献预览与编辑';
                 $('paperPreviewBadge').textContent = '未选择';
@@ -9615,15 +9617,19 @@
                 return;
             }
             if (state.paperViewMode === 'assets') {
-                viewer.innerHTML = structure
-                    ? renderPaperVisualLibrary(item, structure)
-                    : '<div class="paper-visual-library"><div class="alert">暂无结构块，回退到解析全文；旧版本论文需要重新解析后才会出现图表算法。</div></div>';
+                if (structure) {
+                    viewer.innerHTML = `<div class="parsed-editor-stage">${renderPaperVisualLibrary(item, structure)}</div>`;
+                } else {
+                    viewer.innerHTML = '<div class="parsed-editor-stage"><div class="paper-visual-library"><div class="alert">暂无结构块，回退到解析全文；旧版本论文需要重新解析后才会出现图表算法。</div></div></div>';
+                }
                 bindPaperVisualFilters();
                 return;
             }
-            viewer.innerHTML = structure
-                ? renderStructuredPaper(item, structure)
-                : `<div class="parsed-editor-stage"><div class="alert">暂无结构块，回退到解析全文</div><article class="paper-page parsed-markdown-view markdown-preview">${renderMarkdown(fullPaperText(item))}</article></div>`;
+            if (structure) {
+                viewer.innerHTML = `<div class="parsed-editor-stage">${renderStructuredPaper(item, structure)}</div>`;
+            } else {
+                viewer.innerHTML = `<div class="parsed-editor-stage"><div class="alert">暂无结构块，回退到解析全文</div><article class="paper-page parsed-markdown-view markdown-preview">${renderMarkdown(fullPaperText(item))}</article></div>`;
+            }
         }
         function sourceFromUpload(file, urlValue = '') {
             const name = `${file?.name || urlValue || ''}`.toLowerCase();

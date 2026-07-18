@@ -85,6 +85,24 @@ class ModelSettingsUiTests(unittest.TestCase):
         )
         self.assertIn(".paper-visual-card > .markdown-preview { min-width: 0; }", self.html)
 
+    def test_structured_paper_views_use_the_existing_scroll_host(self) -> None:
+        self.assertIn(
+            "viewer.classList.toggle('structured-content', ['text', 'assets'].includes(state.paperViewMode));",
+            self.html,
+        )
+        self.assertIn(
+            ".reader-canvas.structured-content { overflow-y: auto; overflow-x: hidden; }",
+            self.html,
+        )
+        self.assertIn(
+            'viewer.innerHTML = `<div class="parsed-editor-stage">${renderStructuredPaper(item, structure)}</div>`;',
+            self.html,
+        )
+        self.assertIn(
+            'viewer.innerHTML = `<div class="parsed-editor-stage">${renderPaperVisualLibrary(item, structure)}</div>`;',
+            self.html,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
