@@ -58,6 +58,19 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("item.page_start", self.html)
         self.assertIn("item.page_end", self.html)
 
+    def test_paper_workbench_renders_structured_visual_blocks(self) -> None:
+        self.assertIn('data-preview-mode="assets">图表算法</button>', self.html)
+        self.assertIn("/structure`", self.html)
+        self.assertIn("function renderStructuredPaper", self.html)
+        self.assertIn("function renderPaperVisualLibrary", self.html)
+        self.assertIn("function paperAssetUrl", self.html)
+        self.assertIn("data-visual-filter=\"figure\"", self.html)
+        self.assertIn("data-visual-filter=\"table\"", self.html)
+        self.assertIn("data-visual-filter=\"algorithm\"", self.html)
+        self.assertIn("metadata.markdown", self.html)
+        self.assertIn("paper-visual-image", self.html)
+        self.assertIn("暂无结构块，回退到解析全文", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

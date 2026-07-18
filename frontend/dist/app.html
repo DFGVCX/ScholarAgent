@@ -3515,6 +3515,89 @@
             font-family: var(--font-mono);
             font-size: .9rem;
         }
+        .paper-structure-pages,
+        .paper-visual-library {
+            display: grid;
+            gap: 18px;
+            padding: 18px;
+        }
+        .paper-structure-page {
+            display: grid;
+            gap: 12px;
+            padding: 18px 20px;
+            border: 1px solid #dce5eb;
+            border-radius: 10px;
+            background: #fff;
+            box-shadow: 0 10px 24px rgba(23,32,40,.055);
+        }
+        .paper-structure-page > header {
+            position: static;
+            display: flex;
+            padding: 0 0 10px;
+            border-bottom: 1px solid #e5ebef;
+            background: transparent;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+        .paper-structure-body {
+            color: var(--ink-2);
+            line-height: 1.78;
+        }
+        .paper-visual-card {
+            display: grid;
+            gap: 12px;
+            padding: 16px;
+            border: 1px solid #d8e2e8;
+            border-left: 4px solid var(--accent-2);
+            border-radius: 9px;
+            background: #fbfcfd;
+        }
+        .paper-visual-card[data-block-type="table"] { border-left-color: var(--amber); }
+        .paper-visual-card[data-block-type="algorithm"] { border-left-color: var(--accent); }
+        .paper-visual-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+        }
+        .paper-visual-head div { display: grid; gap: 4px; }
+        .paper-visual-head strong { color: #14222b; font-size: 14px; }
+        .paper-visual-head span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+        .paper-visual-image {
+            display: block;
+            width: min(100%, 980px);
+            max-height: 720px;
+            margin: 0 auto;
+            object-fit: contain;
+            border: 1px solid #d6dfe5;
+            border-radius: 7px;
+            background: #fff;
+        }
+        .paper-visual-source {
+            margin: 0;
+            padding: 12px;
+            overflow: auto;
+            white-space: pre-wrap;
+            border: 1px solid #e0e7eb;
+            border-radius: 7px;
+            background: #fff;
+            color: #34434c;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.65;
+        }
+        .paper-visual-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 14px 18px 0;
+        }
+        .paper-visual-filters button.active {
+            border-color: var(--accent);
+            background: #e8f5f2;
+            color: #075f58;
+        }
         .rag-verify-table {
             min-width: 980px;
             table-layout: fixed;
@@ -7054,7 +7137,7 @@
                                 <div class="reader-tabs">
                                     <button id="previewPdfTab" class="plain active" type="button" data-preview-mode="pdf">原文</button>
                                     <button id="previewTextTab" class="plain" type="button" data-preview-mode="text">正文</button>
-                                    <button id="previewEditTab" class="plain" type="button" data-preview-mode="edit">编辑</button>
+                                    <button id="previewEditTab" class="plain" type="button" data-preview-mode="assets">图表算法</button>
                                 </div>
                                 <div class="reader-tools">
                                     <button id="paperAnnotateToggle" class="plain" type="button">批注</button>
@@ -7437,7 +7520,7 @@
     <script>
         const storageKey = 'scholar.session.v1';
         const sidebarStorageKey = 'scholar.sidebar.collapsed.v1';
-        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, embeddingStatus: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
+        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', paperStructures: {}, paperStructureLoading: {}, paperAssetFilter: 'all', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, embeddingStatus: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
         const routeTitles = { chat: '智能会话', tasks: '写作专项', audit: '引用审计', knowledge: '个人知识库', profile: '个人中心' };
         const sourceDefaults = {
             online: { label: '附加约束（可选）', placeholder: '例如：优先近三年、中文核心、包含公开数据集' },
@@ -9081,6 +9164,108 @@
             }
             return item?.url || '';
         }
+        function paperAssetUrl(item, assetName) {
+            if (!item?.paper_id || !assetName) return '';
+            const token = encodeURIComponent(state.session?.access_token || '');
+            return `/knowledge/files/${encodeURIComponent(item.paper_id)}/assets/${encodeURIComponent(assetName)}?api_key=${token}`;
+        }
+        async function loadPaperStructure(item) {
+            if (!item?.paper_id || state.paperStructureLoading[item.paper_id]) return;
+            state.paperStructureLoading[item.paper_id] = true;
+            try {
+                state.paperStructures[item.paper_id] = await api(`/knowledge/${encodeURIComponent(item.paper_id)}/structure`);
+            } catch (_) {
+                state.paperStructures[item.paper_id] = false;
+            } finally {
+                delete state.paperStructureLoading[item.paper_id];
+                if (state.selectedPaperId === item.paper_id && ['text', 'assets'].includes(state.paperViewMode)) {
+                    renderPaperWorkbench(false);
+                }
+            }
+        }
+        function paperStructure(item) {
+            return item?.paper_id ? state.paperStructures[item.paper_id] : null;
+        }
+        function structureBlocks(structure, kinds = null) {
+            const accepted = kinds ? new Set(kinds) : null;
+            return (structure?.pages || []).flatMap((page) => (page.blocks || []).map((block) => ({
+                ...block,
+                page_number: Number(block.page_number || page.page_number || 1),
+            }))).filter((block) => !accepted || accepted.has(block.block_type));
+        }
+        function visualKindLabel(kind) {
+            return ({ figure: '图', table: '表格', algorithm: '算法', equation: '公式' })[kind] || '正文';
+        }
+        function renderVisualBlock(item, block) {
+            const kind = block.block_type || 'body';
+            const metadata = block.metadata || {};
+            const label = metadata.label || visualKindLabel(kind);
+            const caption = metadata.caption || '';
+            const markdown = metadata.markdown || '';
+            const quality = metadata.quality_status || 'review';
+            const asset = metadata.asset_name ? paperAssetUrl(item, metadata.asset_name) : '';
+            const image = asset
+                ? `<img class="paper-visual-image" src="${escapeHtml(asset)}" alt="${escapeHtml(label)}" loading="lazy">`
+                : '';
+            const structured = markdown
+                ? `<div class="markdown-preview">${renderMarkdown(markdown)}</div>`
+                : '';
+            const raw = block.text && !markdown
+                ? `<pre class="paper-visual-source">${escapeHtml(block.text)}</pre>`
+                : '';
+            return `
+                <article class="paper-visual-card" data-block-type="${escapeHtml(kind)}">
+                    <div class="paper-visual-head">
+                        <div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(caption || block.text || '未提取到标题')}</span></div>
+                        <em class="badge ${quality === 'usable' ? 'ok' : quality === 'rejected' ? 'bad' : 'warn'}">${escapeHtml(quality)}</em>
+                    </div>
+                    ${image}${structured}${raw}
+                </article>
+            `;
+        }
+        function renderStructuredPaper(item, structure) {
+            const pages = structure?.pages || [];
+            const blocks = structureBlocks(structure);
+            if (!blocks.length) {
+                return `<div class="paper-structure-pages"><div class="alert">暂无结构块，回退到解析全文</div><article class="paper-page parsed-markdown-view markdown-preview">${renderMarkdown(fullPaperText(item))}</article></div>`;
+            }
+            return `<div class="paper-structure-pages">${pages.map((page) => {
+                const pageBlocks = blocks.filter((block) => block.page_number === Number(page.page_number));
+                return `
+                    <section class="paper-structure-page">
+                        <header><span>第 ${Number(page.page_number)} 页</span><span>${escapeHtml(page.extraction_method || structure.parser?.name || '')}</span></header>
+                        ${pageBlocks.map((block) => {
+                            if (['figure', 'table', 'algorithm'].includes(block.block_type)) return renderVisualBlock(item, block);
+                            return `<article class="paper-structure-body markdown-preview" data-block-type="${escapeHtml(block.block_type || 'body')}">${renderMarkdown(block.text || '')}</article>`;
+                        }).join('')}
+                    </section>
+                `;
+            }).join('')}</div>`;
+        }
+        function renderPaperVisualLibrary(item, structure) {
+            const kinds = ['figure', 'table', 'algorithm'];
+            const allBlocks = structureBlocks(structure, kinds);
+            const blocks = state.paperAssetFilter === 'all'
+                ? allBlocks
+                : allBlocks.filter((block) => block.block_type === state.paperAssetFilter);
+            const filters = `
+                <div class="paper-visual-filters">
+                    <button class="plain ${state.paperAssetFilter === 'all' ? 'active' : ''}" type="button" data-visual-filter="all">全部 ${allBlocks.length}</button>
+                    <button class="plain ${state.paperAssetFilter === 'figure' ? 'active' : ''}" type="button" data-visual-filter="figure">图 ${allBlocks.filter((block) => block.block_type === 'figure').length}</button>
+                    <button class="plain ${state.paperAssetFilter === 'table' ? 'active' : ''}" type="button" data-visual-filter="table">表格 ${allBlocks.filter((block) => block.block_type === 'table').length}</button>
+                    <button class="plain ${state.paperAssetFilter === 'algorithm' ? 'active' : ''}" type="button" data-visual-filter="algorithm">算法 ${allBlocks.filter((block) => block.block_type === 'algorithm').length}</button>
+                </div>`;
+            const content = blocks.length
+                ? `<div class="paper-visual-library">${blocks.map((block) => renderVisualBlock(item, block)).join('')}</div>`
+                : `<div class="paper-visual-library"><div class="alert">当前论文没有检测到${state.paperAssetFilter === 'all' ? '图、表格或算法' : visualKindLabel(state.paperAssetFilter)}结构块。</div></div>`;
+            return filters + content;
+        }
+        function bindPaperVisualFilters() {
+            document.querySelectorAll('[data-visual-filter]').forEach((button) => button.addEventListener('click', () => {
+                state.paperAssetFilter = button.dataset.visualFilter || 'all';
+                renderPaperWorkbench(false);
+            }));
+        }
         function paperFileKind(item) {
             const name = `${item?.metadata?.file_name || item?.url || item?.source || ''}`.toLowerCase();
             const contentType = `${item?.metadata?.content_type || ''}`.toLowerCase();
@@ -9371,8 +9556,8 @@
             $('paperZoomLabel').textContent = `${Math.round(state.paperZoom * 100)}%`;
             document.querySelectorAll('[data-preview-mode]').forEach((button) => button.classList.toggle('active', button.dataset.previewMode === state.paperViewMode));
             viewer.style.setProperty('--paper-zoom', state.paperZoom);
-            editor.classList.toggle('hidden', state.paperViewMode !== 'edit');
-            viewer.classList.toggle('hidden', state.paperViewMode === 'edit');
+            editor.classList.add('hidden');
+            viewer.classList.remove('hidden');
             if (populateEditor) {
                 $('editPaperTitle').value = item.title || '';
                 $('editPaperAuthors').value = (item.authors || []).join(', ');
@@ -9380,18 +9565,27 @@
                 $('editPaperAbstract').value = item.abstract || '';
                 $('editPaperFullText').value = item.full_text || '';
             }
-            if (state.paperViewMode === 'edit') return;
             if (state.paperViewMode === 'pdf') {
                 renderOriginalDocument(item, fileUrl, viewer, pages);
                 return;
             }
             $('paperPageLabel').textContent = '全文';
-            const text = fullPaperText(item);
-            viewer.innerHTML = `
-                <div class="parsed-editor-stage">
-                    <article class="paper-page parsed-markdown-view markdown-preview">${renderMarkdown(text)}</article>
-                </div>
-            `;
+            const structure = paperStructure(item);
+            if (structure === undefined) {
+                viewer.innerHTML = '<div class="reader-empty">正在读取结构化正文...</div>';
+                loadPaperStructure(item);
+                return;
+            }
+            if (state.paperViewMode === 'assets') {
+                viewer.innerHTML = structure
+                    ? renderPaperVisualLibrary(item, structure)
+                    : '<div class="paper-visual-library"><div class="alert">暂无结构块，回退到解析全文；旧版本论文需要重新解析后才会出现图表算法。</div></div>';
+                bindPaperVisualFilters();
+                return;
+            }
+            viewer.innerHTML = structure
+                ? renderStructuredPaper(item, structure)
+                : `<div class="parsed-editor-stage"><div class="alert">暂无结构块，回退到解析全文</div><article class="paper-page parsed-markdown-view markdown-preview">${renderMarkdown(fullPaperText(item))}</article></div>`;
         }
         function sourceFromUpload(file, urlValue = '') {
             const name = `${file?.name || urlValue || ''}`.toLowerCase();
