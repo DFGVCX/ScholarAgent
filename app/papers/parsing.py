@@ -284,32 +284,33 @@ def _formula_aware_blocks(
     fallback_page_text: str,
 ) -> tuple[tuple[ParsedBlock, ...], list[dict[str, Any]]]:
     """Merge numbered display-equation fragments and retain recovery provenance."""
-    output: list[ParsedBlock] = []
+    replacements: dict[int, tuple[ParsedBlock, dict[str, Any]]] = {}
+    consumed: set[int] = set()
     equations: list[dict[str, Any]] = []
-    index = 0
-    while index < len(blocks):
-        block = blocks[index]
+    for index, block in enumerate(blocks):
         match = _NUMBERED_EQUATION_RE.search(block.text)
-        if not match or not (_formula_fragment(block) or "=" in block.text):
-            output.append(block)
-            index += 1
+        if not match or index in consumed:
             continue
-
-        start = index
-        while start > 0 and _formula_fragment(blocks[start - 1]):
-            previous = blocks[start - 1]
-            current = blocks[start]
-            vertical_gap = current.bbox[1] - previous.bbox[3]
-            same_column = abs(current.bbox[0] - previous.bbox[0]) <= 150
-            if vertical_gap > 28 or not same_column:
-                break
-            start -= 1
-
-        group = list(blocks[start : index + 1])
-        grouped_predecessors = index - start
-        if grouped_predecessors:
-            del output[-grouped_predecessors:]
-        raw_text = "\n".join(part.text for part in group)
+        label_x0, label_y0, label_x1, label_y1 = block.bbox
+        group_indices = [
+            candidate_index
+            for candidate_index, candidate in enumerate(blocks)
+            if candidate_index not in consumed
+            and candidate.page_number == block.page_number
+            and len(candidate.text.strip()) <= 180
+            and candidate.bbox[1] <= label_y1 + 4
+            and candidate.bbox[3] >= label_y0 - 12
+            and candidate.bbox[0] >= label_x0 - 180
+            and candidate.bbox[2] <= label_x1 + 24
+        ]
+        if index not in group_indices:
+            group_indices.append(index)
+        group = [blocks[candidate_index] for candidate_index in group_indices]
+        if not any(_formula_fragment(part) or "=" in part.text for part in group):
+            continue
+        raw_text = "\n".join(
+            part.text for part in sorted(group, key=lambda item: (item.bbox[1], item.bbox[0]))
+        )
         label = match.group("label")
         fallback = extract_numbered_formula(fallback_page_text, label)
         bbox = (
@@ -325,17 +326,28 @@ def _formula_aware_blocks(
             page_number=block.page_number,
             bbox=bbox,
         )
+        insertion_index = min(group_indices)
         equation_block = ParsedBlock(
             page_number=block.page_number,
             block_type="equation",
             text=candidate.markdown,
             bbox=bbox,
-            reading_order=len(output),
+            reading_order=insertion_index,
             font_size=max((part.font_size for part in group), default=block.font_size),
         )
-        output.append(equation_block)
-        equations.append(candidate.to_dict())
-        index += 1
+        record = candidate.to_dict()
+        replacements[insertion_index] = (equation_block, record)
+        consumed.update(group_indices)
+
+    output: list[ParsedBlock] = []
+    for index, block in enumerate(blocks):
+        replacement = replacements.get(index)
+        if replacement is not None:
+            equation_block, record = replacement
+            output.append(equation_block)
+            equations.append(record)
+        elif index not in consumed:
+            output.append(block)
 
     return (
         tuple(replace(block, reading_order=order) for order, block in enumerate(output)),
