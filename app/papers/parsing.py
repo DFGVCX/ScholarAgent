@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import math
 from pathlib import Path
@@ -19,6 +19,8 @@ STRUCTURED_PARSER_NAME = "structure_aware_v1"
 STRUCTURED_PARSER_VERSION = "1"
 FORMULA_AWARE_PARSER_NAME = "formula_aware_v2"
 FORMULA_AWARE_PARSER_VERSION = "2"
+MULTIMODAL_PARSER_NAME = "multimodal_aware_v3"
+MULTIMODAL_PARSER_VERSION = "3"
 LEGACY_PARSER_NAME = "legacy_fixed"
 LEGACY_PARSER_VERSION = "1"
 
@@ -44,6 +46,7 @@ class ParsedBlock:
     bbox: tuple[float, float, float, float]
     reading_order: int
     font_size: float = 0.0
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +56,7 @@ class ParsedBlock:
             "bbox": list(self.bbox),
             "reading_order": self.reading_order,
             "font_size": self.font_size,
+            "metadata": dict(self.metadata),
         }
 
 
@@ -519,6 +523,7 @@ def _parse_layout_pdf(
     parser_name: str,
     parser_version: str,
     formula_aware: bool,
+    visual_aware: bool = False,
 ) -> ParsedPaper:
     try:
         import fitz
@@ -541,6 +546,8 @@ def _parse_layout_pdf(
         repeated = _repeated_margin_keys(raw_pages)
         pages: list[ParsedPage] = []
         equations: list[dict[str, Any]] = []
+        visual_blocks: list[dict[str, Any]] = []
+        asset_root = path.parent / f"{path.stem}_assets"
         removed_margins: set[str] = set()
         for raw_page in raw_pages:
             body_blocks = _ordered_body_blocks(raw_page, repeated)
@@ -555,6 +562,42 @@ def _parse_layout_pdf(
                     fallback_text,
                 )
                 equations.extend(page_equations)
+            if visual_aware:
+                from app.papers.visuals import extract_visual_candidates
+
+                source_page = document[raw_page.page_number - 1]
+                candidates = extract_visual_candidates(
+                    source_page,
+                    raw_page.page_number,
+                    body_blocks,
+                    asset_root,
+                )
+                consumed = {
+                    index
+                    for candidate in candidates
+                    for index in candidate.pop("consumed_indices", [])
+                }
+                retained_blocks = [
+                    block for index, block in enumerate(body_blocks) if index not in consumed
+                ]
+                for candidate in candidates:
+                    visual_block = ParsedBlock(
+                        page_number=raw_page.page_number,
+                        block_type=str(candidate["block_type"]),
+                        text=str(candidate["text"]),
+                        bbox=tuple(candidate["bbox"]),
+                        reading_order=int(candidate["reading_order"]),
+                        font_size=float(candidate["font_size"]),
+                        metadata=dict(candidate["metadata"]),
+                    )
+                    retained_blocks.append(visual_block)
+                    visual_blocks.append(visual_block.to_dict())
+                body_blocks = tuple(
+                    replace(block, reading_order=order)
+                    for order, block in enumerate(
+                        sorted(retained_blocks, key=lambda item: item.reading_order)
+                    )
+                )
             retained = {id(block) for block in body_blocks}
             for block in raw_page.blocks:
                 if id(block) not in retained and _margin_key(block.text) in repeated:
@@ -601,6 +644,9 @@ def _parse_layout_pdf(
         }
         if formula_aware:
             manifest["equations"] = equations
+        if visual_aware:
+            manifest["visual_blocks"] = visual_blocks
+            manifest["asset_directory"] = asset_root.name
         return ParsedPaper(
             full_text=full_text if status == "ready" else "",
             pages=tuple(pages),
@@ -632,6 +678,16 @@ def parse_pdf_formula_aware(path: Path) -> ParsedPaper:
         parser_name=FORMULA_AWARE_PARSER_NAME,
         parser_version=FORMULA_AWARE_PARSER_VERSION,
         formula_aware=True,
+    )
+
+
+def parse_pdf_multimodal(path: Path) -> ParsedPaper:
+    return _parse_layout_pdf(
+        path,
+        parser_name=MULTIMODAL_PARSER_NAME,
+        parser_version=MULTIMODAL_PARSER_VERSION,
+        formula_aware=True,
+        visual_aware=True,
     )
 
 
