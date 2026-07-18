@@ -20,11 +20,42 @@ from app.routes.knowledge import (
     save_file_text,
     save_knowledge,
     upload_knowledge_file,
+    _resolve_paper_asset,
 )
 from app.services.rag_service import rag_service
 
 
 class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_visual_asset_resolution_requires_manifest_reference_and_safe_name(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            pdf = Path(tmp) / "paper.pdf"
+            pdf.write_bytes(b"%PDF")
+            assets = Path(tmp) / "paper_assets"
+            assets.mkdir()
+            image = assets / "page_001_figure_1.png"
+            image.write_bytes(b"png")
+            paper = {
+                "metadata": {"file_path": str(pdf)},
+                "parsing": {
+                    "manifest": {
+                        "visual_blocks": [
+                            {"metadata": {"asset_name": "page_001_figure_1.png"}}
+                        ]
+                    }
+                },
+            }
+
+            self.assertEqual(
+                _resolve_paper_asset(paper, "page_001_figure_1.png"),
+                image.resolve(),
+            )
+            with self.assertRaisesRegex(ValueError, "not referenced"):
+                _resolve_paper_asset(paper, "other.png")
+            with self.assertRaisesRegex(ValueError, "unsafe"):
+                _resolve_paper_asset(paper, "../page_001_figure_1.png")
+
     async def test_login_and_me_return_tenant_context(self):
         profile = await login(
             LoginRequestDTO(username="acme", password="acme123", tenant_id="tenant_acme")

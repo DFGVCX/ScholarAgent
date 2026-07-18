@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
+from app.db.session import tenant_transaction
+from app.papers.repository import PaperRepository
 from app.services import mysql_store
 from app.services.rag_service import rag_service
 from mcp_server.scholar_mcp.client import ScholarMCPClient
@@ -130,6 +132,32 @@ def _resolve_tenant_file(file_path: str, user) -> Path:
         raise HTTPException(status_code=403, detail="file is outside tenant storage")
     if not resolved.exists() or not resolved.is_file():
         raise HTTPException(status_code=404, detail="file not found")
+    return resolved
+
+
+def _resolve_paper_asset(paper: dict[str, Any], asset_name: str) -> Path:
+    if not asset_name or Path(asset_name).name != asset_name or any(
+        part in {".", ".."} for part in Path(asset_name).parts
+    ):
+        raise ValueError("unsafe paper asset name")
+    manifest = dict((paper.get("parsing") or {}).get("manifest") or {})
+    allowed = {
+        str((block.get("metadata") or {}).get("asset_name") or "")
+        for block in manifest.get("visual_blocks", []) or []
+        if isinstance(block, dict)
+    }
+    if asset_name not in allowed:
+        raise ValueError("paper asset is not referenced by the current parse manifest")
+    file_path = str((paper.get("metadata") or {}).get("file_path") or paper.get("file_path") or "")
+    if not file_path:
+        raise ValueError("paper source file is unavailable")
+    source = Path(file_path).expanduser().resolve()
+    root = source.parent / f"{source.stem}_assets"
+    resolved = (root / asset_name).resolve()
+    if resolved.parent != root.resolve():
+        raise ValueError("unsafe paper asset path")
+    if not resolved.is_file():
+        raise FileNotFoundError(asset_name)
     return resolved
 
 
@@ -321,6 +349,42 @@ async def get_pdf_info(
         "file_size": resolved.stat().st_size,
         "file_name": resolved.name,
     }
+
+
+@router.get("/files/{paper_id}/assets/{asset_name}")
+async def get_paper_asset(
+    paper_id: str,
+    asset_name: str,
+    api_key: str = "",
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> FileResponse:
+    user = _current_user(x_api_key or api_key)
+    paper = await _find_user_paper(paper_id, user)
+    try:
+        resolved = _resolve_paper_asset(paper, asset_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="paper asset not found") from exc
+    _resolve_tenant_file(str(resolved), user)
+    return FileResponse(resolved, media_type="image/png", filename=resolved.name)
+
+
+@router.get("/{paper_id}/structure")
+async def get_paper_structure(
+    paper_id: str,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    async with tenant_transaction(user.tenant_id, user.user_id) as session:
+        structure = await PaperRepository(session).get_structure(
+            user.tenant_id,
+            user.user_id,
+            paper_id,
+        )
+    if structure is None:
+        raise HTTPException(status_code=404, detail="paper structure not found")
+    return structure
 
 
 @router.get("/files/{paper_id}/annotations")

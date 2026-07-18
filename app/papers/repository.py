@@ -64,6 +64,94 @@ class PaperRepository:
         rows = await self.list_documents(tenant_id, user_id, query=paper_id, limit=10)
         return next((row for row in rows if row["paper_id"] == paper_id), None)
 
+    async def get_structure(
+        self, tenant_id: str, user_id: str, paper_id: str
+    ) -> dict[str, Any] | None:
+        current = await self.session.execute(
+            text(
+                """SELECT p.paper_id, pc.content_uuid, pc.content_version,
+                    pc.parser_name, pc.parser_version, pc.parse_status, pc.parse_manifest
+                FROM paper_contents pc
+                JOIN papers p ON p.paper_uuid=pc.paper_uuid
+                    AND p.tenant_id=pc.tenant_id AND p.user_id=pc.user_id
+                WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id
+                    AND p.paper_id=:paper_id AND p.deleted_at IS NULL
+                    AND pc.content_version=p.current_content_version"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_id": paper_id},
+        )
+        row = current.mappings().first()
+        if row is None:
+            return None
+        content_uuid = row.get("content_uuid")
+        page_result = await self.session.execute(
+            text(
+                """SELECT pp.page_number, pp.text, pp.quality_status,
+                    pp.extraction_method, pp.blocks
+                FROM paper_pages pp
+                WHERE pp.tenant_id=:tenant_id AND pp.user_id=:user_id
+                    AND pp.content_uuid=:content_uuid
+                ORDER BY pp.page_number"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "content_uuid": content_uuid},
+        )
+        section_result = await self.session.execute(
+            text(
+                """SELECT ps.section_id, ps.section_index, ps.kind, ps.title,
+                    ps.page_start, ps.page_end, ps.content
+                FROM paper_sections ps
+                WHERE ps.tenant_id=:tenant_id AND ps.user_id=:user_id
+                    AND ps.content_uuid=:content_uuid
+                ORDER BY ps.section_index"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "content_uuid": content_uuid},
+        )
+
+        def json_value(value: Any, fallback: Any) -> Any:
+            if isinstance(value, str):
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    return fallback
+            return value if value is not None else fallback
+
+        pages = []
+        for page in page_result.mappings().all():
+            pages.append(
+                {
+                    "page_number": int(page["page_number"]),
+                    "text": str(page.get("text") or ""),
+                    "quality_status": str(page.get("quality_status") or ""),
+                    "extraction_method": str(page.get("extraction_method") or ""),
+                    "blocks": list(json_value(page.get("blocks"), [])),
+                }
+            )
+        sections = []
+        for section in section_result.mappings().all():
+            sections.append(
+                {
+                    "section_id": str(section["section_id"]),
+                    "index": int(section["section_index"]),
+                    "kind": str(section.get("kind") or ""),
+                    "title": str(section.get("title") or ""),
+                    "page_start": int(section.get("page_start") or 1),
+                    "page_end": int(section.get("page_end") or 1),
+                    "content": str(section.get("content") or ""),
+                }
+            )
+        return {
+            "paper_id": str(row["paper_id"]),
+            "content_version": int(row.get("content_version") or 0),
+            "parser": {
+                "name": str(row.get("parser_name") or ""),
+                "version": str(row.get("parser_version") or ""),
+                "status": str(row.get("parse_status") or ""),
+            },
+            "manifest": dict(json_value(row.get("parse_manifest"), {})),
+            "pages": pages,
+            "sections": sections,
+        }
+
     async def list_documents(
         self, tenant_id: str, user_id: str, *, query: str = "", limit: int = 50
     ) -> list[dict[str, Any]]:

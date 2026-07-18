@@ -10,13 +10,22 @@ from app.papers.repository import PaperRepository
 
 
 class _Mappings:
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+
     def first(self):
-        return None
+        return self.rows[0] if self.rows else None
+
+    def all(self):
+        return self.rows
 
 
 class _Result:
+    def __init__(self, rows=None):
+        self.rows = rows
+
     def mappings(self):
-        return _Mappings()
+        return _Mappings(self.rows)
 
 
 class _WriteMappings:
@@ -48,6 +57,52 @@ class _Session:
         return _Result()
 
 
+class _StructureSession(_Session):
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.statements.append((sql, params or {}))
+        if "FROM paper_contents pc" in sql:
+            return _Result(
+                [
+                    {
+                        "paper_id": "paper-1",
+                        "content_version": 2,
+                        "parser_name": "multimodal_aware_v3",
+                        "parser_version": "3",
+                        "parse_status": "ready",
+                        "parse_manifest": {"visual_blocks": [{"block_type": "figure"}]},
+                    }
+                ]
+            )
+        if "FROM paper_pages pp" in sql:
+            return _Result(
+                [
+                    {
+                        "page_number": 1,
+                        "text": "Figure 1. Architecture",
+                        "quality_status": "usable",
+                        "extraction_method": "pymupdf_multimodal",
+                        "blocks": [{"block_type": "figure", "metadata": {"label": "Figure 1"}}],
+                    }
+                ]
+            )
+        if "FROM paper_sections ps" in sql:
+            return _Result(
+                [
+                    {
+                        "section_id": "method",
+                        "section_index": 0,
+                        "kind": "method",
+                        "title": "2 Method",
+                        "page_start": 1,
+                        "page_end": 1,
+                        "content": "Figure 1. Architecture",
+                    }
+                ]
+            )
+        return _Result()
+
+
 class _WriteSession(_Session):
     async def execute(self, statement, params=None):
         sql = str(statement)
@@ -60,6 +115,20 @@ class _WriteSession(_Session):
 
 
 class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_get_structure_returns_current_ordered_pages_and_sections(self) -> None:
+        session = _StructureSession()
+
+        structure = await PaperRepository(session).get_structure("tenant-a", "user-a", "paper-1")
+
+        self.assertIsNotNone(structure)
+        assert structure is not None
+        self.assertEqual(structure["parser"]["name"], "multimodal_aware_v3")
+        self.assertEqual(structure["pages"][0]["blocks"][0]["block_type"], "figure")
+        self.assertEqual(structure["sections"][0]["section_id"], "method")
+        self.assertTrue(all(params["tenant_id"] == "tenant-a" for _, params in session.statements))
+        self.assertTrue(all(params["user_id"] == "user-a" for _, params in session.statements))
+        self.assertIn("current_content_version", session.statements[0][0])
+
     async def test_get_requires_tenant_user_and_not_deleted(self) -> None:
         session = _Session()
         paper = await PaperRepository(session).get("tenant-a", "user-a", "paper-1")
