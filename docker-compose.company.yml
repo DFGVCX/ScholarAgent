@@ -8,7 +8,8 @@ services:
     environment:
       - SCHOLAR_ENV=development
       - SCHOLAR_API_KEYS=${SCHOLAR_API_KEYS:-demo-key:tenant_demo:user_demo}
-      - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
+      - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
+      - SCHOLAR_CHECKPOINT_BACKEND=postgres
       - SCHOLAR_REDIS_URL=${SCHOLAR_REDIS_URL:-redis://redis:6379/0}
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}
@@ -20,7 +21,11 @@ services:
       - SCHOLAR_ANTHROPIC_BASE_URL=${SCHOLAR_ANTHROPIC_BASE_URL:-https://api.anthropic.com}
       - SCHOLAR_ANTHROPIC_API_KEY=${SCHOLAR_ANTHROPIC_API_KEY:-}
       - SCHOLAR_ANTHROPIC_MODEL=${SCHOLAR_ANTHROPIC_MODEL:-}
-      - SCHOLAR_RAG_EMBEDDING_PROVIDER=${SCHOLAR_RAG_EMBEDDING_PROVIDER:-lexical}
+      - SCHOLAR_RAG_EMBEDDING_PROVIDER=qwen
+      - SCHOLAR_RAG_EMBEDDING_BASE_URL=${SCHOLAR_RAG_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode}
+      - SCHOLAR_RAG_EMBEDDING_API_KEY=${SCHOLAR_RAG_EMBEDDING_API_KEY:-}
+      - SCHOLAR_RAG_EMBEDDING_MODEL=Qwen3-Embedding-0.6B
+      - SCHOLAR_RAG_EMBEDDING_DIMENSIONS=1024
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
       - SCHOLAR_UPLOAD_DIR=/app/storage/uploads
     volumes:
@@ -35,7 +40,8 @@ services:
     environment:
       - SCHOLAR_ENV=development
       - SCHOLAR_API_KEYS=${SCHOLAR_API_KEYS:-demo-key:tenant_demo:user_demo}
-      - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
+      - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
+      - SCHOLAR_CHECKPOINT_BACKEND=postgres
       - SCHOLAR_REDIS_URL=${SCHOLAR_REDIS_URL:-redis://redis:6379/0}
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}
@@ -47,7 +53,11 @@ services:
       - SCHOLAR_ANTHROPIC_BASE_URL=${SCHOLAR_ANTHROPIC_BASE_URL:-https://api.anthropic.com}
       - SCHOLAR_ANTHROPIC_API_KEY=${SCHOLAR_ANTHROPIC_API_KEY:-}
       - SCHOLAR_ANTHROPIC_MODEL=${SCHOLAR_ANTHROPIC_MODEL:-}
-      - SCHOLAR_RAG_EMBEDDING_PROVIDER=${SCHOLAR_RAG_EMBEDDING_PROVIDER:-lexical}
+      - SCHOLAR_RAG_EMBEDDING_PROVIDER=qwen
+      - SCHOLAR_RAG_EMBEDDING_BASE_URL=${SCHOLAR_RAG_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode}
+      - SCHOLAR_RAG_EMBEDDING_API_KEY=${SCHOLAR_RAG_EMBEDDING_API_KEY:-}
+      - SCHOLAR_RAG_EMBEDDING_MODEL=Qwen3-Embedding-0.6B
+      - SCHOLAR_RAG_EMBEDDING_DIMENSIONS=1024
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
       - SCHOLAR_UPLOAD_DIR=/app/storage/uploads
     volumes:
@@ -63,7 +73,7 @@ services:
       dockerfile: deploy/Dockerfile.mcp
     environment:
       - SCHOLAR_ENV=development
-      - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
+      - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
@@ -96,18 +106,15 @@ services:
       - prod-deps
 
   db:
-    image: mysql:8.0
+    image: pgvector/pgvector:0.8.5-pg17-bookworm
     environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-scholar_root}
-      - MYSQL_DATABASE=${MYSQL_DATABASE:-scholar_agent}
-      - MYSQL_USER=${MYSQL_USER:-scholar}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-scholar}
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+      - POSTGRES_DB=${POSTGRES_DB:-scholar_agent}
+      - POSTGRES_USER=${POSTGRES_USER:-scholar}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-scholar}
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - scholar_mysql:/var/lib/mysql
-      - ./deploy/mysql/init.sql:/docker-entrypoint-initdb.d/01-scholar-init.sql:ro
+      - scholar_postgres:/var/lib/postgresql/data
     networks:
       - scholar_network
     profiles:
@@ -115,7 +122,7 @@ services:
 
 volumes:
   scholar_storage:
-  scholar_mysql:
+  scholar_postgres:
 
 networks:
   scholar_network:

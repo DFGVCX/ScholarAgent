@@ -227,7 +227,7 @@ def _extract_pdf_text(path: Path) -> str:
         from pypdf import PdfReader
 
         reader = PdfReader(str(path))
-        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()[:50000]
+        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
     except Exception:
         return ""
 

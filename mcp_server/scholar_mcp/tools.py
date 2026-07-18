@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.schemas import UserContext
 from app.services.institutional_access.service import institutional_access_service
 from app.services.browser_worker_client import browser_worker_client
+from app.services.rag_service import rag_service
 from mcp_server.scholar_mcp.external_sources import (
     ExternalSourceError,
     attach_arxiv_pdf,
@@ -181,8 +182,6 @@ async def ingest_paper(
 
 async def _prepare_external_search_results(
     papers: list[PaperRecord],
-    *,
-    persist_results: bool,
 ) -> list[dict[str, Any]]:
     prepared: list[dict[str, Any]] = []
     for paper in papers:
@@ -193,11 +192,10 @@ async def _prepare_external_search_results(
             or paper.arxiv_id
             or (paper.metadata.get("is_oa") and paper.metadata.get("pdf_url"))
         )
-        prepared.append(
-            await knowledge_store.save_paper(paper)
-            if persist_results
-            else paper.to_dict()
-        )
+        candidate = paper.to_dict()
+        candidate["can_cite"] = False
+        candidate["acquisition_required"] = True
+        prepared.append(candidate)
     return prepared
 
 
@@ -227,44 +225,62 @@ async def search_papers(
     query: str,
     source: str = "all",
     limit: int = 12,
-    persist_results: bool = True,
+    persist_results: bool = False,
 ) -> dict[str, Any]:
-    items: list[dict[str, Any]] = []
+    local_hits: list[dict[str, Any]] = []
+    external_candidates: list[dict[str, Any]] = []
     external_error: str | None = None
     if source in {"all", "local"}:
-        items.extend(await knowledge_store.search(tenant_id, user_id, query, limit))
-    if source in {"all", "external", "arxiv", "openalex", "crossref"} and len(items) < limit:
+        if query.strip():
+            retrieval = await rag_service.search(tenant_id, user_id, query, limit)
+            for hit in retrieval.get("local_hits") or retrieval.get("items") or []:
+                document = await knowledge_store.get(tenant_id, user_id, str(hit["paper_id"]))
+                local_hits.append({**(document or {}), **hit, "can_cite": True})
+        else:
+            local_hits = await knowledge_store.search(tenant_id, user_id, "", limit)
+            for item in local_hits:
+                item["can_cite"] = item.get("ingestion_status") in {"ready", "failed"}
+    if source in {"all", "external", "arxiv", "openalex", "crossref"} and len(local_hits) < limit:
         if _mock_external_sources_enabled():
-            needed = limit - len(items)
-            items.extend(
-                _synthetic_paper(tenant_id, user_id, "arxiv", query or "survey", query, i).to_dict()
-                for i in range(needed)
-            )
+            needed = limit - len(local_hits)
+            for i in range(needed):
+                candidate = _synthetic_paper(
+                    tenant_id, user_id, "arxiv", query or "survey", query, i
+                ).to_dict()
+                candidate.update({"can_cite": False, "acquisition_required": True})
+                external_candidates.append(candidate)
         else:
             external_errors: list[str] = []
             for source_name, search_fn in _external_sources_for(source):
-                needed = limit - len({item["paper_id"]: item for item in items})
+                needed = limit - len(local_hits) - len(
+                    {item["paper_id"]: item for item in external_candidates}
+                )
                 if needed <= 0:
                     break
                 try:
                     papers = await asyncio.to_thread(search_fn, tenant_id, user_id, query, needed)
-                    items.extend(
-                        await _prepare_external_search_results(
-                            papers,
-                            persist_results=persist_results,
-                        )
-                    )
+                    external_candidates.extend(await _prepare_external_search_results(papers))
                 except ExternalSourceError as exc:
                     external_errors.append(f"{source_name}: {exc}")
                     if source == source_name:
                         raise RuntimeError(str(exc)) from exc
             external_error = " | ".join(external_errors) if external_errors else None
-    unique: dict[str, dict[str, Any]] = {item["paper_id"]: item for item in items}
+    unique_local: dict[str, dict[str, Any]] = {item["paper_id"]: item for item in local_hits}
+    unique_external: dict[str, dict[str, Any]] = {
+        item["paper_id"]: item for item in external_candidates
+    }
+    local_values = list(unique_local.values())[:limit]
+    external_values = list(unique_external.values())[: max(0, limit - len(local_values))]
     return {
-        "items": list(unique.values())[:limit],
+        "items": [*local_values, *external_values],
+        "local_hits": local_values,
+        "external_candidates": external_values,
+        "retrieval_mode": "hybrid_rrf" if query.strip() and local_values else "metadata",
         "has_more": False,
         "next_cursor": None,
         "external_error": external_error,
+        "persist_results": False,
+        "persistence_ignored": bool(persist_results),
     }
 
 

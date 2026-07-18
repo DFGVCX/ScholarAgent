@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
+import socket
 
 from app.config import get_settings
+from app.papers.reembedding import embedding_reindex_service
 from app.services.repository import task_repository
 from app.services.task_queue import task_queue
 from app.services.task_service import task_service
@@ -12,6 +15,20 @@ from app.services.task_service import task_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("scholar-worker")
+
+
+async def _process_one_reembedding(worker_id: str) -> None:
+    try:
+        result = await embedding_reindex_service.process_next(worker_id)
+        if result is not None:
+            logger.info(
+                "re-embedding job job_id=%s status=%s chunks=%s",
+                result.job_id,
+                result.status,
+                result.chunk_count,
+            )
+    except Exception:
+        logger.exception("re-embedding queue poll failed")
 
 
 async def run_worker() -> None:
@@ -23,6 +40,7 @@ async def run_worker() -> None:
     if not await task_queue.health():
         raise RuntimeError("Redis task queue is unavailable")
     recovered = await task_queue.recover_processing()
+    worker_id = f"{socket.gethostname()}:{os.getpid()}"
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -36,6 +54,7 @@ async def run_worker() -> None:
     while not stop.is_set():
         reserved = await task_queue.reserve(timeout=3)
         if reserved is None:
+            await _process_one_reembedding(worker_id)
             continue
         raw, payload = reserved
         try:
@@ -48,6 +67,7 @@ async def run_worker() -> None:
                 continue
             await task_service.run_survey_task(record)
             await task_queue.acknowledge(raw)
+            await _process_one_reembedding(worker_id)
         except Exception:
             logger.exception("task execution failed task_id=%s", payload.get("task_id"))
             if int(payload.get("attempt") or 0) + 1 < settings.task_max_attempts:

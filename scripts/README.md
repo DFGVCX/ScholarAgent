@@ -4,8 +4,7 @@
 
 Current scripts:
 
-- `bootstrap_mysql.py`: initialize MySQL-backed demo data, auth, and RAG records.
-- `init_infra.py`: initialize local infrastructure and baseline knowledge records.
+- `init_infra.py`: validate the migrated PostgreSQL/pgvector database, seed demo auth data, and add a baseline paper.
 
 Rules:
 

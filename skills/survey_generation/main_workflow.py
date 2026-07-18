@@ -138,15 +138,54 @@ async def run_survey_pipeline(initial_state: dict[str, Any]) -> AsyncIterator[di
             18,
             {"external_error": search["external_error"]},
         )
-    papers = [*([primary_paper] if primary_paper else []), *search["items"]]
+    if primary_paper is not None:
+        primary_paper["can_cite"] = bool(primary_paper.get("full_text"))
+    local_evidence = [
+        paper for paper in search.get("local_hits", []) if paper.get("can_cite") is True
+    ]
+    acquisition_errors: list[str] = []
+    if retrieval_strategy in {"online", "hybrid"}:
+        slots = max(0, max_papers - len(local_evidence))
+        for candidate in (search.get("external_candidates") or [])[:slots]:
+            try:
+                acquired = await client.call_tool(
+                    "acquire_paper_to_knowledge",
+                    {
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "paper": candidate,
+                    },
+                )
+                acquired_paper = dict(acquired.get("paper") or {})
+                if acquired_paper.get("full_text"):
+                    acquired_paper["can_cite"] = True
+                    local_evidence.append(acquired_paper)
+            except Exception as exc:
+                acquisition_errors.append(
+                    f"{candidate.get('paper_id') or candidate.get('title') or 'external candidate'}: {exc}"
+                )
+    papers = [
+        *([primary_paper] if primary_paper and primary_paper.get("can_cite") else []),
+        *local_evidence,
+    ]
     deduped = {paper["paper_id"]: paper for paper in papers}
     papers = list(deduped.values())[:max_papers]
     if not papers:
-        source_error = search.get("external_error") or ingest_error or "no paper source returned results"
+        external_count = len(search.get("external_candidates") or [])
+        source_error = (
+            search.get("external_error")
+            or ingest_error
+            or (" | ".join(acquisition_errors) if acquisition_errors else "")
+            or "no citeable local evidence returned"
+        )
         if retrieval_strategy == "local":
             raise RuntimeError("本地知识库没有检索到可用于写作的文献，请调整研究主题或附加约束。")
         if retrieval_strategy == "online":
-            raise RuntimeError(f"在线论文源暂未返回可用文献，请稍后重试或调整检索约束。原始错误：{source_error}")
+            raise RuntimeError(
+                f"在线检索返回了 {external_count} 篇候选，但候选尚未下载、解析和入库，"
+                "不能直接作为写作引用。请先获取全文后重试。"
+                f"原始错误：{source_error}"
+            )
         raise RuntimeError(
             "在线论文源与本地知识库均未返回可用于写作的文献。"
             f"请稍后重试或先向知识库添加论文。原始错误：{source_error}"

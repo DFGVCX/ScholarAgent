@@ -7,9 +7,15 @@ from mcp_server.scholar_mcp.external_sources import attach_paper_pdf
 from mcp_server.scholar_mcp.models import PaperRecord
 from mcp_server.scholar_mcp.registry import tool_registry
 from mcp_server.scholar_mcp.tools import call_tool_with_safety, search_papers
+from mcp_server.server import create_mcp_server
 
 
 class MCPRegistryTest(unittest.IsolatedAsyncioTestCase):
+    def test_docker_service_host_is_allowed_by_transport_security(self):
+        settings = create_mcp_server().settings.transport_security
+
+        self.assertIn("mcp_server:*", settings.allowed_hosts)
+
     async def test_meta_tools_are_registered(self):
         names = {spec["name"] for spec in tool_registry.list_specs()}
         self.assertIn("TOOL_LIST", names)

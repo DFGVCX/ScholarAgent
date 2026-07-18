@@ -32,14 +32,16 @@ class RetrievalStrategySchemaTests(unittest.TestCase):
 
 class RetrievalScopeTests(unittest.IsolatedAsyncioTestCase):
     async def test_online_scope_does_not_query_tenant_knowledge(self) -> None:
-        local_search = AsyncMock(return_value=[])
-        with patch("mcp_server.scholar_mcp.tools.knowledge_store.search", local_search), patch(
+        local_search = AsyncMock(return_value={"local_hits": [], "items": []})
+        with patch("mcp_server.scholar_mcp.tools.rag_service.search", local_search), patch(
             "mcp_server.scholar_mcp.tools._mock_external_sources_enabled", return_value=True
         ):
             result = await search_papers("tenant-a", "user-a", "点云", source="external", limit=2)
 
         local_search.assert_not_awaited()
         self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(result["local_hits"], [])
+        self.assertTrue(all(not item["can_cite"] for item in result["external_candidates"]))
 
     async def test_local_scope_never_calls_external_sources(self) -> None:
         local_item = {
@@ -48,14 +50,18 @@ class RetrievalScopeTests(unittest.IsolatedAsyncioTestCase):
             "user_id": "user-a",
             "title": "本地论文",
         }
-        local_search = AsyncMock(return_value=[local_item])
-        with patch("mcp_server.scholar_mcp.tools.knowledge_store.search", local_search), patch(
+        local_search = AsyncMock(return_value={"local_hits": [{**local_item, "can_cite": True}], "items": []})
+        with patch("mcp_server.scholar_mcp.tools.rag_service.search", local_search), patch(
+            "mcp_server.scholar_mcp.tools.knowledge_store.get", AsyncMock(return_value=local_item)
+        ), patch(
             "mcp_server.scholar_mcp.tools._mock_external_sources_enabled", return_value=True
         ):
             result = await search_papers("tenant-a", "user-a", "点云", source="local", limit=2)
 
         local_search.assert_awaited_once()
-        self.assertEqual(result["items"], [local_item])
+        self.assertEqual(result["items"][0]["paper_id"], local_item["paper_id"])
+        self.assertTrue(result["items"][0]["can_cite"])
+        self.assertEqual(result["external_candidates"], [])
 
     async def test_hybrid_scope_combines_local_and_external_results(self) -> None:
         local_item = {
@@ -65,13 +71,17 @@ class RetrievalScopeTests(unittest.IsolatedAsyncioTestCase):
             "title": "本地论文",
         }
         with patch(
-            "mcp_server.scholar_mcp.tools.knowledge_store.search",
-            AsyncMock(return_value=[local_item]),
+            "mcp_server.scholar_mcp.tools.rag_service.search",
+            AsyncMock(return_value={"local_hits": [{**local_item, "can_cite": True}], "items": []}),
+        ), patch(
+            "mcp_server.scholar_mcp.tools.knowledge_store.get", AsyncMock(return_value=local_item)
         ), patch("mcp_server.scholar_mcp.tools._mock_external_sources_enabled", return_value=True):
             result = await search_papers("tenant-a", "user-a", "点云", source="all", limit=2)
 
         self.assertEqual(len(result["items"]), 2)
         self.assertEqual(result["items"][0]["paper_id"], "paper:local:1")
+        self.assertEqual(len(result["local_hits"]), 1)
+        self.assertEqual(len(result["external_candidates"]), 1)
 
 
 if __name__ == "__main__":

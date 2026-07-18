@@ -13,7 +13,8 @@ class Settings:
     env: str = "development"
     api_keys: str = "demo-key:tenant_demo:user_demo"
     allow_mock_data: bool = False
-    storage_backend: str = "auto"
+    database_url: str = "postgresql+psycopg://scholar:scholar@localhost:5432/scholar_agent"
+    storage_backend: str = "postgresql"
     primary_model_provider: str = "none"
     secondary_model_provider: str = "none"
     llm_base_url: str = ""
@@ -24,16 +25,17 @@ class Settings:
     anthropic_model: str = ""
     external_source_provider: str = "real"
     external_source_timeout_seconds: float = 8.0
-    rag_index_backend: str = "auto"
-    rag_retrieval_mode: str = "hybrid"
-    rag_embedding_provider: str = "lexical"
-    rag_embedding_base_url: str = ""
+    rag_index_backend: str = "pgvector"
+    rag_retrieval_mode: str = "hybrid_rrf"
+    rag_embedding_provider: str = "qwen"
+    rag_embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
     rag_embedding_api_key: str = ""
-    rag_embedding_model: str = ""
-    rag_embedding_dimensions: int = 0
+    rag_embedding_model: str = "Qwen3-Embedding-0.6B"
+    rag_embedding_dimensions: int = 1024
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 120
-    rag_chunk_strategy: str = "paragraph"
+    rag_chunk_strategy: str = "structure_aware_v1"
+    pdf_parse_strategy: str = "structure_aware_v1"
     rag_top_k: int = 8
     rag_candidate_limit: int = 800
     rag_bm25_k1: float = 1.5
@@ -95,13 +97,31 @@ def _setting_int(overrides: dict[str, str], name: str, default: int) -> int:
 
 def get_settings() -> Settings:
     overrides = read_runtime_config()
+    database_url = _setting_value(
+        overrides,
+        "SCHOLAR_DATABASE_URL",
+        "postgresql+psycopg://scholar:scholar@localhost:5432/scholar_agent",
+    ).strip()
+    if not database_url.startswith(("postgresql://", "postgresql+psycopg://")):
+        raise ValueError("SCHOLAR_DATABASE_URL must use PostgreSQL")
     storage_dir = Path(_setting_value(overrides, "SCHOLAR_STORAGE_DIR", "storage/runtime"))
     upload_dir = Path(_setting_value(overrides, "SCHOLAR_UPLOAD_DIR", "storage/uploads"))
+    chunk_strategy = _setting_value(
+        overrides, "SCHOLAR_RAG_CHUNK_STRATEGY", "structure_aware_v1"
+    ).strip().lower()
+    if chunk_strategy not in {"legacy_fixed", "structure_aware_v1"}:
+        chunk_strategy = "structure_aware_v1"
+    pdf_parse_strategy = _setting_value(
+        overrides, "SCHOLAR_PDF_PARSE_STRATEGY", "structure_aware_v1"
+    ).strip().lower()
+    if pdf_parse_strategy not in {"legacy_fixed", "structure_aware_v1"}:
+        pdf_parse_strategy = "structure_aware_v1"
     return Settings(
         env=_setting_value(overrides, "SCHOLAR_ENV", "development"),
         api_keys=_setting_value(overrides, "SCHOLAR_API_KEYS", "demo-key:tenant_demo:user_demo"),
         allow_mock_data=_setting_bool(overrides, "SCHOLAR_ALLOW_MOCK_DATA", False),
-        storage_backend=_setting_value(overrides, "SCHOLAR_STORAGE_BACKEND", "auto"),
+        database_url=database_url,
+        storage_backend="postgresql",
         primary_model_provider=_setting_value(overrides, "SCHOLAR_PRIMARY_MODEL_PROVIDER", "none").strip().lower(),
         secondary_model_provider=_setting_value(overrides, "SCHOLAR_SECONDARY_MODEL_PROVIDER", "none").strip().lower(),
         llm_base_url=_setting_value(overrides, "SCHOLAR_LLM_BASE_URL", "").strip(),
@@ -112,16 +132,25 @@ def get_settings() -> Settings:
         anthropic_model=_setting_value(overrides, "SCHOLAR_ANTHROPIC_MODEL", "").strip(),
         external_source_provider=_setting_value(overrides, "SCHOLAR_EXTERNAL_SOURCE_PROVIDER", "real").strip().lower(),
         external_source_timeout_seconds=_setting_float(overrides, "SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS", 8.0),
-        rag_index_backend=_setting_value(overrides, "SCHOLAR_RAG_INDEX_BACKEND", "auto").strip().lower(),
-        rag_retrieval_mode=_setting_value(overrides, "SCHOLAR_RAG_RETRIEVAL_MODE", "hybrid").strip().lower(),
-        rag_embedding_provider=_setting_value(overrides, "SCHOLAR_RAG_EMBEDDING_PROVIDER", "lexical").strip().lower(),
-        rag_embedding_base_url=_setting_value(overrides, "SCHOLAR_RAG_EMBEDDING_BASE_URL", "").strip(),
+        rag_index_backend="pgvector",
+        rag_retrieval_mode=_setting_value(
+            overrides, "SCHOLAR_RAG_RETRIEVAL_MODE", "hybrid_rrf"
+        ).strip().lower(),
+        rag_embedding_provider=_setting_value(overrides, "SCHOLAR_RAG_EMBEDDING_PROVIDER", "qwen").strip().lower(),
+        rag_embedding_base_url=_setting_value(
+            overrides,
+            "SCHOLAR_RAG_EMBEDDING_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode",
+        ).strip(),
         rag_embedding_api_key=_setting_value(overrides, "SCHOLAR_RAG_EMBEDDING_API_KEY", "").strip(),
-        rag_embedding_model=_setting_value(overrides, "SCHOLAR_RAG_EMBEDDING_MODEL", "").strip(),
-        rag_embedding_dimensions=max(0, _setting_int(overrides, "SCHOLAR_RAG_EMBEDDING_DIMENSIONS", 0)),
+        rag_embedding_model=_setting_value(
+            overrides, "SCHOLAR_RAG_EMBEDDING_MODEL", "Qwen3-Embedding-0.6B"
+        ).strip(),
+        rag_embedding_dimensions=_setting_int(overrides, "SCHOLAR_RAG_EMBEDDING_DIMENSIONS", 1024),
         rag_chunk_size=max(200, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_SIZE", 900)),
         rag_chunk_overlap=max(0, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_OVERLAP", 120)),
-        rag_chunk_strategy=_setting_value(overrides, "SCHOLAR_RAG_CHUNK_STRATEGY", "paragraph").strip().lower(),
+        rag_chunk_strategy=chunk_strategy,
+        pdf_parse_strategy=pdf_parse_strategy,
         rag_top_k=max(1, _setting_int(overrides, "SCHOLAR_RAG_TOP_K", 8)),
         rag_candidate_limit=max(20, _setting_int(overrides, "SCHOLAR_RAG_CANDIDATE_LIMIT", 800)),
         rag_bm25_k1=max(0.1, _setting_float(overrides, "SCHOLAR_RAG_BM25_K1", 1.5)),

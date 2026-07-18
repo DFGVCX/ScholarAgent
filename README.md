@@ -1,5 +1,30 @@
 # ScholarAgent
 
+## PDF chunking comparison
+
+ScholarAgent keeps both `legacy_fixed` (`pypdf` plus the original character/paragraph chunker) and `structure_aware_v1` (PyMuPDF page/section parsing plus hierarchical chunking). Compare them with the same Qwen embedding model and labeled queries:
+
+```powershell
+python scripts/compare_chunk_strategies.py `
+  --corpus-jsonl evaluation/corpus.jsonl `
+  --queries-jsonl evaluation/queries.jsonl `
+  --output evaluation/reports/chunk-comparison.json
+```
+
+Corpus JSONL uses one local PDF per line:
+
+```json
+{"paper_id":"paper-1","title":"Federated Learning Paper","path":"E:/papers/paper.pdf"}
+```
+
+Query JSONL may label a relevant paper, section, and/or page range:
+
+```json
+{"query":"联邦学习是什么","relevant":{"paper_id":"paper-1","section_ids":["introduction"],"page_ranges":[[1,2]]}}
+```
+
+The report contains Recall@K, Precision@K, MRR, nDCG@K, complete returned chunk text, and page/section provenance. A query without `relevant` is emitted as a diagnostic ranking only; ScholarAgent does not call unlabeled similarity scores “accuracy” or “recall”.
+
 ScholarAgent 是一个面向多租户科研写作场景的智能体项目，包含 FastAPI 后端、企业级 Web 控制台、MCP 风格论文检索边界、RAG 知识库和可独立扩展的写作原子能力。
 
 ## 项目结构
@@ -11,7 +36,7 @@ ScholarAgent/
 ├── skills/              # 可插拔原子能力，每个能力独立目录
 ├── mcp_server/          # 论文源、检索、知识库工具边界
 ├── frontend/            # 前端源码与可部署静态页面
-├── deploy/              # Docker、Nginx、MySQL 初始化脚本
+├── deploy/              # Docker、Nginx 与 PostgreSQL 部署资产
 ├── scripts/             # 初始化与运维脚本
 └── tests/               # 单元测试、接口测试、工作流测试、E2E 说明
 ```
@@ -33,10 +58,11 @@ python -m venv .venv
 Copy-Item .env.example .env
 ```
 
-3. 初始化数据库和基础数据：
+3. 启动 PostgreSQL/pgvector、执行迁移并初始化基础数据：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\bootstrap_mysql.py
+docker compose up -d db
+.\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe scripts\init_infra.py
 ```
 

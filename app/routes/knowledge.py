@@ -33,7 +33,7 @@ class KnowledgePaperDTO(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     authors: list[str] = Field(default_factory=list)
     abstract: str = Field(default="", max_length=8000)
-    full_text: str = Field(default="", max_length=50000)
+    full_text: str = Field(default="")
     published_at: str | None = Field(default=None, max_length=40)
     doi: str | None = Field(default=None, max_length=200)
     arxiv_id: str | None = Field(default=None, max_length=120)
@@ -66,7 +66,7 @@ def _extract_docx_text(path: Path) -> str:
             texts = [node.text or "" for node in paragraph.findall(".//w:t", namespace)]
             if "".join(texts).strip():
                 paragraphs.append("".join(texts))
-        return "\n".join(paragraphs).strip()[:50000]
+        return "\n".join(paragraphs).strip()
     except Exception:
         return ""
 
@@ -74,7 +74,7 @@ def _extract_docx_text(path: Path) -> str:
 def _extract_uploaded_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".txt", ".md", ".markdown", ".html", ".htm"}:
-        return path.read_text(encoding="utf-8", errors="ignore")[:50000]
+        return path.read_text(encoding="utf-8", errors="ignore")
     if suffix == ".pdf":
         try:
             from pypdf import PdfReader  # type: ignore
@@ -82,7 +82,7 @@ def _extract_uploaded_text(path: Path) -> str:
             return ""
         try:
             reader = PdfReader(str(path))
-            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()[:50000]
+            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
         except Exception:
             return ""
     if suffix == ".docx":
@@ -147,7 +147,7 @@ class FileAnnotationDTO(BaseModel):
 
 
 class FileTextUpdateDTO(BaseModel):
-    content: str = Field(..., min_length=1, max_length=50000)
+    content: str = Field(..., min_length=1)
 
 
 @router.get("/recent")
