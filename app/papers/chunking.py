@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import re
 
-from app.papers.parsing import ParsedSection
+from app.papers.parsing import ParsedPaper, ParsedSection
 
 
 @dataclass(frozen=True)
@@ -252,3 +252,97 @@ def chunk_sections(
         flush()
 
     return drafts
+
+
+_ATOMIC_BLOCK_TYPES = {"equation", "table", "figure", "algorithm"}
+
+
+def _section_for_page(sections: Sequence[ParsedSection], page_number: int) -> ParsedSection | None:
+    return next(
+        (
+            section
+            for section in sections
+            if int(section.page_start) <= page_number <= int(section.page_end)
+            and str(section.kind).lower() not in _NON_RETRIEVAL_SECTION_KINDS
+        ),
+        None,
+    )
+
+
+def _atomic_block_content(block: object) -> str:
+    block_type = str(getattr(block, "block_type", "body") or "body").lower()
+    metadata = dict(getattr(block, "metadata", {}) or {})
+    label = str(metadata.get("label") or block_type.title())
+    caption = str(metadata.get("caption") or "").strip()
+    markdown = str(metadata.get("markdown") or "").strip()
+    raw_text = str(getattr(block, "text", "") or "").strip()
+    header = f"[{block_type.upper()} {label}]"
+    parts = [header]
+    if caption:
+        parts.append(caption)
+    if markdown:
+        parts.append(markdown)
+    elif raw_text:
+        parts.append(raw_text)
+    return "\n\n".join(dict.fromkeys(part for part in parts if part)).strip()
+
+
+def chunk_multimodal(
+    parsed: ParsedPaper,
+    max_chars: int = 900,
+    overlap_chars: int = 120,
+) -> list[ChunkDraft]:
+    """Chunk prose by section while preserving typed paper blocks atomically."""
+    atomic: list[tuple[int, int, ChunkDraft]] = []
+    removable_by_section: dict[str, list[str]] = {}
+    for page in parsed.pages:
+        for block in page.blocks:
+            block_type = str(block.block_type or "body").lower()
+            if block_type not in _ATOMIC_BLOCK_TYPES:
+                continue
+            section = _section_for_page(parsed.sections, int(page.page_number))
+            if section is None:
+                continue
+            content = _atomic_block_content(block)
+            if not content:
+                continue
+            metadata = dict(block.metadata or {})
+            label = str(metadata.get("label") or block_type.title())
+            atomic.append(
+                (
+                    int(page.page_number),
+                    int(block.reading_order),
+                    ChunkDraft(
+                        position=0,
+                        content=content,
+                        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                        token_count=max(1, len(content) // 4),
+                        section_id=section.section_id,
+                        section_path=f"{section.title} > {label}",
+                        page_start=int(page.page_number),
+                        page_end=int(page.page_number),
+                        char_start=None,
+                        char_end=None,
+                    ),
+                )
+            )
+            removable_by_section.setdefault(section.section_id, []).append(block.text)
+
+    prose_sections: list[ParsedSection] = []
+    for section in parsed.sections:
+        text = section.text
+        for value in removable_by_section.get(section.section_id, []):
+            if value:
+                text = text.replace(value, "", 1)
+        text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
+        if text:
+            prose_sections.append(replace(section, text=text))
+
+    prose = chunk_sections(prose_sections, max_chars, overlap_chars)
+    ordered: list[tuple[int, int, ChunkDraft]] = [
+        (int(chunk.page_start or 1), 10_000 + index, chunk)
+        for index, chunk in enumerate(prose)
+    ]
+    ordered.extend(atomic)
+    ordered.sort(key=lambda item: (item[0], item[1]))
+    return [replace(chunk, position=index) for index, (_, _, chunk) in enumerate(ordered)]

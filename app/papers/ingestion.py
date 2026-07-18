@@ -9,12 +9,13 @@ from typing import Any, Callable
 
 from app.config import get_settings
 from app.db.session import tenant_transaction
-from app.papers.chunking import chunk_sections, chunk_text
+from app.papers.chunking import chunk_multimodal, chunk_sections, chunk_text
 from app.papers.models import PaperInput, PaperRecord
 from app.papers.parsing import (
     FORMULA_AWARE_PARSER_NAME,
     LEGACY_PARSER_NAME,
     STRUCTURED_PARSER_NAME,
+    MULTIMODAL_PARSER_NAME,
     ParsedBlock,
     ParsedPage,
     ParsedPaper,
@@ -22,6 +23,7 @@ from app.papers.parsing import (
     parse_pdf,
     parse_pdf_formula_aware,
     parse_pdf_legacy,
+    parse_pdf_multimodal,
 )
 from app.papers.repository import PaperRepository
 from app.retrieval.embedding import EmbeddingUnavailable, QwenEmbeddingClient
@@ -79,6 +81,8 @@ class PaperIngestionService:
                     parser = parse_pdf_legacy
                 elif settings.pdf_parse_strategy == FORMULA_AWARE_PARSER_NAME:
                     parser = parse_pdf_formula_aware
+                elif settings.pdf_parse_strategy == MULTIMODAL_PARSER_NAME:
+                    parser = parse_pdf_multimodal
                 else:
                     parser = parse_pdf
             parsed = await asyncio.to_thread(parser, Path(str(paper.file_uri)))
@@ -122,7 +126,9 @@ class PaperIngestionService:
                 chunk_strategy=settings.rag_chunk_strategy,
             )
 
-        if settings.rag_chunk_strategy in {STRUCTURED_PARSER_NAME, FORMULA_AWARE_PARSER_NAME}:
+        if settings.rag_chunk_strategy == MULTIMODAL_PARSER_NAME:
+            chunks = chunk_multimodal(parsed, settings.rag_chunk_size, settings.rag_chunk_overlap)
+        elif settings.rag_chunk_strategy in {STRUCTURED_PARSER_NAME, FORMULA_AWARE_PARSER_NAME}:
             chunks = chunk_sections(parsed.sections, settings.rag_chunk_size, settings.rag_chunk_overlap)
         else:
             chunks = chunk_text(prepared.full_text, settings.rag_chunk_size, settings.rag_chunk_overlap)

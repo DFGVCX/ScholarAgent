@@ -7,12 +7,13 @@ import math
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from app.papers.chunking import ChunkDraft, chunk_sections, chunk_text
+from app.papers.chunking import ChunkDraft, chunk_multimodal, chunk_sections, chunk_text
 from app.papers.parsing import (
     ParsedPaper,
     parse_pdf,
     parse_pdf_formula_aware,
     parse_pdf_legacy,
+    parse_pdf_multimodal,
 )
 
 
@@ -155,6 +156,9 @@ def _chunks_for_strategy(
     elif strategy == "formula_aware_v2":
         parsed = parse_pdf_formula_aware(path)
         chunks = chunk_sections(parsed.sections, chunk_size, chunk_overlap) if parsed.status == "ready" else []
+    elif strategy == "multimodal_aware_v3":
+        parsed = parse_pdf_multimodal(path)
+        chunks = chunk_multimodal(parsed, chunk_size, chunk_overlap) if parsed.status == "ready" else []
     else:
         raise ValueError(f"unsupported strategy: {strategy}")
     return parsed, chunks
@@ -282,7 +286,7 @@ async def compare_strategies(
     top_k: int = 10,
 ) -> dict[str, Any]:
     reports = []
-    for strategy in ("legacy_fixed", "structure_aware_v1", "formula_aware_v2"):
+    for strategy in ("legacy_fixed", "structure_aware_v1", "formula_aware_v2", "multimodal_aware_v3"):
         reports.append(
             await evaluate_strategy(
                 strategy=strategy,

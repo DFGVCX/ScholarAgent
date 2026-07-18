@@ -15,6 +15,31 @@ from app.papers.parsing import ParsedPaper
 
 
 class RetrievalEvaluationTest(unittest.TestCase):
+    def test_multimodal_strategy_is_available_for_comparison(self) -> None:
+        parsed = ParsedPaper(
+            full_text="",
+            pages=(),
+            sections=(),
+            metadata={},
+            manifest={"parser": {"name": "multimodal_aware_v3", "version": "3"}},
+            status="ready",
+            quality_score=1.0,
+        )
+        with patch(
+            "app.evaluation.retrieval.parse_pdf_multimodal",
+            return_value=parsed,
+        ) as parser:
+            result, chunks = _chunks_for_strategy(
+                "multimodal_aware_v3",
+                {"path": str(Path("paper.pdf"))},
+                chunk_size=900,
+                chunk_overlap=120,
+            )
+
+        parser.assert_called_once()
+        self.assertIs(result, parsed)
+        self.assertEqual(chunks, [])
+
     def test_formula_aware_strategy_is_available_for_comparison(self) -> None:
         parsed = ParsedPaper(
             full_text="",

@@ -34,8 +34,8 @@ class Settings:
     rag_embedding_dimensions: int = 1024
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 120
-    rag_chunk_strategy: str = "formula_aware_v2"
-    pdf_parse_strategy: str = "formula_aware_v2"
+    rag_chunk_strategy: str = "multimodal_aware_v3"
+    pdf_parse_strategy: str = "multimodal_aware_v3"
     rag_top_k: int = 8
     rag_candidate_limit: int = 800
     rag_bm25_k1: float = 1.5
@@ -107,15 +107,15 @@ def get_settings() -> Settings:
     storage_dir = Path(_setting_value(overrides, "SCHOLAR_STORAGE_DIR", "storage/runtime"))
     upload_dir = Path(_setting_value(overrides, "SCHOLAR_UPLOAD_DIR", "storage/uploads"))
     chunk_strategy = _setting_value(
-        overrides, "SCHOLAR_RAG_CHUNK_STRATEGY", "formula_aware_v2"
+        overrides, "SCHOLAR_RAG_CHUNK_STRATEGY", "multimodal_aware_v3"
     ).strip().lower()
-    if chunk_strategy not in {"legacy_fixed", "structure_aware_v1", "formula_aware_v2"}:
-        chunk_strategy = "formula_aware_v2"
+    if chunk_strategy not in {"legacy_fixed", "structure_aware_v1", "formula_aware_v2", "multimodal_aware_v3"}:
+        chunk_strategy = "multimodal_aware_v3"
     pdf_parse_strategy = _setting_value(
-        overrides, "SCHOLAR_PDF_PARSE_STRATEGY", "formula_aware_v2"
+        overrides, "SCHOLAR_PDF_PARSE_STRATEGY", "multimodal_aware_v3"
     ).strip().lower()
-    if pdf_parse_strategy not in {"legacy_fixed", "structure_aware_v1", "formula_aware_v2"}:
-        pdf_parse_strategy = "formula_aware_v2"
+    if pdf_parse_strategy not in {"legacy_fixed", "structure_aware_v1", "formula_aware_v2", "multimodal_aware_v3"}:
+        pdf_parse_strategy = "multimodal_aware_v3"
     return Settings(
         env=_setting_value(overrides, "SCHOLAR_ENV", "development"),
         api_keys=_setting_value(overrides, "SCHOLAR_API_KEYS", "demo-key:tenant_demo:user_demo"),

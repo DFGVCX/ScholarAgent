@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from app.papers.chunking import chunk_sections, chunk_text
-from app.papers.parsing import ParsedSection
+from app.papers.chunking import chunk_multimodal, chunk_sections, chunk_text
+from app.papers.parsing import ParsedBlock, ParsedPage, ParsedPaper, ParsedSection
 
 
 def _section(
@@ -30,6 +30,64 @@ def _section(
 
 
 class PaperChunkingTest(unittest.TestCase):
+    def test_multimodal_visual_blocks_are_atomic_and_keep_provenance(self) -> None:
+        body = ParsedBlock(2, "body", "Method prose remains searchable.", (10, 10, 200, 30), 0)
+        table_markdown = "| Method | Score |\n| --- | --- |\n" + "\n".join(
+            f"| model-{index} | {index} |" for index in range(12)
+        )
+        table = ParsedBlock(
+            2,
+            "table",
+            "Table 1. Main comparison",
+            (10, 40, 400, 300),
+            1,
+            metadata={
+                "label": "Table 1",
+                "caption": "Main comparison",
+                "markdown": table_markdown,
+            },
+        )
+        algorithm = ParsedBlock(
+            3,
+            "algorithm",
+            "Algorithm 1. Aggregate client updates\nInput: updates\nOutput: global model",
+            (10, 40, 400, 300),
+            0,
+            metadata={"label": "Algorithm 1", "caption": "Aggregate client updates"},
+        )
+        page2 = ParsedPage(2, "", "p2", 100, "test", "usable", (body, table))
+        page3 = ParsedPage(3, "", "p3", 100, "test", "usable", (algorithm,))
+        section = _section(
+            "method",
+            "2 Method",
+            "Method prose remains searchable.\n\nTable 1. Main comparison\n\n"
+            "Algorithm 1. Aggregate client updates\nInput: updates\nOutput: global model",
+            page_start=2,
+            page_end=3,
+            kind="method",
+        )
+        parsed = ParsedPaper(
+            full_text=section.text,
+            pages=(page2, page3),
+            sections=(section,),
+            metadata={},
+            manifest={"parser": {"name": "multimodal_aware_v3", "version": "3"}},
+            status="ready",
+            quality_score=1.0,
+        )
+
+        chunks = chunk_multimodal(parsed, max_chars=80, overlap_chars=0)
+
+        table_chunks = [chunk for chunk in chunks if "[TABLE Table 1]" in chunk.content]
+        algorithm_chunks = [chunk for chunk in chunks if "[ALGORITHM Algorithm 1]" in chunk.content]
+        self.assertEqual(len(table_chunks), 1)
+        self.assertIn("model-11", table_chunks[0].content)
+        self.assertGreater(len(table_chunks[0].content), 80)
+        self.assertEqual(table_chunks[0].page_start, 2)
+        self.assertEqual(table_chunks[0].section_id, "method")
+        self.assertEqual(len(algorithm_chunks), 1)
+        self.assertIn("Output: global model", algorithm_chunks[0].content)
+
     def test_display_formula_is_an_atomic_chunk_unit(self) -> None:
         formula = "$$\n" + r"w_i = \sum_{j=1}^{n} \zeta_j^i w_j^i" + "\n" + r"\tag{2}" + "\n$$"
         chunks = chunk_sections(
