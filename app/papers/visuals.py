@@ -245,13 +245,133 @@ def _caption_backed_table_crop(
     return _clip((column_x0, caption_bbox[1], column_x1, crop_bottom), page.rect)
 
 
-def _render_crop(page: Any, bbox: tuple[float, float, float, float], output: Path) -> None:
+def _trimmed_crop_bbox(
+    page: Any,
+    bbox: tuple[float, float, float, float],
+    *,
+    dpi: int = 200,
+) -> tuple[float, float, float, float]:
+    import fitz
+    from PIL import Image
+
+    matrix = fitz.Matrix(dpi / 72.0, dpi / 72.0)
+    pixmap = page.get_pixmap(matrix=matrix, clip=fitz.Rect(*bbox), alpha=False)
+    image: Image.Image = pixmap.pil_image().convert("L")
+    mask = image.point(lambda value: 255 if value < 248 else 0)
+    content = mask.getbbox()
+    if not content:
+        return bbox
+    padding = 12
+    left = max(0, content[0] - padding)
+    top = max(0, content[1] - padding)
+    right = min(image.width, content[2] + padding)
+    bottom = min(image.height, content[3] + padding)
+    scale = dpi / 72.0
+    trimmed = (
+        bbox[0] + left / scale,
+        bbox[1] + top / scale,
+        bbox[0] + right / scale,
+        bbox[1] + bottom / scale,
+    )
+    if trimmed[2] - trimmed[0] < 12 or trimmed[3] - trimmed[1] < 12:
+        return bbox
+    return trimmed
+
+
+def _render_crop(
+    page: Any,
+    bbox: tuple[float, float, float, float],
+    output: Path,
+) -> tuple[float, float, float, float]:
     import fitz
 
     output.parent.mkdir(parents=True, exist_ok=True)
+    bbox = _trimmed_crop_bbox(page, bbox)
     matrix = fitz.Matrix(200 / 72.0, 200 / 72.0)
     pixmap = page.get_pixmap(matrix=matrix, clip=fitz.Rect(*bbox), alpha=False)
     pixmap.save(str(output))
+    return bbox
+
+
+def render_source_crop(
+    page: Any,
+    bbox: tuple[float, float, float, float],
+    output: Path,
+) -> tuple[float, float, float, float]:
+    """Render a tightly trimmed source crop for parser debugging."""
+    return _render_crop(page, bbox, output)
+
+
+def _same_column(
+    page_rect: Any,
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> bool:
+    first_column = _caption_column(page_rect, first)
+    second_center = (second[0] + second[2]) / 2.0
+    return first_column[0] <= second_center <= first_column[1]
+
+
+def _figure_crop(
+    page: Any,
+    caption_index: int,
+    caption_bbox: tuple[float, float, float, float],
+    captions: Sequence[tuple[int, Any, tuple[str, str, str]]],
+    blocks: Sequence[Any],
+) -> tuple[float, float, float, float]:
+    column_x0, column_x1 = _caption_column(page.rect, caption_bbox)
+    previous_caption_bottoms = [
+        _rect_tuple(other.bbox)[3]
+        for other_index, other, _ in captions
+        if other_index != caption_index
+        and _rect_tuple(other.bbox)[1] < caption_bbox[1]
+        and _same_column(page.rect, caption_bbox, _rect_tuple(other.bbox))
+    ]
+    if previous_caption_bottoms:
+        # Keep a full inter-caption gutter so the previous caption cannot
+        # re-enter the raster trim for the next visual block.
+        top = max(previous_caption_bottoms) + 16.0
+    else:
+        previous_structure_bottoms = []
+        for index, block in enumerate(blocks):
+            if index == caption_index:
+                continue
+            block_bbox = _rect_tuple(block.bbox)
+            text = str(getattr(block, "text", "") or "").strip()
+            if block_bbox[3] >= caption_bbox[1] or not _same_column(
+                page.rect, caption_bbox, block_bbox
+            ):
+                continue
+            if len(text) >= 80 or float(getattr(block, "font_size", 0.0) or 0.0) >= 12.0:
+                previous_structure_bottoms.append(block_bbox[3])
+        page_top = float(page.rect.y0)
+        top = max(previous_structure_bottoms, default=page_top + 52.0) + 4.0
+        if caption_bbox[1] - top < 45.0:
+            top = max(page_top + 52.0, caption_bbox[1] - 240.0)
+    return (
+        max(float(page.rect.x0), column_x0),
+        max(float(page.rect.y0), top),
+        min(float(page.rect.x1), column_x1),
+        min(float(page.rect.y1), caption_bbox[3] + 8.0),
+    )
+
+
+def _looks_like_algorithm_prose(value: str) -> bool:
+    text = re.sub(r"\s+", " ", value or "").strip()
+    if not text:
+        return False
+    if re.match(
+        r"^(?:input|output|require|ensure|for|while|if|else|return|repeat|until|procedure)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return False
+    if re.match(r"^\d+\s+", text):
+        return False
+    words = re.findall(r"[A-Za-z]{2,}", text)
+    return bool(re.match(r"^[a-z]\)\s+[A-Z]", text)) or (
+        len(text) >= 90 and len(words) >= 12
+    )
 
 
 def extract_visual_candidates(
@@ -269,7 +389,6 @@ def extract_visual_candidates(
     if not captions:
         return []
 
-    visual_rects = _visual_rects(page)
     tables = _table_candidates(page)
     output: list[dict[str, Any]] = []
     for caption_index, caption_block, (kind, label, caption) in captions:
@@ -335,17 +454,24 @@ def extract_visual_candidates(
             member_rects = [caption_bbox]
             lines = []
             previous_bottom = caption_bbox[3]
+            column_x0, column_x1 = _caption_column(page.rect, caption_bbox)
             for index in range(caption_index + 1, len(blocks)):
                 candidate = blocks[index]
-                if caption_parts(str(getattr(candidate, "text", ""))):
-                    break
+                candidate_text = str(getattr(candidate, "text", "") or "").strip()
                 candidate_bbox = _rect_tuple(candidate.bbox)
+                candidate_center = (candidate_bbox[0] + candidate_bbox[2]) / 2.0
+                if not (column_x0 <= candidate_center <= column_x1):
+                    continue
+                if caption_parts(candidate_text):
+                    break
                 gap = candidate_bbox[1] - previous_bottom
                 if gap > 38 or candidate_bbox[1] > caption_bbox[1] + 240:
                     break
+                if lines and _looks_like_algorithm_prose(candidate_text):
+                    break
                 if candidate_bbox[1] >= caption_bbox[1] - 2:
                     member_rects.append(candidate_bbox)
-                    lines.append(str(candidate.text).strip())
+                    lines.append(candidate_text)
                     consumed.add(index)
                     previous_bottom = max(previous_bottom, candidate_bbox[3])
             bbox = _clip(_union(member_rects), page.rect)
@@ -356,26 +482,8 @@ def extract_visual_candidates(
             else:
                 quality_reasons.append("algorithm_body_unavailable")
         else:
-            nearby = [
-                rect for rect in visual_rects
-                if rect[3] <= caption_bbox[1] + 4 and caption_bbox[1] - rect[3] <= 260
-            ]
-            if nearby:
-                bbox = _clip(_union([*nearby, caption_bbox]), page.rect)
-                quality_status = "usable"
-            else:
-                previous_bottom = max(
-                    (
-                        _rect_tuple(block.bbox)[3]
-                        for block in blocks[:caption_index]
-                        if _rect_tuple(block.bbox)[3] < caption_bbox[1]
-                    ),
-                    default=max(0.0, caption_bbox[1] - 180.0),
-                )
-                if caption_bbox[1] - previous_bottom < 40:
-                    previous_bottom = max(0.0, caption_bbox[1] - 180.0)
-                bbox = _clip((caption_bbox[0], previous_bottom, caption_bbox[2], caption_bbox[3]), page.rect)
-                quality_reasons.append("visual_geometry_weak")
+            bbox = _figure_crop(page, caption_index, caption_bbox, captions, blocks)
+            quality_status = "usable"
 
         if bbox is None or bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
             quality_status = "rejected"
@@ -384,7 +492,7 @@ def extract_visual_candidates(
         else:
             asset_name = f"page_{page_number:03d}_{_safe_label(label)}.png"
             try:
-                _render_crop(page, bbox, asset_root / asset_name)
+                bbox = _render_crop(page, bbox, asset_root / asset_name)
             except Exception:
                 asset_name = ""
                 quality_status = "rejected"

@@ -71,6 +71,20 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("paper-visual-image", self.html)
         self.assertIn("暂无结构块，回退到解析全文", self.html)
 
+    def test_formula_debug_source_is_visible_even_when_katex_renders(self) -> None:
+        self.assertIn('class="paper-equation-debug"', self.html)
+        self.assertIn("paper-equation-source", self.html)
+        self.assertIn("function renderEquationBlock", self.html)
+        self.assertIn("paper-equation-crop", self.html)
+
+    def test_visual_debug_assets_are_loaded_eagerly(self) -> None:
+        self.assertIn('loading="eager"', self.html)
+        self.assertNotIn(
+            'class="paper-visual-image" src="${escapeHtml(asset)}" alt="${escapeHtml(label)}" loading="lazy"',
+            self.html,
+        )
+        self.assertIn(".paper-visual-card > .markdown-preview { min-width: 0; }", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

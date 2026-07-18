@@ -278,14 +278,33 @@ def _formula_fragment(block: ParsedBlock) -> bool:
     text = block.text.strip()
     if not text or len(text) > 180:
         return False
-    return contains_invalid_controls(text) or bool(
-        re.search(r"[=∑∏∼≈≤≥]|\\(?:sum|frac|min|max)", text)
+    if contains_invalid_controls(text) or re.search(
+        r"[=∑∏∇⊙·∗×‖∼≈≤≥<>]|\\(?:sum|frac|min|max|nabla)", text
+    ):
+        return True
+    tokens = text.split()
+    return bool(tokens) and len(tokens) <= 6 and all(
+        len(token) <= 8
+        and re.fullmatch(r"[A-Za-z0-9_{}()[\],.+*/\-α-ωΑ-Ω]+", token)
+        for token in tokens
     )
+
+
+def _same_formula_column(
+    candidate: ParsedBlock,
+    label: ParsedBlock,
+    page_width: float,
+) -> bool:
+    midpoint = page_width / 2.0
+    label_center = (label.bbox[0] + label.bbox[2]) / 2.0
+    candidate_center = (candidate.bbox[0] + candidate.bbox[2]) / 2.0
+    return (label_center < midpoint) == (candidate_center < midpoint)
 
 
 def _formula_aware_blocks(
     blocks: Sequence[ParsedBlock],
     fallback_page_text: str,
+    page_width: float = 612.0,
 ) -> tuple[tuple[ParsedBlock, ...], list[dict[str, Any]]]:
     """Merge numbered display-equation fragments and retain recovery provenance."""
     replacements: dict[int, tuple[ParsedBlock, dict[str, Any]]] = {}
@@ -301,7 +320,8 @@ def _formula_aware_blocks(
             for candidate_index, candidate in enumerate(blocks)
             if candidate_index not in consumed
             and candidate.page_number == block.page_number
-            and len(candidate.text.strip()) <= 180
+            and (candidate_index == index or _formula_fragment(candidate))
+            and _same_formula_column(candidate, block, page_width)
             and candidate.bbox[1] <= label_y1 + 4
             and candidate.bbox[3] >= label_y0 - 8
             and candidate.bbox[0] >= label_x0 - 180
@@ -331,6 +351,7 @@ def _formula_aware_blocks(
             bbox=bbox,
         )
         insertion_index = min(group_indices)
+        record = candidate.to_dict()
         equation_block = ParsedBlock(
             page_number=block.page_number,
             block_type="equation",
@@ -338,8 +359,8 @@ def _formula_aware_blocks(
             bbox=bbox,
             reading_order=insertion_index,
             font_size=max((part.font_size for part in group), default=block.font_size),
+            metadata=record,
         )
-        record = candidate.to_dict()
         replacements[insertion_index] = (equation_block, record)
         consumed.update(group_indices)
 
@@ -551,6 +572,7 @@ def _parse_layout_pdf(
         removed_margins: set[str] = set()
         for raw_page in raw_pages:
             body_blocks = _ordered_body_blocks(raw_page, repeated)
+            page_equations: list[dict[str, Any]] = []
             if formula_aware:
                 fallback_text = (
                     fallback_pages[raw_page.page_number - 1]
@@ -560,12 +582,44 @@ def _parse_layout_pdf(
                 body_blocks, page_equations = _formula_aware_blocks(
                     body_blocks,
                     fallback_text,
+                    raw_page.width,
                 )
-                equations.extend(page_equations)
             if visual_aware:
-                from app.papers.visuals import extract_visual_candidates
+                from app.papers.visuals import extract_visual_candidates, render_source_crop
 
                 source_page = document[raw_page.page_number - 1]
+                equation_records = {
+                    str(record.get("label", "")): record for record in page_equations
+                }
+                equation_blocks: list[ParsedBlock] = []
+                for equation_block in body_blocks:
+                    if equation_block.block_type != "equation":
+                        equation_blocks.append(equation_block)
+                        continue
+                    metadata = dict(equation_block.metadata)
+                    if metadata.get("confidence") != "high":
+                        label = str(metadata.get("label", "equation"))
+                        asset_name = (
+                            f"page_{raw_page.page_number:03d}_equation_{label}.png"
+                        )
+                        try:
+                            crop_bbox = render_source_crop(
+                                source_page,
+                                equation_block.bbox,
+                                asset_root / asset_name,
+                            )
+                            metadata.update(
+                                {
+                                    "asset_name": asset_name,
+                                    "source_bbox": list(crop_bbox),
+                                }
+                            )
+                            if label in equation_records:
+                                equation_records[label].update(metadata)
+                        except Exception:
+                            metadata["asset_name"] = ""
+                    equation_blocks.append(replace(equation_block, metadata=metadata))
+                body_blocks = tuple(equation_blocks)
                 candidates = extract_visual_candidates(
                     source_page,
                     raw_page.page_number,
@@ -598,6 +652,7 @@ def _parse_layout_pdf(
                         sorted(retained_blocks, key=lambda item: item.reading_order)
                     )
                 )
+            equations.extend(page_equations)
             retained = {id(block) for block in body_blocks}
             for block in raw_page.blocks:
                 if id(block) not in retained and _margin_key(block.text) in repeated:

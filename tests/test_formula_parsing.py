@@ -111,6 +111,28 @@ where x is the training data
         self.assertIn("x = 1", candidate.latex)
         self.assertNotIn("y = 2", candidate.latex)
 
+    def test_normalizes_common_unicode_math_operators_to_latex(self) -> None:
+        candidate = recover_formula(
+            raw_text="g = ∇L · x ⊙ y / ‖x‖ + ‖y‖ + a ∗ b × c → d (9)",
+            fallback_text="",
+            label="9",
+            page_number=5,
+            bbox=(1.0, 2.0, 3.0, 4.0),
+        )
+
+        for command in (
+            r"\nabla",
+            r"\cdot",
+            r"\odot",
+            r"\lVert",
+            r"\rVert",
+            r"\times",
+            r"\to",
+        ):
+            self.assertIn(command, candidate.latex)
+        for raw_symbol in ("∇", "·", "⊙", "‖", "∥", "∗", "×", "→"):
+            self.assertNotIn(raw_symbol, candidate.latex)
+
 
 if __name__ == "__main__":
     unittest.main()

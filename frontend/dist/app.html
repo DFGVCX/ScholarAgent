@@ -3515,6 +3515,20 @@
             font-family: var(--font-mono);
             font-size: .9rem;
         }
+        .paper-equation-debug {
+            display: grid;
+            gap: 6px;
+            margin-top: .75rem;
+            padding-top: .75rem;
+            border-top: 1px dashed #cbd7df;
+            color: var(--muted);
+            text-align: left;
+        }
+        .paper-equation-debug > span {
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
         .paper-structure-pages,
         .paper-visual-library {
             display: grid;
@@ -3546,12 +3560,18 @@
         }
         .paper-visual-card {
             display: grid;
+            min-width: 0;
             gap: 12px;
             padding: 16px;
             border: 1px solid #d8e2e8;
             border-left: 4px solid var(--accent-2);
             border-radius: 9px;
             background: #fbfcfd;
+        }
+        .paper-visual-card > .markdown-preview { min-width: 0; }
+        .paper-visual-card > .markdown-preview pre {
+            max-width: 100%;
+            overflow-x: auto;
         }
         .paper-visual-card[data-block-type="table"] { border-left-color: var(--amber); }
         .paper-visual-card[data-block-type="algorithm"] { border-left-color: var(--accent); }
@@ -3567,6 +3587,7 @@
         .paper-visual-image {
             display: block;
             width: min(100%, 980px);
+            height: auto;
             max-height: 720px;
             margin: 0 auto;
             object-fit: contain;
@@ -7546,9 +7567,10 @@
                 try {
                     if (window.katex) rendered = window.katex.renderToString(sourceFormula, { displayMode: true, throwOnError: false, strict: 'ignore' });
                 } catch (_) {}
+                const debugSource = `<div class="paper-equation-debug"><span>LaTeX source</span><pre class="paper-equation-source">${escapeHtml(sourceFormula)}</pre></div>`;
                 mathBlocks.push(rendered
-                    ? `<div class="paper-equation" data-math-source="${escapeHtml(sourceFormula)}">${rendered}</div>`
-                    : `<div class="paper-equation"><pre class="paper-equation-source">$$\n${escapeHtml(sourceFormula)}\n$$</pre></div>`);
+                    ? `<div class="paper-equation" data-math-source="${escapeHtml(sourceFormula)}">${rendered}${debugSource}</div>`
+                    : `<div class="paper-equation"><pre class="paper-equation-source">$$\n${escapeHtml(sourceFormula)}\n$$</pre>${debugSource}</div>`);
                 return `\n@@MATH_BLOCK_${index}@@\n`;
             });
             const source = mathSource.replace(/```([a-zA-Z0-9_+-]*)?\n?([\s\S]*?)```/g, (_, lang, code) => {
@@ -9205,7 +9227,7 @@
             const quality = metadata.quality_status || 'review';
             const asset = metadata.asset_name ? paperAssetUrl(item, metadata.asset_name) : '';
             const image = asset
-                ? `<img class="paper-visual-image" src="${escapeHtml(asset)}" alt="${escapeHtml(label)}" loading="lazy">`
+                ? `<img class="paper-visual-image" src="${escapeHtml(asset)}" alt="${escapeHtml(label)}" loading="eager">`
                 : '';
             const structured = markdown
                 ? `<div class="markdown-preview">${renderMarkdown(markdown)}</div>`
@@ -9223,6 +9245,21 @@
                 </article>
             `;
         }
+        function renderEquationBlock(item, block) {
+            const metadata = block.metadata || {};
+            const asset = metadata.asset_name ? paperAssetUrl(item, metadata.asset_name) : '';
+            const image = asset
+                ? `<img class="paper-visual-image paper-equation-crop" src="${escapeHtml(asset)}" alt="Equation ${escapeHtml(metadata.label || '')} source" loading="eager">`
+                : '';
+            const provenance = [metadata.confidence, metadata.recovery_source].filter(Boolean).join(' · ');
+            return `
+                <article class="paper-structure-body paper-equation-block" data-block-type="equation">
+                    ${image}
+                    <div class="markdown-preview">${renderMarkdown(block.text || metadata.markdown || '')}</div>
+                    ${provenance ? `<div class="subtle">${escapeHtml(provenance)}</div>` : ''}
+                </article>
+            `;
+        }
         function renderStructuredPaper(item, structure) {
             const pages = structure?.pages || [];
             const blocks = structureBlocks(structure);
@@ -9236,6 +9273,7 @@
                         <header><span>第 ${Number(page.page_number)} 页</span><span>${escapeHtml(page.extraction_method || structure.parser?.name || '')}</span></header>
                         ${pageBlocks.map((block) => {
                             if (['figure', 'table', 'algorithm'].includes(block.block_type)) return renderVisualBlock(item, block);
+                            if (block.block_type === 'equation') return renderEquationBlock(item, block);
                             return `<article class="paper-structure-body markdown-preview" data-block-type="${escapeHtml(block.block_type || 'body')}">${renderMarkdown(block.text || '')}</article>`;
                         }).join('')}
                     </section>

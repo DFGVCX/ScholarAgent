@@ -36,13 +36,18 @@ class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
             assets.mkdir()
             image = assets / "page_001_figure_1.png"
             image.write_bytes(b"png")
+            equation = assets / "page_001_equation_2.png"
+            equation.write_bytes(b"png")
             paper = {
                 "metadata": {"file_path": str(pdf)},
                 "parsing": {
                     "manifest": {
                         "visual_blocks": [
                             {"metadata": {"asset_name": "page_001_figure_1.png"}}
-                        ]
+                        ],
+                        "equations": [
+                            {"label": "2", "asset_name": "page_001_equation_2.png"}
+                        ],
                     }
                 },
             }
@@ -50,6 +55,10 @@ class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 _resolve_paper_asset(paper, "page_001_figure_1.png"),
                 image.resolve(),
+            )
+            self.assertEqual(
+                _resolve_paper_asset(paper, "page_001_equation_2.png"),
+                equation.resolve(),
             )
             with self.assertRaisesRegex(ValueError, "not referenced"):
                 _resolve_paper_asset(paper, "other.png")

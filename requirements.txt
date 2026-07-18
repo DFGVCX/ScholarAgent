@@ -3,8 +3,9 @@ uvicorn[standard]>=0.30
 pydantic>=2.7
 python-multipart>=0.0.9
 aiohttp>=3.9
-pypdf>=4.2
-PyMuPDF>=1.24,<2
+pypdf==6.11.0
+PyMuPDF==1.27.2.3
+Pillow>=10,<13
 mcp[cli]>=1.28,<2
 playwright>=1.52,<2
 cajCvtPdf==0.1.2

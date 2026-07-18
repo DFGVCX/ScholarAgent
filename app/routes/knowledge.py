@@ -146,6 +146,11 @@ def _resolve_paper_asset(paper: dict[str, Any], asset_name: str) -> Path:
         for block in manifest.get("visual_blocks", []) or []
         if isinstance(block, dict)
     }
+    allowed.update(
+        str(equation.get("asset_name") or "")
+        for equation in manifest.get("equations", []) or []
+        if isinstance(equation, dict)
+    )
     if asset_name not in allowed:
         raise ValueError("paper asset is not referenced by the current parse manifest")
     file_path = str((paper.get("metadata") or {}).get("file_path") or paper.get("file_path") or "")
@@ -229,7 +234,7 @@ async def save_knowledge(
     user = _current_user(x_api_key)
     paper = getattr(request, "model_dump", request.dict)()
     paper["paper_id"] = paper["paper_id"] or _stable_paper_id(paper["source"], paper["title"])
-    client = ScholarMCPClient()
+    client = ScholarMCPClient(timeout_seconds=300.0)
     result = await client.call_tool(
         "save_to_knowledge",
         {

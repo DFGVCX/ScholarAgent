@@ -9,6 +9,7 @@ import fitz
 
 from app.papers.parsing import (
     ParsedBlock,
+    _formula_aware_blocks,
     parse_pdf,
     parse_pdf_formula_aware,
     parse_pdf_legacy,
@@ -52,6 +53,29 @@ def _write_image_only_pdf(path: Path) -> Path:
 
 
 class StructuredPdfParsingTest(unittest.TestCase):
+    def test_formula_group_rejects_same_row_natural_language(self) -> None:
+        blocks = (
+            ParsedBlock(
+                1,
+                "body",
+                "The local gradient is normalized before transmission to the central server.",
+                (380.0, 410.0, 530.0, 429.0),
+                0,
+                10.0,
+            ),
+            ParsedBlock(1, "body", "g j i = ∇ L(w j i)", (420.0, 411.0, 535.0, 428.0), 1, 10.0),
+            ParsedBlock(1, "body", "(6)", (540.0, 411.0, 563.0, 428.0), 2, 10.0),
+        )
+
+        parsed, equations = _formula_aware_blocks(blocks, "")
+
+        equation = next(block for block in parsed if block.block_type == "equation")
+        self.assertNotIn("central server", equation.text)
+        self.assertNotIn("central server", equation.metadata["raw_text"])
+        self.assertEqual(equation.metadata["latex"], equations[0]["latex"])
+        self.assertIn("confidence", equation.metadata)
+        self.assertIn("recovery_source", equation.metadata)
+
     def test_formula_aware_parser_groups_and_recovers_numbered_equation(self) -> None:
         class FakePage:
             rect = SimpleNamespace(width=595, height=842)
@@ -124,6 +148,10 @@ The next paragraph explains the weights.
         self.assertEqual(parsed.manifest["equations"][0]["label"], "2")
         self.assertEqual(parsed.manifest["equations"][0]["page_number"], 1)
         self.assertIn("raw_text", parsed.manifest["equations"][0])
+        self.assertEqual(
+            equation_blocks[0].metadata["latex"],
+            parsed.manifest["equations"][0]["latex"],
+        )
 
     def test_removes_postgresql_incompatible_nul_characters(self) -> None:
         class FakeDocument:

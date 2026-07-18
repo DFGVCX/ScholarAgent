@@ -27,6 +27,24 @@ _GREEK_LATEX = {
     "φ": r"\phi",
     "ω": r"\omega",
 }
+_UNICODE_LATEX = {
+    "∑": r"\sum",
+    "∏": r"\prod",
+    "∼": r"\sim",
+    "≈": r"\approx",
+    "≤": r"\le",
+    "≥": r"\ge",
+    "∇": r"\nabla",
+    "⊙": r"\odot",
+    "·": r"\cdot",
+    "∗": r"\times",
+    "×": r"\times",
+    "→": r"\to",
+    "←": r"\leftarrow",
+    "↔": r"\leftrightarrow",
+    "∞": r"\infty",
+    "−": "-",
+}
 
 
 def contains_invalid_controls(value: str) -> bool:
@@ -149,9 +167,19 @@ def _objective_latex(value: str) -> str | None:
 
 def _conservative_latex(value: str) -> str:
     clean = re.sub(r"\s+", " ", value).strip()
-    clean = clean.replace("∑", r"\sum ").replace("∏", r"\prod ")
-    clean = clean.replace("∼", r"\sim ").replace("≈", r"\approx ")
-    clean = clean.replace("≤", r"\le ").replace("≥", r"\ge ")
+    clean = re.sub(
+        r"([‖∥])([^‖∥]+)[‖∥]",
+        lambda match: rf"\lVert {match.group(2).strip()} \rVert",
+        clean,
+    )
+    clean = re.sub(
+        r"\|\|\s*([^|]+?)\s*\|\|",
+        lambda match: rf"\lVert {match.group(1).strip()} \rVert",
+        clean,
+    )
+    clean = clean.replace("‖", r"\Vert ").replace("∥", r"\Vert ")
+    for symbol, command in _UNICODE_LATEX.items():
+        clean = clean.replace(symbol, command + " ")
     clean = re.sub(r"[˜~]\s*D\b", r"\\widetilde{D}", clean)
     for symbol, command in _GREEK_LATEX.items():
         clean = clean.replace(symbol, command + " ")

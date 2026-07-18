@@ -39,6 +39,43 @@ def _write_visual_pdf(path: Path) -> Path:
         page.insert_text((115, 445), "for each client update do", fontsize=10)
         page.insert_text((135, 470), "add the weighted update to the global model", fontsize=10)
         page.insert_text((115, 495), "Output: next global model", fontsize=10)
+        page.insert_text(
+            (95, 520),
+            "This long explanatory paragraph resumes the paper prose after the algorithm and must not be parsed as pseudocode.",
+            fontsize=10,
+        )
+        document.save(path)
+    finally:
+        document.close()
+    return path
+
+
+def _write_two_column_visual_pdf(path: Path) -> Path:
+    document = fitz.open()
+    try:
+        page = document.new_page(width=612, height=792)
+        page.insert_text((45, 28), "SHARED JOURNAL HEADER", fontsize=9)
+        page.draw_rect(fitz.Rect(45, 70, 285, 180), color=(0, 0, 0))
+        page.insert_text((110, 195), "Table I. Left-column comparison.", fontsize=9)
+        page.draw_rect(fitz.Rect(335, 85, 575, 205), color=(0.1, 0.3, 0.6), fill=(0.9, 0.95, 1.0))
+        page.insert_text((385, 222), "Fig. 1. Right-column architecture.", fontsize=9)
+        page.insert_text((45, 260), "The following searchable prose keeps the synthetic document usable for parsing tests.", fontsize=10)
+        document.save(path)
+    finally:
+        document.close()
+    return path
+
+
+def _write_stacked_figures_pdf(path: Path) -> Path:
+    document = fitz.open()
+    try:
+        page = document.new_page(width=612, height=792)
+        page.insert_text((45, 45), "Results", fontsize=14)
+        page.draw_rect(fitz.Rect(45, 85, 285, 175), color=(0.2, 0.2, 0.2), fill=(0.95, 0.95, 0.95))
+        page.insert_text((100, 190), "Fig. 3. Earlier result.", fontsize=9)
+        page.draw_rect(fitz.Rect(45, 230, 285, 330), color=(0.1, 0.3, 0.6), fill=(0.9, 0.95, 1.0))
+        page.insert_text((100, 345), "Fig. 4. Later result.", fontsize=9)
+        page.insert_text((45, 390), "A complete searchable explanation follows both figures in this synthetic paper page.", fontsize=10)
         document.save(path)
     finally:
         document.close()
@@ -163,6 +200,41 @@ class MultimodalPdfParsingTest(unittest.TestCase):
                 self.assertIn(typed[kind].metadata["quality_status"], {"usable", "review"})
             self.assertIn("visual_blocks", parsed.manifest)
             self.assertEqual(len(parsed.manifest["visual_blocks"]), 2)
+            algorithm = typed["algorithm"]
+            self.assertNotIn("resumes the paper prose", algorithm.text)
+            self.assertNotIn("resumes the paper prose", algorithm.metadata["markdown"])
+            self.assertLess(algorithm.bbox[3], 520.0)
+
+    def test_figure_crop_stays_in_caption_column_and_below_header(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = _write_two_column_visual_pdf(Path(tmp) / "columns.pdf")
+            parsed = parse_pdf_multimodal(path)
+
+        figure = next(
+            block
+            for page in parsed.pages
+            for block in page.blocks
+            if block.block_type == "figure"
+        )
+        self.assertGreaterEqual(figure.bbox[0], 300.0)
+        self.assertGreater(figure.bbox[1], 40.0)
+
+    def test_later_figure_crop_does_not_include_previous_figure(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = _write_stacked_figures_pdf(Path(tmp) / "stacked.pdf")
+            parsed = parse_pdf_multimodal(path)
+
+        figures = sorted(
+            (
+                block
+                for page in parsed.pages
+                for block in page.blocks
+                if block.block_type == "figure"
+            ),
+            key=lambda block: block.metadata["label"],
+        )
+        self.assertEqual(len(figures), 2)
+        self.assertGreater(figures[1].bbox[1], figures[0].bbox[3])
 
 
 if __name__ == "__main__":
