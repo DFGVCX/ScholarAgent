@@ -52,6 +52,12 @@ class ModelSettingsUiTests(unittest.TestCase):
         )
         self.assertNotIn("escapeHtml(item.snippet || '').slice(", self.html)
 
+    def test_rag_console_renders_chunk_section_and_page_provenance(self) -> None:
+        self.assertIn("ragChunkProvenance(item)", self.html)
+        self.assertIn("item.section_path || item.section_id", self.html)
+        self.assertIn("item.page_start", self.html)
+        self.assertIn("item.page_end", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
