@@ -52,6 +52,17 @@ class ModelSettingsUiTests(unittest.TestCase):
         )
         self.assertNotIn("escapeHtml(item.snippet || '').slice(", self.html)
 
+    def test_rag_console_explains_semantic_fallback(self) -> None:
+        self.assertIn("const warnings = data.warnings || [];", self.html)
+        self.assertIn("向量检索暂不可用，当前结果来自关键词与中英文学术术语兜底", self.html)
+
+    def test_runtime_config_cannot_save_before_successful_load(self) -> None:
+        self.assertIn(
+            'id="saveRuntimeConfigBtn" class="primary" type="button" disabled',
+            self.html,
+        )
+        self.assertIn("if (!state.runtimeConfig)", self.html)
+
     def test_rag_console_renders_chunk_section_and_page_provenance(self) -> None:
         self.assertIn("ragChunkProvenance(item)", self.html)
         self.assertIn("item.section_path || item.section_id", self.html)

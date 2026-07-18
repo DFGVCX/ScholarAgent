@@ -151,13 +151,32 @@ def read_runtime_config() -> dict[str, str]:
     try:
         from app.services import mysql_store
         all_settings = mysql_store.get_all_settings()
-        _RUNTIME_CONFIG_CACHE = {
+        loaded = {
             key: str(value) for key, value in all_settings.items()
             if key in CONFIG_KEYS and value is not None
         }
     except Exception:
-        _RUNTIME_CONFIG_CACHE = {}
+        # PostgreSQL may still be starting when the process first imports settings.
+        # Returning an empty bootstrap view is safe, but caching it would discard the
+        # saved runtime configuration for the lifetime of this worker.
+        return {}
+    if not loaded:
+        # Migrations or bootstrap data can still be settling even when the table
+        # already answers successfully. Retry later instead of freezing defaults.
+        return {}
+    _RUNTIME_CONFIG_CACHE = loaded
     return dict(_RUNTIME_CONFIG_CACHE)
+
+
+def _read_persisted_config() -> dict[str, str]:
+    """Read the authoritative runtime configuration without consulting the cache."""
+    from app.services import mysql_store
+
+    return {
+        key: str(value)
+        for key, value in mysql_store.get_all_settings().items()
+        if key in CONFIG_KEYS and value is not None
+    }
 
 
 def write_runtime_config(values: dict[str, Any]) -> dict[str, str]:
@@ -176,7 +195,10 @@ def write_runtime_config(values: dict[str, Any]) -> dict[str, str]:
 
 
 def update_runtime_config(values: dict[str, Any]) -> dict[str, str]:
-    current = read_runtime_config()
+    # A settings form can outlive a transient startup/database read failure. Always
+    # merge updates against PostgreSQL itself so a blank secret field cannot erase
+    # a key that was merely absent from the in-process cache.
+    current = _read_persisted_config()
     incoming = _sanitize_values(values, preserve_blank_secrets=True)
     merged = dict(current)
     for key, value in incoming.items():

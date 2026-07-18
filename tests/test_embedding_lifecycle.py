@@ -46,6 +46,18 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         sql, _ = session.calls[0]
         self.assertIn("c.chunk_index AS chunk_index", sql)
 
+    async def test_chinese_lexical_query_expands_academic_terms(self) -> None:
+        session = _Session([_Result()])
+        repository = PostgresRetrievalRepository(session)
+
+        await repository.lexical_candidates(
+            RetrievalRequest("tenant", "user", "联邦学习是什么")
+        )
+
+        sql, params = session.calls[0]
+        self.assertIn("c.content ILIKE :alias_pattern_0", sql)
+        self.assertEqual(params["alias_pattern_0"], "%federated learning%")
+
     async def test_vector_query_filters_by_ready_status_and_active_model(self) -> None:
         session = _Session([_Result(), _Result()])
         repository = PostgresRetrievalRepository(session)

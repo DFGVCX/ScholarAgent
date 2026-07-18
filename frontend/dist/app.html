@@ -7528,7 +7528,7 @@
                                 </div>
                             </div>
                             <div class="config-actions settings-action-bar">
-                                <button id="saveRuntimeConfigBtn" class="primary" type="button">保存运行配置</button>
+                                <button id="saveRuntimeConfigBtn" class="primary" type="button" disabled>保存运行配置</button>
                                 <button id="resetConfigFormBtn" class="plain" type="button">恢复表单</button>
                             </div>
                             <div id="runtimeConfigMeta" class="subtle"></div>
@@ -8167,6 +8167,7 @@
             if ($('runtimeConfigMeta')) {
                 $('runtimeConfigMeta').textContent = config?.path ? `配置存储：PostgreSQL / ${config.path}` : '配置存储：PostgreSQL';
             }
+            if ($('saveRuntimeConfigBtn')) $('saveRuntimeConfigBtn').disabled = !state.runtimeConfig;
             updateEmbeddingChangeWarning();
         }
         function renderEmbeddingStatus(embedding) {
@@ -8192,6 +8193,8 @@
         }
         async function loadRuntimeConfig() {
             if (!state.session) return;
+            state.runtimeConfig = null;
+            if ($('saveRuntimeConfigBtn')) $('saveRuntimeConfigBtn').disabled = true;
             try {
                 const data = await api('/settings/runtime');
                 populateRuntimeConfig(data.config);
@@ -8217,6 +8220,10 @@
             return values;
         }
         async function saveRuntimeConfig() {
+            if (!state.runtimeConfig) {
+                toast('运行配置尚未成功加载，请先重新加载配置。', 'bad');
+                return;
+            }
             try {
                 $('saveRuntimeConfigBtn').disabled = true;
                 const data = await api('/settings/runtime', {
@@ -8318,11 +8325,15 @@
             try {
                 const data = await api(`/knowledge/rag/search?query=${encodeURIComponent(query)}&limit=6`);
                 const items = data.items || [];
+                const warnings = data.warnings || [];
                 const summary = `<div class="subtle" style="margin-bottom:8px;">${escapeHtml(data.backend || '-')} / ${escapeHtml(data.retrieval_mode || '-')} · Top ${items.length} chunks</div>`;
+                const fallbackNotice = warnings.length
+                    ? '<div class="alert" style="margin-bottom:10px;">向量检索暂不可用，当前结果来自关键词与中英文学术术语兜底。请在模型配置中重新测试 Embedding。</div>'
+                    : '';
                 const results = items.length
                     ? `<table class="rag-verify-table"><thead><tr><th>Chunk</th><th>命中片段</th><th>来源论文</th><th>融合分</th><th>关键词排名</th><th>向量排名</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Chunk #${Number(item.chunk_index ?? 0)}</strong><div class="row-meta">${escapeHtml(item.chunk_id || '-')}</div></td><td><div class="rag-verify-snippet">${escapeHtml(item.snippet || '')}</div></td><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id || '-')}</div><div class="row-meta">${ragChunkProvenance(item)}</div></td><td>${Number(item.score || 0).toFixed(6)}</td><td>${item.lexical_rank ?? '-'}</td><td>${item.vector_rank ?? '-'}</td></tr>`).join('')}</tbody></table>`
                     : '<div class="subtle">查询成功，没有返回 chunk。</div>';
-                $('profileRagResult').innerHTML = summary + results;
+                $('profileRagResult').innerHTML = summary + fallbackNotice + results;
             } catch (error) {
                 $('profileRagResult').textContent = `检索失败：${error.message}`;
                 toast(error.message, 'bad');
