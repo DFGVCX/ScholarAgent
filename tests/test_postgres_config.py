@@ -23,8 +23,22 @@ class PostgreSQLConfigTest(unittest.TestCase):
         self.assertEqual(settings.rag_embedding_provider, "qwen")
         self.assertEqual(settings.rag_embedding_model, "Qwen3-Embedding-0.6B")
         self.assertEqual(settings.rag_embedding_dimensions, 1024)
+        self.assertEqual(settings.pdf_parse_strategy, "formula_aware_v2")
+        self.assertEqual(settings.rag_chunk_strategy, "formula_aware_v2")
+
+    def test_previous_parser_strategies_remain_selectable(self) -> None:
+        env = {
+            "SCHOLAR_DATABASE_URL": "postgresql+psycopg://u:p@db/scholar",
+            "SCHOLAR_PDF_PARSE_STRATEGY": "structure_aware_v1",
+            "SCHOLAR_RAG_CHUNK_STRATEGY": "legacy_fixed",
+        }
+        with patch.dict(os.environ, env, clear=False), patch(
+            "app.config.read_runtime_config", return_value={}
+        ):
+            settings = get_settings()
+
         self.assertEqual(settings.pdf_parse_strategy, "structure_aware_v1")
-        self.assertEqual(settings.rag_chunk_strategy, "structure_aware_v1")
+        self.assertEqual(settings.rag_chunk_strategy, "legacy_fixed")
 
     def test_database_url_must_be_postgresql(self) -> None:
         with patch.dict(

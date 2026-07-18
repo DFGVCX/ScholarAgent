@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from app.papers.chunking import ChunkDraft, chunk_sections, chunk_text
-from app.papers.parsing import ParsedPaper, parse_pdf, parse_pdf_legacy
+from app.papers.parsing import (
+    ParsedPaper,
+    parse_pdf,
+    parse_pdf_formula_aware,
+    parse_pdf_legacy,
+)
 
 
 @dataclass(frozen=True)
@@ -147,6 +152,9 @@ def _chunks_for_strategy(
     elif strategy == "structure_aware_v1":
         parsed = parse_pdf(path)
         chunks = chunk_sections(parsed.sections, chunk_size, chunk_overlap) if parsed.status == "ready" else []
+    elif strategy == "formula_aware_v2":
+        parsed = parse_pdf_formula_aware(path)
+        chunks = chunk_sections(parsed.sections, chunk_size, chunk_overlap) if parsed.status == "ready" else []
     else:
         raise ValueError(f"unsupported strategy: {strategy}")
     return parsed, chunks
@@ -274,7 +282,7 @@ async def compare_strategies(
     top_k: int = 10,
 ) -> dict[str, Any]:
     reports = []
-    for strategy in ("legacy_fixed", "structure_aware_v1"):
+    for strategy in ("legacy_fixed", "structure_aware_v1", "formula_aware_v2"):
         reports.append(
             await evaluate_strategy(
                 strategy=strategy,
@@ -286,7 +294,8 @@ async def compare_strategies(
                 top_k=top_k,
             )
         )
-    validate_fingerprints(reports[0], reports[1])
+    for report in reports[1:]:
+        validate_fingerprints(reports[0], report)
     return {
         "schema_version": 1,
         "embedding_model": embedding_client.model,

@@ -30,6 +30,28 @@ def _section(
 
 
 class PaperChunkingTest(unittest.TestCase):
+    def test_display_formula_is_an_atomic_chunk_unit(self) -> None:
+        formula = "$$\n" + r"w_i = \sum_{j=1}^{n} \zeta_j^i w_j^i" + "\n" + r"\tag{2}" + "\n$$"
+        chunks = chunk_sections(
+            (
+                _section(
+                    "method",
+                    "2 Method",
+                    "The server aggregates all client updates.\n\n"
+                    + formula
+                    + "\n\nThe weights are normalized before aggregation.",
+                    kind="method",
+                ),
+            ),
+            max_chars=45,
+            overlap_chars=0,
+        )
+
+        formula_chunks = [chunk for chunk in chunks if "\\sum" in chunk.content]
+        self.assertEqual(len(formula_chunks), 1)
+        self.assertEqual(formula_chunks[0].content.count("$$"), 2)
+        self.assertIn(r"\tag{2}", formula_chunks[0].content)
+
     def test_chunks_are_stable_nonempty_and_ordered(self) -> None:
         text = "First paragraph explains retrieval.\n\nSecond paragraph explains storage consistency."
         first = chunk_text(text, max_chars=45, overlap_chars=8)

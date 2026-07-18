@@ -8,9 +8,17 @@ from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
 
+from app.papers.formulas import (
+    contains_invalid_controls,
+    extract_numbered_formula,
+    recover_formula,
+)
+
 
 STRUCTURED_PARSER_NAME = "structure_aware_v1"
 STRUCTURED_PARSER_VERSION = "1"
+FORMULA_AWARE_PARSER_NAME = "formula_aware_v2"
+FORMULA_AWARE_PARSER_VERSION = "2"
 LEGACY_PARSER_NAME = "legacy_fixed"
 LEGACY_PARSER_VERSION = "1"
 
@@ -21,7 +29,7 @@ def _hash_text(value: str) -> str:
 
 def _sanitize_text(value: str) -> str:
     """Keep extracted text valid for PostgreSQL while preserving word boundaries."""
-    return (value or "").replace("\x00", " ")
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value or "")
 
 
 def _normalize_space(value: str) -> str:
@@ -249,6 +257,92 @@ def _ordered_body_blocks(page: _RawPage, repeated: set[str]) -> tuple[ParsedBloc
     return tuple(replace(block, reading_order=index) for index, block in enumerate(ordered))
 
 
+_NUMBERED_EQUATION_RE = re.compile(r"\((?P<label>\d{1,3})\)\s*[,.;:]?\s*$")
+
+
+def _pypdf_page_texts(path: Path) -> tuple[str, ...]:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(path))
+        return tuple(_sanitize_text(str(page.extract_text() or "")) for page in reader.pages)
+    except Exception:
+        return ()
+
+
+def _formula_fragment(block: ParsedBlock) -> bool:
+    text = block.text.strip()
+    if not text or len(text) > 180:
+        return False
+    return contains_invalid_controls(text) or bool(
+        re.search(r"[=∑∏∼≈≤≥]|\\(?:sum|frac|min|max)", text)
+    )
+
+
+def _formula_aware_blocks(
+    blocks: Sequence[ParsedBlock],
+    fallback_page_text: str,
+) -> tuple[tuple[ParsedBlock, ...], list[dict[str, Any]]]:
+    """Merge numbered display-equation fragments and retain recovery provenance."""
+    output: list[ParsedBlock] = []
+    equations: list[dict[str, Any]] = []
+    index = 0
+    while index < len(blocks):
+        block = blocks[index]
+        match = _NUMBERED_EQUATION_RE.search(block.text)
+        if not match or not (_formula_fragment(block) or "=" in block.text):
+            output.append(block)
+            index += 1
+            continue
+
+        start = index
+        while start > 0 and _formula_fragment(blocks[start - 1]):
+            previous = blocks[start - 1]
+            current = blocks[start]
+            vertical_gap = current.bbox[1] - previous.bbox[3]
+            same_column = abs(current.bbox[0] - previous.bbox[0]) <= 150
+            if vertical_gap > 28 or not same_column:
+                break
+            start -= 1
+
+        group = list(blocks[start : index + 1])
+        grouped_predecessors = index - start
+        if grouped_predecessors:
+            del output[-grouped_predecessors:]
+        raw_text = "\n".join(part.text for part in group)
+        label = match.group("label")
+        fallback = extract_numbered_formula(fallback_page_text, label)
+        bbox = (
+            min(part.bbox[0] for part in group),
+            min(part.bbox[1] for part in group),
+            max(part.bbox[2] for part in group),
+            max(part.bbox[3] for part in group),
+        )
+        candidate = recover_formula(
+            raw_text=raw_text,
+            fallback_text=fallback,
+            label=label,
+            page_number=block.page_number,
+            bbox=bbox,
+        )
+        equation_block = ParsedBlock(
+            page_number=block.page_number,
+            block_type="equation",
+            text=candidate.markdown,
+            bbox=bbox,
+            reading_order=len(output),
+            font_size=max((part.font_size for part in group), default=block.font_size),
+        )
+        output.append(equation_block)
+        equations.append(candidate.to_dict())
+        index += 1
+
+    return (
+        tuple(replace(block, reading_order=order) for order, block in enumerate(output)),
+        equations,
+    )
+
+
 def _heading_kind(block: ParsedBlock, median_font: float) -> str | None:
     value = _normalize_space(block.text)
     if not value or len(value) > 140:
@@ -407,15 +501,22 @@ def _failed(parser_name: str, parser_version: str, error: Exception | str) -> Pa
     )
 
 
-def parse_pdf(path: Path) -> ParsedPaper:
+def _parse_layout_pdf(
+    path: Path,
+    *,
+    parser_name: str,
+    parser_version: str,
+    formula_aware: bool,
+) -> ParsedPaper:
     try:
         import fitz
 
         document = fitz.open(path)
     except Exception as exc:
-        return _failed(STRUCTURED_PARSER_NAME, STRUCTURED_PARSER_VERSION, exc)
+        return _failed(parser_name, parser_version, exc)
 
     try:
+        fallback_pages = _pypdf_page_texts(path) if formula_aware else ()
         raw_pages = tuple(
             _RawPage(
                 page_number=index + 1,
@@ -427,9 +528,21 @@ def parse_pdf(path: Path) -> ParsedPaper:
         )
         repeated = _repeated_margin_keys(raw_pages)
         pages: list[ParsedPage] = []
+        equations: list[dict[str, Any]] = []
         removed_margins: set[str] = set()
         for raw_page in raw_pages:
             body_blocks = _ordered_body_blocks(raw_page, repeated)
+            if formula_aware:
+                fallback_text = (
+                    fallback_pages[raw_page.page_number - 1]
+                    if raw_page.page_number <= len(fallback_pages)
+                    else ""
+                )
+                body_blocks, page_equations = _formula_aware_blocks(
+                    body_blocks,
+                    fallback_text,
+                )
+                equations.extend(page_equations)
             retained = {id(block) for block in body_blocks}
             for block in raw_page.blocks:
                 if id(block) not in retained and _margin_key(block.text) in repeated:
@@ -442,7 +555,11 @@ def parse_pdf(path: Path) -> ParsedPaper:
                     text=page_text,
                     text_hash=_hash_text(page_text),
                     searchable_chars=searchable_chars,
-                    extraction_method="pymupdf_layout",
+                    extraction_method=(
+                        "pymupdf_layout+pypdf_formula_recovery"
+                        if formula_aware
+                        else "pymupdf_layout"
+                    ),
                     quality_status="usable" if searchable_chars >= 40 else "low_text",
                     blocks=body_blocks,
                 )
@@ -458,7 +575,7 @@ def parse_pdf(path: Path) -> ParsedPaper:
         quality_score = round(usable_ratio * min(1.0, total_chars / 1000.0), 6)
         metadata = _document_metadata(full_text, document.metadata or {})
         manifest = {
-            "parser": {"name": STRUCTURED_PARSER_NAME, "version": STRUCTURED_PARSER_VERSION},
+            "parser": {"name": parser_name, "version": parser_version},
             "coverage": {
                 "total_pages": len(document),
                 "pages_extracted": len(pages),
@@ -470,6 +587,8 @@ def parse_pdf(path: Path) -> ParsedPaper:
             "removed_repeated_margins": sorted(removed_margins),
             "captions": _captions(pages),
         }
+        if formula_aware:
+            manifest["equations"] = equations
         return ParsedPaper(
             full_text=full_text if status == "ready" else "",
             pages=tuple(pages),
@@ -481,9 +600,27 @@ def parse_pdf(path: Path) -> ParsedPaper:
             warnings=warnings,
         )
     except Exception as exc:
-        return _failed(STRUCTURED_PARSER_NAME, STRUCTURED_PARSER_VERSION, exc)
+        return _failed(parser_name, parser_version, exc)
     finally:
         document.close()
+
+
+def parse_pdf(path: Path) -> ParsedPaper:
+    return _parse_layout_pdf(
+        path,
+        parser_name=STRUCTURED_PARSER_NAME,
+        parser_version=STRUCTURED_PARSER_VERSION,
+        formula_aware=False,
+    )
+
+
+def parse_pdf_formula_aware(path: Path) -> ParsedPaper:
+    return _parse_layout_pdf(
+        path,
+        parser_name=FORMULA_AWARE_PARSER_NAME,
+        parser_version=FORMULA_AWARE_PARSER_VERSION,
+        formula_aware=True,
+    )
 
 
 def parse_pdf_legacy(path: Path) -> ParsedPaper:

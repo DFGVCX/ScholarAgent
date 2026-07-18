@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 import fitz
 
-from app.papers.parsing import ParsedBlock, parse_pdf, parse_pdf_legacy
+from app.papers.parsing import (
+    ParsedBlock,
+    parse_pdf,
+    parse_pdf_formula_aware,
+    parse_pdf_legacy,
+)
 
 
 def _write_text_pdf(path: Path, pages: list[list[str]]) -> Path:
@@ -47,6 +52,76 @@ def _write_image_only_pdf(path: Path) -> Path:
 
 
 class StructuredPdfParsingTest(unittest.TestCase):
+    def test_formula_aware_parser_groups_and_recovers_numbered_equation(self) -> None:
+        class FakePage:
+            rect = SimpleNamespace(width=595, height=842)
+
+        class FakeDocument:
+            metadata = {}
+
+            def __iter__(self):
+                return iter((FakePage(),))
+
+            def __len__(self) -> int:
+                return 1
+
+            def close(self) -> None:
+                pass
+
+        raw_blocks = (
+            ParsedBlock(
+                1,
+                "body",
+                "The server aggregates updates from clients using Eq. 2. This explanation "
+                "contains enough searchable prose for the parsed page quality threshold.",
+                (312.0, 347.1, 563.0, 405.6),
+                0,
+                11.0,
+            ),
+            ParsedBlock(1, "body", "wi =\n\x03n", (394.3, 406.4, 436.1, 427.3), 1, 11.0),
+            ParsedBlock(
+                1,
+                "body",
+                "j=1 ζ j\ni w j\ni, (2)",
+                (433.6, 412.9, 563.1, 431.8),
+                2,
+                11.0,
+            ),
+            ParsedBlock(
+                1,
+                "body",
+                "The next paragraph explains that the weights sum to one for aggregation.",
+                (312.0, 437.8, 563.0, 480.0),
+                3,
+                11.0,
+            ),
+        )
+        pypdf_text = """The server aggregates updates by Eq. 2,
+wi =
+∑ n
+j=1 ζj
+i w j
+i , (2)
+The next paragraph explains the weights.
+"""
+
+        with patch("fitz.open", return_value=FakeDocument()), patch(
+            "app.papers.parsing._page_blocks", return_value=raw_blocks
+        ), patch("app.papers.parsing._pypdf_page_texts", return_value=(pypdf_text,)):
+            parsed = parse_pdf_formula_aware(Path("formula.pdf"))
+
+        self.assertEqual(parsed.status, "ready")
+        self.assertEqual(parsed.manifest["parser"]["name"], "formula_aware_v2")
+        equation_blocks = [
+            block for block in parsed.pages[0].blocks if block.block_type == "equation"
+        ]
+        self.assertEqual(len(equation_blocks), 1)
+        self.assertIn(r"\sum_{j=1}^{n}", equation_blocks[0].text)
+        self.assertNotRegex(parsed.full_text, r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+        self.assertEqual(parsed.manifest["equations"][0]["label"], "2")
+        self.assertEqual(parsed.manifest["equations"][0]["page_number"], 1)
+        self.assertIn("raw_text", parsed.manifest["equations"][0])
+
     def test_removes_postgresql_incompatible_nul_characters(self) -> None:
         class FakeDocument:
             metadata = {}

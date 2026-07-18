@@ -148,7 +148,8 @@ def _section_units(text: str, max_chars: int) -> list[_TextUnit]:
             continue
         leading = len(match.group(0)) - len(match.group(0).lstrip())
         paragraph_start = match.start() + leading
-        if len(paragraph) <= max_chars:
+        display_math = paragraph.startswith("$$") and paragraph.endswith("$$")
+        if len(paragraph) <= max_chars or display_math:
             units.append(
                 _TextUnit(
                     paragraph,

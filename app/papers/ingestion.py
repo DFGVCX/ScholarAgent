@@ -12,6 +12,7 @@ from app.db.session import tenant_transaction
 from app.papers.chunking import chunk_sections, chunk_text
 from app.papers.models import PaperInput, PaperRecord
 from app.papers.parsing import (
+    FORMULA_AWARE_PARSER_NAME,
     LEGACY_PARSER_NAME,
     STRUCTURED_PARSER_NAME,
     ParsedBlock,
@@ -19,6 +20,7 @@ from app.papers.parsing import (
     ParsedPaper,
     ParsedSection,
     parse_pdf,
+    parse_pdf_formula_aware,
     parse_pdf_legacy,
 )
 from app.papers.repository import PaperRepository
@@ -73,7 +75,12 @@ class PaperIngestionService:
         if is_pdf and not manual_edit:
             parser = self.parser
             if parser is None:
-                parser = parse_pdf_legacy if settings.pdf_parse_strategy == LEGACY_PARSER_NAME else parse_pdf
+                if settings.pdf_parse_strategy == LEGACY_PARSER_NAME:
+                    parser = parse_pdf_legacy
+                elif settings.pdf_parse_strategy == FORMULA_AWARE_PARSER_NAME:
+                    parser = parse_pdf_formula_aware
+                else:
+                    parser = parse_pdf
             parsed = await asyncio.to_thread(parser, Path(str(paper.file_uri)))
             parser_info = dict(parsed.manifest.get("parser") or {})
             parser_name = str(parser_info.get("name") or settings.pdf_parse_strategy)
@@ -115,7 +122,7 @@ class PaperIngestionService:
                 chunk_strategy=settings.rag_chunk_strategy,
             )
 
-        if settings.rag_chunk_strategy == STRUCTURED_PARSER_NAME:
+        if settings.rag_chunk_strategy in {STRUCTURED_PARSER_NAME, FORMULA_AWARE_PARSER_NAME}:
             chunks = chunk_sections(parsed.sections, settings.rag_chunk_size, settings.rag_chunk_overlap)
         else:
             chunks = chunk_text(prepared.full_text, settings.rag_chunk_size, settings.rag_chunk_overlap)

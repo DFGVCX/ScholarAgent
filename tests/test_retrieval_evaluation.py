@@ -1,16 +1,45 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from app.evaluation.retrieval import (
+    _chunks_for_strategy,
     build_evaluation_report,
     fingerprint_records,
     ranking_metrics,
     validate_fingerprints,
 )
+from app.papers.parsing import ParsedPaper
 
 
 class RetrievalEvaluationTest(unittest.TestCase):
+    def test_formula_aware_strategy_is_available_for_comparison(self) -> None:
+        parsed = ParsedPaper(
+            full_text="",
+            pages=(),
+            sections=(),
+            metadata={},
+            manifest={"parser": {"name": "formula_aware_v2", "version": "2"}},
+            status="ready",
+            quality_score=1.0,
+        )
+        with patch(
+            "app.evaluation.retrieval.parse_pdf_formula_aware",
+            return_value=parsed,
+        ) as parser:
+            result, chunks = _chunks_for_strategy(
+                "formula_aware_v2",
+                {"path": str(Path("paper.pdf"))},
+                chunk_size=900,
+                chunk_overlap=120,
+            )
+
+        parser.assert_called_once()
+        self.assertIs(result, parsed)
+        self.assertEqual(chunks, [])
+
     def test_ranking_metrics_compute_recall_precision_mrr_and_ndcg(self) -> None:
         ranked = ["irrelevant", "relevant-a", "relevant-b"]
         relevant = {"relevant-a", "relevant-b"}

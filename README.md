@@ -2,7 +2,7 @@
 
 ## PDF chunking comparison
 
-ScholarAgent keeps both `legacy_fixed` (`pypdf` plus the original character/paragraph chunker) and `structure_aware_v1` (PyMuPDF page/section parsing plus hierarchical chunking). Compare them with the same Qwen embedding model and labeled queries:
+ScholarAgent keeps `legacy_fixed` (`pypdf` plus the original character/paragraph chunker), `structure_aware_v1` (PyMuPDF page/section parsing plus hierarchical chunking), and `formula_aware_v2` (layout parsing plus targeted pypdf formula recovery and equation-atomic chunking). Compare all three with the same Qwen embedding model and labeled queries:
 
 ```powershell
 python scripts/compare_chunk_strategies.py `
