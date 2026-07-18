@@ -97,7 +97,7 @@ def extract_numbered_formula(page_text: str, label: str) -> str:
 
 def _strip_label(value: str, label: str) -> str:
     return re.sub(
-        rf"\s*\({re.escape(str(label))}\)\s*[,.;:]?\s*$",
+        rf"\s*\({re.escape(str(label))}\)[\s\S]*$",
         "",
         value.strip(),
     ).rstrip(" ,")
@@ -158,6 +158,12 @@ def _conservative_latex(value: str) -> str:
     return re.sub(r"\s+", " ", clean).strip()
 
 
+def _formula_information_score(value: str) -> int:
+    compact = re.sub(r"\s+", "", value)
+    operator_count = len(re.findall(r"[=∑∏∼≈≤≥<>/⊙∥]", value))
+    return len(compact) + operator_count * 12 + (24 if "=" in value else 0)
+
+
 def recover_formula(
     *,
     raw_text: str,
@@ -168,14 +174,19 @@ def recover_formula(
 ) -> FormulaCandidate:
     raw = sanitize_formula_text(raw_text)
     fallback = sanitize_formula_text(fallback_text)
-    source_text = fallback if fallback else raw
-    without_label = _strip_label(source_text, label)
+    raw_without_label = _strip_label(raw, label)
+    fallback_without_label = _strip_label(fallback, label)
+    use_fallback = bool(fallback_without_label) and (
+        _formula_information_score(fallback_without_label)
+        >= _formula_information_score(raw_without_label)
+    )
+    without_label = fallback_without_label if use_fallback else raw_without_label
     latex = _weighted_sum_latex(without_label) or _objective_latex(without_label)
     specialized = latex is not None
     if latex is None:
         latex = _conservative_latex(without_label)
-    source = "pypdf_page_text" if fallback else "pymupdf"
-    confidence = "high" if fallback and specialized else "medium"
+    source = "pypdf_page_text" if use_fallback else "pymupdf"
+    confidence = "high" if use_fallback and specialized else "medium"
     markdown = f"$$\n{latex}\n\\tag{{{label}}}\n$$"
     return FormulaCandidate(
         label=str(label),

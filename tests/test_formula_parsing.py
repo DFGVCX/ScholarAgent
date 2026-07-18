@@ -86,6 +86,31 @@ where x is the training data
         self.assertNotIn("\x00", candidate.markdown)
         self.assertEqual(candidate.markdown.count("$$"), 2)
 
+    def test_worse_pypdf_fragment_does_not_replace_more_complete_layout_text(self) -> None:
+        candidate = recover_formula(
+            raw_text="g j\ni = g j\ni / ||g j\ni||, (6)",
+            fallback_text="i, (6)",
+            label="6",
+            page_number=7,
+            bbox=(1.0, 2.0, 3.0, 4.0),
+        )
+
+        self.assertEqual(candidate.recovery_source, "pymupdf")
+        self.assertIn("=", candidate.latex)
+        self.assertGreater(len(candidate.latex), 10)
+
+    def test_layout_text_after_equation_label_is_not_absorbed(self) -> None:
+        candidate = recover_formula(
+            raw_text="x = 1 (3)\ny = 2 starts the next line",
+            fallback_text="",
+            label="3",
+            page_number=5,
+            bbox=(1.0, 2.0, 3.0, 4.0),
+        )
+
+        self.assertIn("x = 1", candidate.latex)
+        self.assertNotIn("y = 2", candidate.latex)
+
 
 if __name__ == "__main__":
     unittest.main()

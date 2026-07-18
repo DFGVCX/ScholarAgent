@@ -299,7 +299,7 @@ def _formula_aware_blocks(
             and candidate.page_number == block.page_number
             and len(candidate.text.strip()) <= 180
             and candidate.bbox[1] <= label_y1 + 4
-            and candidate.bbox[3] >= label_y0 - 12
+            and candidate.bbox[3] >= label_y0 - 8
             and candidate.bbox[0] >= label_x0 - 180
             and candidate.bbox[2] <= label_x1 + 24
         ]
