@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 
 import fitz
@@ -11,7 +12,12 @@ from app.papers.parsing import (
     ParsedBlock,
     parse_pdf_multimodal,
 )
-from app.papers.visuals import caption_kind, rows_to_markdown
+from app.papers.visuals import (
+    _table_candidates,
+    _table_matches_caption,
+    caption_kind,
+    rows_to_markdown,
+)
 
 
 def _write_visual_pdf(path: Path) -> Path:
@@ -43,9 +49,70 @@ class MultimodalPdfParsingTest(unittest.TestCase):
     def test_classifies_visual_caption_labels(self) -> None:
         self.assertEqual(caption_kind("Figure 2. System overview"), "figure")
         self.assertEqual(caption_kind("Table 3: Main results"), "table")
+        self.assertEqual(caption_kind("TABLE IV. Computation overhead"), "table")
+        self.assertEqual(caption_kind("TABLE I"), "table")
         self.assertEqual(caption_kind("Algorithm 1 Aggregate updates"), "algorithm")
         self.assertEqual(caption_kind("Scheme 4. Training procedure"), "figure")
         self.assertIsNone(caption_kind("Table 2 shows the results in prose."))
+
+    def test_table_detection_falls_back_to_text_alignment(self) -> None:
+        table = SimpleNamespace(
+            bbox=(10.0, 20.0, 300.0, 180.0),
+            extract=lambda: [["Method", "Score"], ["PBFL", "86.1"]],
+        )
+
+        class FakePage:
+            rect = SimpleNamespace(x0=0.0, y0=0.0, x1=595.0, y1=842.0)
+
+            def __init__(self) -> None:
+                self.calls = []
+
+            def find_tables(self, **kwargs):
+                self.calls.append(kwargs)
+                return SimpleNamespace(tables=[] if not kwargs else [table])
+
+        page = FakePage()
+        candidates = _table_candidates(page)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["rows"][1][0], "PBFL")
+        self.assertEqual(
+            page.calls,
+            [{}, {"vertical_strategy": "text", "horizontal_strategy": "text"}],
+        )
+
+    def test_table_detection_rejects_page_wide_text_grid(self) -> None:
+        table = SimpleNamespace(
+            bbox=(0.0, 0.0, 595.0, 842.0),
+            extract=lambda: [["whole", "page"]],
+        )
+
+        class FakePage:
+            rect = SimpleNamespace(x0=0.0, y0=0.0, x1=595.0, y1=842.0)
+
+            def find_tables(self, **kwargs):
+                return SimpleNamespace(tables=[] if not kwargs else [table])
+
+        self.assertEqual(_table_candidates(FakePage()), [])
+
+    def test_table_candidate_must_share_the_caption_column(self) -> None:
+        page_rect = SimpleNamespace(x0=0.0, y0=0.0, x1=612.0, y1=792.0)
+        left_caption = (150.0, 58.0, 190.0, 67.0)
+
+        self.assertFalse(
+            _table_matches_caption(
+                page_rect,
+                {"bbox": (228.0, 0.0, 596.0, 303.0)},
+                left_caption,
+            )
+        )
+        self.assertTrue(
+            _table_matches_caption(
+                page_rect,
+                {"bbox": (49.0, 98.0, 299.0, 207.0)},
+                left_caption,
+            )
+        )
 
     def test_converts_extracted_cells_to_renderable_markdown(self) -> None:
         markdown = rows_to_markdown(

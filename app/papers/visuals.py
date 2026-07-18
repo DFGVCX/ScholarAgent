@@ -6,9 +6,8 @@ from typing import Any, Mapping, Sequence
 
 
 _CAPTION_RE = re.compile(
-    r"^(?P<label>(?:fig(?:ure)?|table|algorithm|scheme)\.?\s+[A-Z]?\d+[a-z]?)"
-    r"(?P<separator>\s*[.:：—-]\s*|\s+)"
-    r"(?P<caption>.+)$",
+    r"^(?P<label>(?:fig(?:ure)?|table|algorithm|scheme)\.?\s+(?:[A-Z]?\d+[a-z]?|[IVXLCDM]+))"
+    r"(?:(?P<separator>\s*[.:：—-]\s*|\s+)(?P<caption>.+))?$",
     re.IGNORECASE,
 )
 _INLINE_REFERENCE_STARTS = {
@@ -33,8 +32,8 @@ def caption_parts(value: str) -> tuple[str, str, str] | None:
     if not match:
         return None
     label = re.sub(r"\s+", " ", match.group("label")).strip().rstrip(".")
-    caption = re.sub(r"\s+", " ", match.group("caption")).strip()
-    separator = match.group("separator")
+    caption = re.sub(r"\s+", " ", match.group("caption") or "").strip()
+    separator = match.group("separator") or ""
     first_word_match = re.match(r"([A-Za-z]+)", caption)
     first_word = first_word_match.group(1).lower() if first_word_match else ""
     if separator.isspace() and first_word in _INLINE_REFERENCE_STARTS:
@@ -122,18 +121,128 @@ def _visual_rects(page: Any) -> list[tuple[float, float, float, float]]:
 
 
 def _table_candidates(page: Any) -> list[dict[str, Any]]:
+    finders: list[tuple[Any, bool]] = []
     try:
-        finder = page.find_tables()
+        default_finder = page.find_tables()
+        finders.append((default_finder, False))
+        if not (getattr(default_finder, "tables", []) or []):
+            finders.append(
+                (
+                    page.find_tables(vertical_strategy="text", horizontal_strategy="text"),
+                    True,
+                )
+            )
     except Exception:
-        return []
+        pass
     candidates: list[dict[str, Any]] = []
-    for table in getattr(finder, "tables", []) or []:
-        try:
-            rows = table.extract() or []
-            candidates.append({"bbox": _rect_tuple(table.bbox), "rows": rows})
-        except Exception:
-            continue
+    page_width = max(float(page.rect.x1) - float(page.rect.x0), 1.0)
+    page_height = max(float(page.rect.y1) - float(page.rect.y0), 1.0)
+    page_area = page_width * page_height
+    for finder, is_text_fallback in finders:
+        for table in getattr(finder, "tables", []) or []:
+            try:
+                bbox = _rect_tuple(table.bbox)
+                area_ratio = max(bbox[2] - bbox[0], 0.0) * max(bbox[3] - bbox[1], 0.0) / page_area
+                if is_text_fallback and area_ratio > 0.65:
+                    continue
+                rows = table.extract() or []
+                candidates.append({"bbox": bbox, "rows": rows})
+            except Exception:
+                continue
+        if candidates:
+            break
     return candidates
+
+
+def _caption_column(
+    page_rect: Any,
+    caption_bbox: tuple[float, float, float, float],
+) -> tuple[float, float]:
+    page_x0 = float(page_rect.x0)
+    page_x1 = float(page_rect.x1)
+    midpoint = (page_x0 + page_x1) / 2.0
+    page_width = max(page_x1 - page_x0, 1.0)
+    if caption_bbox[2] - caption_bbox[0] >= page_width * 0.55:
+        return page_x0, page_x1
+    if (caption_bbox[0] + caption_bbox[2]) / 2.0 < midpoint:
+        return page_x0, midpoint
+    return midpoint, page_x1
+
+
+def _table_matches_caption(
+    page_rect: Any,
+    table: Mapping[str, Any],
+    caption_bbox: tuple[float, float, float, float],
+) -> bool:
+    """Reject plausible-looking tables that actually belong to another column."""
+    bbox = _rect_tuple(table["bbox"])
+    column_x0, column_x1 = _caption_column(page_rect, caption_bbox)
+    page_width = max(float(page_rect.x1) - float(page_rect.x0), 1.0)
+    caption_is_full_width = column_x1 - column_x0 >= page_width * 0.9
+    if caption_is_full_width:
+        return True
+    table_center = (bbox[0] + bbox[2]) / 2.0
+    return column_x0 <= table_center <= column_x1 and bbox[2] - bbox[0] <= page_width * 0.6
+
+
+def _table_rule_crop(
+    page: Any,
+    caption_bbox: tuple[float, float, float, float],
+    maximum_bottom: float,
+) -> tuple[float, float, float, float] | None:
+    """Infer an original-table crop from long horizontal rules without inventing cells."""
+    column_x0, column_x1 = _caption_column(page.rect, caption_bbox)
+    column_width = max(column_x1 - column_x0, 1.0)
+    rules = []
+    try:
+        drawing_rects = [
+            _rect_tuple(drawing["rect"])
+            for drawing in page.get_drawings()
+            if drawing.get("rect") is not None
+        ]
+    except Exception:
+        drawing_rects = []
+    for rect in drawing_rects:
+        center_x = (rect[0] + rect[2]) / 2.0
+        width = rect[2] - rect[0]
+        if not (column_x0 <= center_x <= column_x1):
+            continue
+        if width < column_width * 0.45:
+            continue
+        if rect[1] < caption_bbox[3] or rect[3] > maximum_bottom:
+            continue
+        rules.append(rect)
+    if len(rules) < 2:
+        return None
+    return _clip(_union([caption_bbox, *rules]), page.rect)
+
+
+def _caption_backed_table_crop(
+    page: Any,
+    caption_bbox: tuple[float, float, float, float],
+    blocks: Sequence[Any],
+    consumed: set[int],
+) -> tuple[float, float, float, float]:
+    """Keep a debuggable table image when cell geometry cannot be recovered safely."""
+    page_x0 = float(page.rect.x0)
+    page_x1 = float(page.rect.x1)
+    page_y1 = float(page.rect.y1)
+    column_x0, column_x1 = _caption_column(page.rect, caption_bbox)
+
+    crop_bottom = min(page_y1, caption_bbox[1] + 260.0)
+    for index, block in enumerate(blocks):
+        if index in consumed:
+            continue
+        block_bbox = _rect_tuple(block.bbox)
+        horizontal_overlap = min(column_x1, block_bbox[2]) - max(column_x0, block_bbox[0])
+        if horizontal_overlap <= 0 or block_bbox[1] < caption_bbox[3] + 45.0:
+            continue
+        text = str(getattr(block, "text", "") or "").strip()
+        if len(text) >= 60 or caption_parts(text):
+            crop_bottom = min(crop_bottom, block_bbox[1] - 4.0)
+            break
+    crop_bottom = max(crop_bottom, caption_bbox[3] + 80.0)
+    return _clip((column_x0, caption_bbox[1], column_x1, crop_bottom), page.rect)
 
 
 def _render_crop(page: Any, bbox: tuple[float, float, float, float], output: Path) -> None:
@@ -172,9 +281,22 @@ def extract_visual_candidates(
         quality_reasons: list[str] = []
         bbox: tuple[float, float, float, float] | None = None
 
-        if kind == "table" and tables:
+        if not caption and caption_index + 1 < len(blocks):
+            continuation = blocks[caption_index + 1]
+            continuation_bbox = _rect_tuple(continuation.bbox)
+            gap = continuation_bbox[1] - caption_bbox[3]
+            continuation_text = str(getattr(continuation, "text", "") or "").strip()
+            if continuation_text and not caption_parts(continuation_text) and -3 <= gap <= 28:
+                caption = re.sub(r"\s+", " ", continuation_text).strip()
+                source_text = f"{label}. {caption}".strip()
+                consumed.add(caption_index + 1)
+
+        matching_tables = [
+            item for item in tables if _table_matches_caption(page.rect, item, caption_bbox)
+        ]
+        if kind == "table" and matching_tables:
             nearest = min(
-                tables,
+                matching_tables,
                 key=lambda item: min(
                     abs(item["bbox"][1] - caption_bbox[3]),
                     abs(caption_bbox[1] - item["bbox"][3]),
@@ -189,6 +311,26 @@ def extract_visual_candidates(
                 block_bbox = _rect_tuple(block.bbox)
                 if block_bbox[1] >= nearest["bbox"][1] - 2 and block_bbox[3] <= nearest["bbox"][3] + 2:
                     consumed.add(index)
+        elif kind == "table":
+            column_x0, column_x1 = _caption_column(page.rect, caption_bbox)
+            later_caption_tops = [
+                _rect_tuple(other_block.bbox)[1]
+                for other_index, other_block, _ in captions
+                if other_index != caption_index
+                and _rect_tuple(other_block.bbox)[1] > caption_bbox[1]
+                and column_x0
+                <= (_rect_tuple(other_block.bbox)[0] + _rect_tuple(other_block.bbox)[2]) / 2.0
+                <= column_x1
+            ]
+            maximum_bottom = min(
+                [caption_bbox[1] + 260.0, *later_caption_tops]
+            )
+            bbox = _table_rule_crop(
+                page,
+                caption_bbox,
+                maximum_bottom,
+            ) or _caption_backed_table_crop(page, caption_bbox, blocks, consumed)
+            quality_reasons.append("table_cells_unavailable")
         elif kind == "algorithm":
             member_rects = [caption_bbox]
             lines = []
