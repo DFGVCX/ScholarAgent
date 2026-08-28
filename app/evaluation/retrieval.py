@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import csv
 import hashlib
+import io
 import json
 import math
 from pathlib import Path
+import re
 from typing import Any, Iterable, Mapping, Sequence
+import unicodedata
 
 from app.papers.chunking import ChunkDraft, chunk_multimodal, chunk_sections, chunk_text
 from app.papers.parsing import (
@@ -53,6 +57,45 @@ def ranking_metrics(
     return RankingMetrics(recall, precision, reciprocal_rank, dcg / idcg if idcg else 0.0)
 
 
+def evidence_ranking_metrics(
+    ranked: Sequence[Mapping[str, Any]],
+    evidence_ids: set[str],
+    *,
+    k: int,
+) -> RankingMetrics:
+    """Score retrieval against strategy-independent evidence labels."""
+    limit = max(1, int(k))
+    limited = list(ranked[:limit])
+    if not evidence_ids:
+        return RankingMetrics(0.0, 0.0, 0.0, 0.0)
+
+    matched_rows = [
+        {str(item) for item in row.get("matched_evidence_ids") or []} & evidence_ids
+        for row in limited
+    ]
+    covered = set().union(*matched_rows) if matched_rows else set()
+    recall = len(covered) / len(evidence_ids)
+    precision = sum(bool(items) for items in matched_rows) / max(1, len(limited))
+    reciprocal_rank = next(
+        (
+            1.0 / rank
+            for rank, row in enumerate(ranked, start=1)
+            if {str(item) for item in row.get("matched_evidence_ids") or []} & evidence_ids
+        ),
+        0.0,
+    )
+
+    seen: set[str] = set()
+    dcg = 0.0
+    for rank, matches in enumerate(matched_rows, start=1):
+        novel = matches - seen
+        seen.update(matches)
+        dcg += (2 ** len(novel) - 1) / math.log2(rank + 1)
+    ideal_count = min(len(evidence_ids), limit)
+    idcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_count + 1))
+    return RankingMetrics(recall, precision, reciprocal_rank, dcg / idcg if idcg else 0.0)
+
+
 def fingerprint_records(records: Iterable[Mapping[str, Any]]) -> str:
     canonical = sorted(
         json.dumps(dict(record), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -85,7 +128,10 @@ def build_evaluation_report(
 ) -> dict[str, Any]:
     normalized_k = tuple(sorted({max(1, int(value)) for value in k_values}))
     queries = [dict(result) for result in query_results]
-    labeled = bool(queries) and all(result.get("relevant_ids") is not None for result in queries)
+    labeled = bool(queries) and all(
+        result.get("evidence_ids") is not None or result.get("relevant_ids") is not None
+        for result in queries
+    )
     report: dict[str, Any] = {
         "strategy": strategy,
         "parser_version": parser_version,
@@ -103,17 +149,28 @@ def build_evaluation_report(
     for result in queries:
         ranked_ids = [str(item["chunk_id"]) for item in result.get("ranked", [])]
         relevant_ids = {str(item) for item in result.get("relevant_ids") or []}
+        evidence_ids = {str(item) for item in result.get("evidence_ids") or []}
         gains = {str(key): float(value) for key, value in dict(result.get("gains") or {}).items()}
         result_metrics: dict[str, float] = {}
         for value in normalized_k:
-            metrics = ranking_metrics(ranked_ids, relevant_ids, k=value, gains=gains or None)
+            metrics = (
+                evidence_ranking_metrics(result.get("ranked", []), evidence_ids, k=value)
+                if "evidence_ids" in result
+                else ranking_metrics(ranked_ids, relevant_ids, k=value, gains=gains or None)
+            )
             metric_rows[value].append(metrics)
             result_metrics[f"recall@{value}"] = metrics.recall
             result_metrics[f"precision@{value}"] = metrics.precision
             result_metrics[f"ndcg@{value}"] = metrics.ndcg
-        result_metrics["mrr"] = ranking_metrics(
-            ranked_ids, relevant_ids, k=max(len(ranked_ids), 1), gains=gains or None
-        ).reciprocal_rank
+        result_metrics["mrr"] = (
+            evidence_ranking_metrics(
+                result.get("ranked", []), evidence_ids, k=max(len(ranked_ids), 1)
+            ).reciprocal_rank
+            if "evidence_ids" in result
+            else ranking_metrics(
+                ranked_ids, relevant_ids, k=max(len(ranked_ids), 1), gains=gains or None
+            ).reciprocal_rank
+        )
         result["metrics"] = result_metrics
 
     count = len(queries)
@@ -137,6 +194,105 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"{path}:{line_number} must contain a JSON object")
         records.append(value)
     return records
+
+
+def validate_corpus_files(corpus: Sequence[Mapping[str, Any]]) -> None:
+    for paper in corpus:
+        paper_id = str(paper.get("paper_id") or "unknown")
+        path = Path(str(paper.get("path") or "")).expanduser().resolve()
+        if not path.is_file():
+            raise ValueError(f"corpus PDF is missing for {paper_id}: {path}")
+        expected = str(paper.get("sha256") or "").strip().lower()
+        if not expected:
+            continue
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        actual = digest.hexdigest()
+        if actual != expected:
+            raise ValueError(
+                f"corpus PDF SHA-256 mismatch for {paper_id}: expected {expected}, received {actual}"
+            )
+
+
+def comparison_rows(comparison: Mapping[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for report in comparison.get("reports") or []:
+        corpus = dict(report.get("corpus") or {})
+        metrics = dict(report.get("metrics") or {})
+        rows.append(
+            {
+                "strategy": report.get("strategy", ""),
+                "paper_count": corpus.get("paper_count", 0),
+                "chunk_count": corpus.get("chunk_count", 0),
+                "average_chunk_chars": round(float(corpus.get("average_chunk_chars", 0.0)), 2),
+                "parse_failures": len(corpus.get("parse_failures") or []),
+                **{key: round(float(value), 6) for key, value in metrics.items()},
+            }
+        )
+    return rows
+
+
+def _summary_columns(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    base = ["strategy", "paper_count", "chunk_count", "average_chunk_chars", "parse_failures"]
+    available = {key for row in rows for key in row if key not in base}
+
+    def metric_key(value: str) -> tuple[int, int]:
+        if value == "mrr":
+            return (3, 0)
+        family, _, suffix = value.partition("@")
+        family_order = {"recall": 0, "precision": 1, "ndcg": 2}.get(family, 4)
+        return (int(suffix or 0) * 10 + family_order, family_order)
+
+    return base + sorted(available, key=metric_key)
+
+
+def render_comparison_csv(comparison: Mapping[str, Any]) -> str:
+    rows = comparison_rows(comparison)
+    output = io.StringIO(newline="")
+    columns = _summary_columns(rows)
+    writer = csv.DictWriter(output, fieldnames=columns, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue()
+
+
+def render_comparison_markdown(comparison: Mapping[str, Any]) -> str:
+    rows = comparison_rows(comparison)
+    columns = _summary_columns(rows)
+    labels = {
+        "strategy": "策略",
+        "paper_count": "论文数",
+        "chunk_count": "Chunk 数",
+        "average_chunk_chars": "平均字符",
+        "parse_failures": "解析失败",
+        "mrr": "MRR",
+    }
+    header = [labels.get(column, column.replace("@", "@").title()) for column in columns]
+    lines = [
+        "# 四种论文解析与切片策略检索评测",
+        "",
+        f"Embedding 模型：`{comparison.get('embedding_model') or '-'}`",
+        "",
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join("---" for _ in columns) + " |",
+    ]
+    for row in rows:
+        values = []
+        for column in columns:
+            value = row.get(column, "")
+            values.append(f"{value:.6f}" if isinstance(value, float) and column in {"mrr"} | {key for key in columns if "@" in key} else str(value))
+        lines.append("| " + " | ".join(values) + " |")
+    lines.extend(
+        [
+            "",
+            "Recall 以人工证据单元覆盖率计算；Precision 以 Top-K 中命中任一人工证据的 Chunk 比例计算。",
+            "重复命中同一证据不会重复增加 Recall。完整逐查询排名和失败案例见同名 JSON 报告。",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _chunks_for_strategy(
@@ -174,6 +330,12 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
 def _label_matches(chunk: Mapping[str, Any], label: Mapping[str, Any]) -> bool:
     if label.get("paper_id") and chunk.get("paper_id") != label.get("paper_id"):
         return False
+    evidence_terms = [
+        _normalize_evidence_text(item) for item in label.get("evidence_terms") or [] if str(item).strip()
+    ]
+    if evidence_terms:
+        content = _normalize_evidence_text(chunk.get("content") or "")
+        return all(term in content for term in evidence_terms)
     section_ids = {str(item) for item in label.get("section_ids") or []}
     if section_ids and chunk.get("section_id") not in section_ids:
         return False
@@ -186,6 +348,12 @@ def _label_matches(chunk: Mapping[str, Any], label: Mapping[str, Any]) -> bool:
         if not any(int(start) <= int(high) and int(end) >= int(low) for low, high in page_ranges):
             return False
     return True
+
+
+def _normalize_evidence_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).lower().replace("\u00ad", "")
+    text = re.sub(r"(?<=\w)-\s+(?=\w)", "", text)
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", " ", text).strip()
 
 
 async def evaluate_strategy(
@@ -234,23 +402,44 @@ async def evaluate_strategy(
             chunk_records,
             key=lambda record: (-_cosine(query_vector, record["vector"]), record["chunk_id"]),
         )[: max(1, top_k)]
-        ranked = [
-            {key: value for key, value in record.items() if key not in {"vector", "embedding_text"}}
-            | {"score": _cosine(query_vector, record["vector"])}
-            for record in ranked_records
-        ]
         relevant_value = query.get("relevant")
         if relevant_value is None:
-            relevant_ids = None
+            evidence_labels = None
         else:
-            labels = relevant_value if isinstance(relevant_value, list) else [relevant_value]
-            relevant_ids = [
-                record["chunk_id"]
-                for record in chunk_records
-                if any(_label_matches(record, label) for label in labels)
-            ]
+            raw_labels = relevant_value if isinstance(relevant_value, list) else [relevant_value]
+            evidence_labels = []
+            for index, raw_label in enumerate(raw_labels, start=1):
+                label = dict(raw_label)
+                label["evidence_id"] = str(
+                    label.get("evidence_id") or f"{query.get('query_id') or query['query']}:e{index}"
+                )
+                evidence_labels.append(label)
+        ranked = []
+        for record in ranked_records:
+            row = {
+                key: value
+                for key, value in record.items()
+                if key not in {"vector", "embedding_text"}
+            } | {"score": _cosine(query_vector, record["vector"])}
+            if evidence_labels is not None:
+                row["matched_evidence_ids"] = [
+                    str(label["evidence_id"])
+                    for label in evidence_labels
+                    if _label_matches(record, label)
+                ]
+            ranked.append(row)
         query_results.append(
-            {"query": str(query["query"]), "ranked": ranked, "relevant_ids": relevant_ids}
+            {
+                "query_id": query.get("query_id"),
+                "query": str(query["query"]),
+                "ranked": ranked,
+                "evidence_ids": (
+                    [str(label["evidence_id"]) for label in evidence_labels]
+                    if evidence_labels is not None
+                    else None
+                ),
+                "evidence_labels": evidence_labels,
+            }
         )
 
     report = build_evaluation_report(

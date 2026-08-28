@@ -14,7 +14,7 @@ class PostgreSQLHealthTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["database"]["engine"], "postgresql")
         self.assertTrue(data["database"]["pgvector"])
-        self.assertEqual(data["retrieval"]["embedding_model"], "Qwen3-Embedding-0.6B")
+        self.assertEqual(data["retrieval"]["embedding_model"], "qwen3.7-text-embedding")
 
 
 if __name__ == "__main__":

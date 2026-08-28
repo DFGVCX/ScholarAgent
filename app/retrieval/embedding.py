@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Sequence
 import math
 from typing import Any
@@ -17,8 +18,12 @@ class EmbeddingResponseError(EmbeddingUnavailable):
     """The embedding service returned vectors that violate the storage contract."""
 
 
+class _RetryableEmbeddingError(RuntimeError):
+    pass
+
+
 class QwenEmbeddingClient:
-    MODEL = "Qwen3-Embedding-0.6B"
+    MODEL = "qwen3.7-text-embedding"
     DIMENSIONS = 1024
     MAX_BATCH_SIZE = 20
 
@@ -31,6 +36,9 @@ class QwenEmbeddingClient:
         dimensions: int = DIMENSIONS,
         timeout_seconds: float = 30.0,
         session_factory: Callable[..., Any] = aiohttp.ClientSession,
+        max_retries: int = 3,
+        retry_base_seconds: float = 0.5,
+        sleep_func: Callable[[float], Any] = asyncio.sleep,
     ) -> None:
         if not base_url.strip():
             raise ValueError("Qwen embedding base_url is required")
@@ -44,6 +52,9 @@ class QwenEmbeddingClient:
         self.dimensions = dimensions
         self.timeout_seconds = timeout_seconds
         self.session_factory = session_factory
+        self.max_retries = max(0, int(max_retries))
+        self.retry_base_seconds = max(0.0, float(retry_base_seconds))
+        self.sleep_func = sleep_func
 
     @classmethod
     def from_settings(cls) -> "QwenEmbeddingClient":
@@ -76,17 +87,30 @@ class QwenEmbeddingClient:
                         "input": batch,
                         "dimensions": self.dimensions,
                     }
-                    async with session.post(
-                        f"{self.base_url}/v1/embeddings", json=payload, headers=headers
-                    ) as response:
-                        data = await response.json()
-                        if response.status >= 400:
-                            raise EmbeddingUnavailable(
-                                f"Qwen embedding returned HTTP {response.status}: {data}"
+                    for attempt in range(self.max_retries + 1):
+                        try:
+                            async with session.post(
+                                f"{self.base_url}/v1/embeddings", json=payload, headers=headers
+                            ) as response:
+                                data = await response.json()
+                                if response.status == 429 or response.status >= 500:
+                                    raise _RetryableEmbeddingError(
+                                        f"Qwen embedding returned HTTP {response.status}: {data}"
+                                    )
+                                if response.status >= 400:
+                                    raise EmbeddingUnavailable(
+                                        f"Qwen embedding returned HTTP {response.status}: {data}"
+                                    )
+                            vectors.extend(
+                                self._validate_and_normalize(data, expected_count=len(batch))
                             )
-                    vectors.extend(
-                        self._validate_and_normalize(data, expected_count=len(batch))
-                    )
+                            break
+                        except (_RetryableEmbeddingError, aiohttp.ClientError, TimeoutError, OSError) as exc:
+                            if attempt >= self.max_retries:
+                                raise EmbeddingUnavailable(
+                                    f"Qwen embedding request failed after {attempt + 1} attempts: {exc}"
+                                ) from exc
+                            await self.sleep_func(self.retry_base_seconds * (2**attempt))
         except EmbeddingUnavailable:
             raise
         except (aiohttp.ClientError, TimeoutError, OSError) as exc:

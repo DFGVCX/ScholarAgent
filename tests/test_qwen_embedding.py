@@ -56,7 +56,81 @@ class _BatchSession:
         )
 
 
+class _TimeoutResponse(_Response):
+    async def json(self):
+        raise TimeoutError("slow response")
+
+
+class _SequenceSession:
+    def __init__(self, responses) -> None:
+        self.responses = list(responses)
+        self.requests = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    def post(self, url, *, json, headers):
+        response = self.responses[self.requests]
+        self.requests += 1
+        return response
+
+
 class QwenEmbeddingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_timeout_retries_the_same_batch_without_losing_order(self) -> None:
+        vector = [1.0] + [0.0] * 1023
+        session = _SequenceSession(
+            [
+                _TimeoutResponse({}),
+                _Response({"data": [{"index": 0, "embedding": vector}]}),
+            ]
+        )
+        delays = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            api_key="secret",
+            session_factory=lambda **_: session,
+            sleep_func=no_wait,
+        )
+
+        vectors = await client.embed(["first"])
+
+        self.assertEqual(len(vectors), 1)
+        self.assertEqual(session.requests, 2)
+        self.assertEqual(delays, [0.5])
+
+    async def test_rate_limit_retries_after_backoff(self) -> None:
+        vector = [1.0] + [0.0] * 1023
+        session = _SequenceSession(
+            [
+                _Response({"error": {"message": "rate limited"}}, status=429),
+                _Response({"data": [{"index": 0, "embedding": vector}]}),
+            ]
+        )
+        delays = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            api_key="secret",
+            session_factory=lambda **_: session,
+            sleep_func=no_wait,
+        )
+
+        vectors = await client.embed(["first"])
+
+        self.assertEqual(len(vectors), 1)
+        self.assertEqual(session.requests, 2)
+        self.assertEqual(delays, [0.5])
+
     async def test_more_than_twenty_inputs_are_batched_in_order(self) -> None:
         session = _BatchSession()
         client = QwenEmbeddingClient(
@@ -115,7 +189,7 @@ class QwenEmbeddingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(vectors[0]), 1024)
         self.assertTrue(math.isclose(sum(x * x for x in vectors[0]), 1.0))
         self.assertEqual(session.request[0], "https://embedding.example/compatible-mode/v1/embeddings")
-        self.assertEqual(session.request[1]["model"], "Qwen3-Embedding-0.6B")
+        self.assertEqual(session.request[1]["model"], "qwen3.7-text-embedding")
         self.assertEqual(session.request[1]["dimensions"], 1024)
 
     async def test_wrong_dimension_is_rejected(self) -> None:

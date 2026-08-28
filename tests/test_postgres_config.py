@@ -21,7 +21,7 @@ class PostgreSQLConfigTest(unittest.TestCase):
 
         self.assertEqual(settings.database_url, env["SCHOLAR_DATABASE_URL"])
         self.assertEqual(settings.rag_embedding_provider, "qwen")
-        self.assertEqual(settings.rag_embedding_model, "Qwen3-Embedding-0.6B")
+        self.assertEqual(settings.rag_embedding_model, "qwen3.7-text-embedding")
         self.assertEqual(settings.rag_embedding_dimensions, 1024)
         self.assertEqual(settings.pdf_parse_strategy, "multimodal_aware_v3")
         self.assertEqual(settings.rag_chunk_strategy, "multimodal_aware_v3")

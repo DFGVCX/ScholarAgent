@@ -26,7 +26,7 @@ async def health() -> dict[str, object]:
         },
         "retrieval": {
             "backend": "pgvector",
-            "embedding_model": "Qwen3-Embedding-0.6B",
+            "embedding_model": "qwen3.7-text-embedding",
             "embedding_dimensions": 1024,
         },
     }

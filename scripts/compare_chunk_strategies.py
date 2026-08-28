@@ -12,7 +12,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.config import get_settings
-from app.evaluation.retrieval import compare_strategies, load_jsonl
+from app.evaluation.retrieval import (
+    compare_strategies,
+    load_jsonl,
+    render_comparison_csv,
+    render_comparison_markdown,
+    validate_corpus_files,
+)
 from app.retrieval.embedding import QwenEmbeddingClient
 
 
@@ -29,9 +35,12 @@ def _arguments() -> argparse.Namespace:
 
 async def _run(args: argparse.Namespace) -> None:
     settings = get_settings()
+    corpus = load_jsonl(args.corpus_jsonl)
+    queries = load_jsonl(args.queries_jsonl)
+    validate_corpus_files(corpus)
     report = await compare_strategies(
-        corpus=load_jsonl(args.corpus_jsonl),
-        queries=load_jsonl(args.queries_jsonl),
+        corpus=corpus,
+        queries=queries,
         embedding_client=QwenEmbeddingClient.from_settings(),
         chunk_size=args.chunk_size or settings.rag_chunk_size,
         chunk_overlap=(args.chunk_overlap if args.chunk_overlap is not None else settings.rag_chunk_overlap),
@@ -39,6 +48,8 @@ async def _run(args: argparse.Namespace) -> None:
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.with_suffix(".csv").write_text(render_comparison_csv(report), encoding="utf-8-sig")
+    args.output.with_suffix(".md").write_text(render_comparison_markdown(report), encoding="utf-8")
 
 
 if __name__ == "__main__":

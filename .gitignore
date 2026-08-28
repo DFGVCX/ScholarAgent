@@ -55,3 +55,7 @@ tests/e2e/node_modules/
 tests/e2e/.auth/
 playwright-report/
 test-results/
+
+# Local retrieval-evaluation PDFs (manifests and reports remain versioned)
+evaluation/corpus/pdfs/*.pdf
+evaluation/corpus/pdfs/*_assets/

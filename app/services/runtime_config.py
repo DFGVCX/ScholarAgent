@@ -127,7 +127,7 @@ DEFAULT_VALUES: dict[str, str] = {
     "SCHOLAR_RAG_RETRIEVAL_MODE": "hybrid_rrf",
     "SCHOLAR_RAG_EMBEDDING_PROVIDER": "qwen",
     "SCHOLAR_RAG_EMBEDDING_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode",
-    "SCHOLAR_RAG_EMBEDDING_MODEL": "Qwen3-Embedding-0.6B",
+    "SCHOLAR_RAG_EMBEDDING_MODEL": "qwen3.7-text-embedding",
     "SCHOLAR_RAG_EMBEDDING_DIMENSIONS": "1024",
     "SCHOLAR_RAG_CHUNK_SIZE": "900",
     "SCHOLAR_RAG_CHUNK_OVERLAP": "120",

@@ -30,7 +30,7 @@ class Settings:
     rag_embedding_provider: str = "qwen"
     rag_embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
     rag_embedding_api_key: str = ""
-    rag_embedding_model: str = "Qwen3-Embedding-0.6B"
+    rag_embedding_model: str = "qwen3.7-text-embedding"
     rag_embedding_dimensions: int = 1024
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 120
@@ -144,7 +144,7 @@ def get_settings() -> Settings:
         ).strip(),
         rag_embedding_api_key=_setting_value(overrides, "SCHOLAR_RAG_EMBEDDING_API_KEY", "").strip(),
         rag_embedding_model=_setting_value(
-            overrides, "SCHOLAR_RAG_EMBEDDING_MODEL", "Qwen3-Embedding-0.6B"
+            overrides, "SCHOLAR_RAG_EMBEDDING_MODEL", "qwen3.7-text-embedding"
         ).strip(),
         rag_embedding_dimensions=_setting_int(overrides, "SCHOLAR_RAG_EMBEDDING_DIMENSIONS", 1024),
         rag_chunk_size=max(200, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_SIZE", 900)),

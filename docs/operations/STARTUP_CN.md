@@ -212,7 +212,7 @@ $env:SCHOLAR_RAG_RETRIEVAL_MODE="hybrid_rrf"
 $env:SCHOLAR_RAG_EMBEDDING_PROVIDER="qwen"
 $env:SCHOLAR_RAG_EMBEDDING_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode"
 $env:SCHOLAR_RAG_EMBEDDING_API_KEY="你的embedding密钥"
-$env:SCHOLAR_RAG_EMBEDDING_MODEL="Qwen3-Embedding-0.6B"
+$env:SCHOLAR_RAG_EMBEDDING_MODEL="qwen3.7-text-embedding"
 $env:SCHOLAR_RAG_EMBEDDING_DIMENSIONS="1024"
 ```
 

@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.evaluation.retrieval import (
+    _label_matches,
     _chunks_for_strategy,
     build_evaluation_report,
+    comparison_rows,
+    evidence_ranking_metrics,
     fingerprint_records,
     ranking_metrics,
+    render_comparison_csv,
+    render_comparison_markdown,
+    validate_corpus_files,
     validate_fingerprints,
 )
 from app.papers.parsing import ParsedPaper
@@ -85,6 +92,36 @@ class RetrievalEvaluationTest(unittest.TestCase):
         self.assertEqual(metrics.reciprocal_rank, 0.0)
         self.assertEqual(metrics.ndcg, 0.0)
 
+    def test_evidence_recall_counts_unique_labels_not_matching_chunks(self) -> None:
+        metrics = evidence_ranking_metrics(
+            [
+                {"chunk_id": "chunk-a", "matched_evidence_ids": ["evidence-1"]},
+                {"chunk_id": "chunk-b", "matched_evidence_ids": ["evidence-1"]},
+            ],
+            {"evidence-1", "evidence-2"},
+            k=2,
+        )
+
+        self.assertEqual(metrics.recall, 0.5)
+        self.assertEqual(metrics.precision, 1.0)
+        self.assertEqual(metrics.reciprocal_rank, 1.0)
+        self.assertLess(metrics.ndcg, 1.0)
+
+    def test_evidence_terms_match_legacy_chunks_without_page_metadata(self) -> None:
+        chunk = {
+            "paper_id": "paper-fedavg",
+            "content": "The server performs federated averaging of local model updates.",
+            "page_start": None,
+            "page_end": None,
+        }
+        label = {
+            "paper_id": "paper-fedavg",
+            "page_ranges": [[3, 4]],
+            "evidence_terms": ["federated averaging", "local model updates"],
+        }
+
+        self.assertTrue(_label_matches(chunk, label))
+
     def test_unlabeled_report_is_diagnostic_only(self) -> None:
         report = build_evaluation_report(
             strategy="legacy_fixed",
@@ -130,6 +167,30 @@ class RetrievalEvaluationTest(unittest.TestCase):
         self.assertEqual(report["metrics"]["recall@2"], 1.0)
         self.assertEqual(report["metrics"]["mrr"], 0.5)
 
+    def test_report_prefers_evidence_coverage_over_strategy_chunk_ids(self) -> None:
+        report = build_evaluation_report(
+            strategy="legacy_fixed",
+            parser_version="1",
+            chunker_version="1",
+            embedding_model="Qwen3-Embedding-0.6B",
+            corpus_fingerprint="corpus",
+            query_fingerprint="queries",
+            query_results=[
+                {
+                    "query": "联邦平均如何聚合客户端更新？",
+                    "ranked": [
+                        {"chunk_id": "a", "matched_evidence_ids": ["evidence-1"]},
+                        {"chunk_id": "b", "matched_evidence_ids": ["evidence-1"]},
+                    ],
+                    "evidence_ids": ["evidence-1", "evidence-2"],
+                }
+            ],
+            k_values=(1, 2),
+        )
+
+        self.assertEqual(report["metrics"]["recall@2"], 0.5)
+        self.assertEqual(report["metrics"]["precision@2"], 1.0)
+
     def test_fingerprints_are_order_stable_and_mismatches_are_rejected(self) -> None:
         left = fingerprint_records([{"paper_id": "b"}, {"paper_id": "a"}])
         right = fingerprint_records([{"paper_id": "a"}, {"paper_id": "b"}])
@@ -140,6 +201,42 @@ class RetrievalEvaluationTest(unittest.TestCase):
                 {"corpus_fingerprint": "one", "query_fingerprint": "same", "embedding_model": "qwen"},
                 {"corpus_fingerprint": "two", "query_fingerprint": "same", "embedding_model": "qwen"},
             )
+
+    def test_corpus_validation_rejects_a_pdf_with_the_wrong_hash(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.pdf"
+            path.write_bytes(b"abc")
+            corpus = [{"paper_id": "paper-1", "path": str(path), "sha256": "wrong"}]
+
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch.*paper-1"):
+                validate_corpus_files(corpus)
+
+    def test_comparison_summary_exports_metrics_and_corpus_diagnostics(self) -> None:
+        comparison = {
+            "embedding_model": "Qwen3-Embedding-0.6B",
+            "reports": [
+                {
+                    "strategy": "legacy_fixed",
+                    "metrics": {"recall@5": 0.5, "precision@5": 0.2, "mrr": 0.75},
+                    "corpus": {
+                        "paper_count": 7,
+                        "chunk_count": 396,
+                        "average_chunk_chars": 812.5,
+                        "parse_failures": [],
+                    },
+                }
+            ],
+        }
+
+        rows = comparison_rows(comparison)
+        csv_text = render_comparison_csv(comparison)
+        markdown = render_comparison_markdown(comparison)
+
+        self.assertEqual(rows[0]["recall@5"], 0.5)
+        self.assertEqual(rows[0]["chunk_count"], 396)
+        self.assertIn("strategy,paper_count,chunk_count", csv_text)
+        self.assertIn("legacy_fixed", markdown)
+        self.assertIn("Recall@5", markdown)
 
 
 if __name__ == "__main__":
