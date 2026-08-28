@@ -1,2 +1,4 @@
 -r requirements-base.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.10.0+cpu
 docling==2.123.0

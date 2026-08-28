@@ -14,6 +14,8 @@ class PdfDependencyPinsTest(unittest.TestCase):
         self.assertIn("pypdf==6.11.0", base_requirements)
         self.assertIn("PyMuPDF==1.27.2.3", base_requirements)
         self.assertIn("docling==2.123.0", requirements)
+        self.assertIn("--extra-index-url https://download.pytorch.org/whl/cpu", requirements)
+        self.assertRegex(requirements, r"(?m)^torch==[^\s]+\+cpu$")
 
     def test_docling_model_cache_is_persistent_for_ingestion_services(self) -> None:
         compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
