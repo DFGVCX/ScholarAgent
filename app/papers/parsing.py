@@ -96,6 +96,9 @@ class ParsedSection:
     char_start: int
     char_end: int
     text_hash: str
+    parent_section_id: str | None = None
+    section_path: str | None = None
+    heading_level: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +113,9 @@ class ParsedSection:
             "char_end": self.char_end,
             "char_count": len(self.text),
             "text_hash": self.text_hash,
+            "parent_section_id": self.parent_section_id,
+            "section_path": self.section_path or self.title,
+            "heading_level": self.heading_level,
         }
 
 
@@ -748,6 +754,14 @@ def parse_pdf_multimodal(path: Path) -> ParsedPaper:
     )
 
 
+def _sanitize_fallback_reason(value: object) -> str:
+    detail = _sanitize_text(str(value or "Docling failed"))
+    detail = re.sub(r"(?i)(?:[a-z]:\\|/)(?:[^\s:]+[/\\])+[^\s:]+", "<path>", detail)
+    detail = re.sub(r"(?i)(?:sk-|api[_-]?key[=: ]+)[a-z0-9._-]{4,}", "<secret>", detail)
+    detail = re.sub(r"\s+", " ", detail).strip()
+    return detail[:500]
+
+
 def parse_pdf_hierarchical(path: Path) -> ParsedPaper:
     """Use Docling first and retain the proven v3 parser as a safe fallback."""
     from app.papers.docling_adapter import parse_docling_pdf
@@ -756,20 +770,23 @@ def parse_pdf_hierarchical(path: Path) -> ParsedPaper:
         parsed = parse_docling_pdf(path)
         if parsed.status == "ready":
             return parsed
-        reason = "; ".join(parsed.warnings) or parsed.status
+        reason = _sanitize_fallback_reason("; ".join(parsed.warnings) or parsed.status)
     except SystemExit as exc:
-        reason = f"Docling exited with status {exc.code}"
+        reason = _sanitize_fallback_reason(f"Docling exited with status {exc.code}")
     except Exception as exc:
-        reason = str(exc) or exc.__class__.__name__
+        reason = _sanitize_fallback_reason(str(exc) or exc.__class__.__name__)
 
     fallback = parse_pdf_multimodal(path)
     manifest = {
         **dict(fallback.manifest),
         "parser": {
-            "name": HIERARCHICAL_PARSER_NAME,
-            "version": HIERARCHICAL_PARSER_VERSION,
+            "name": MULTIMODAL_PARSER_NAME,
+            "version": MULTIMODAL_PARSER_VERSION,
             "engine": "pymupdf_multimodal",
         },
+        "requested_parser": HIERARCHICAL_PARSER_NAME,
+        "actual_parser": MULTIMODAL_PARSER_NAME,
+        "fallback_reason": reason,
         "fallback": {
             "from": "docling",
             "to": MULTIMODAL_PARSER_NAME,
@@ -779,7 +796,7 @@ def parse_pdf_hierarchical(path: Path) -> ParsedPaper:
     return replace(
         fallback,
         manifest=manifest,
-        warnings=tuple(dict.fromkeys((*fallback.warnings, "docling_fallback"))),
+        warnings=tuple(dict.fromkeys((*fallback.warnings, "parser_fallback"))),
     )
 
 

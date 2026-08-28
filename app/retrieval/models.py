@@ -77,6 +77,8 @@ class LocalHit:
         value = asdict(self)
         value["authors"] = list(self.authors)
         value["source_block_ids"] = list(self.source_block_ids)
+        metadata = self.chunk_metadata or {}
+        value["provenance"] = metadata.get("provenance", metadata)
         if isinstance(self.published_at, datetime):
             value["published_at"] = self.published_at.isoformat()
         return value

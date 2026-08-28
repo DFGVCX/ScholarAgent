@@ -101,6 +101,7 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["parent_section_id"], "method")
         self.assertEqual(payload["source_block_ids"], ["eq-3"])
         self.assertEqual(payload["chunk_metadata"]["provenance"]["page_number"], 4)
+        self.assertEqual(payload["provenance"]["page_number"], 4)
 
     def test_rrf_merges_by_id_without_recency(self) -> None:
         merged = reciprocal_rank_fusion([["a", "b"], ["b", "c"]], k=60)

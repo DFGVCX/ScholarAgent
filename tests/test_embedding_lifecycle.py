@@ -108,6 +108,35 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         for sql, _ in session.calls:
             self.assertIn("embedding_status IN ('stale','failed')", sql)
 
+    async def test_reembedding_batch_reconstructs_original_contextual_payload(self) -> None:
+        session = _Session(
+            [
+                _Result(
+                    [
+                        {
+                            "content_uuid": "content-1",
+                            "chunk_index": 0,
+                            "content": "raw formula",
+                            "embedding_content": "definition before\n\nraw formula",
+                            "section_path": "2 Method > Equation 1",
+                            "section_id": "method",
+                            "title": "Test Paper",
+                        }
+                    ]
+                )
+            ]
+        )
+
+        batch = await PaperRepository(session).current_embedding_batch("tenant", "user", "paper")
+
+        self.assertEqual(
+            batch["chunks"][0]["embedding_text"],
+            "Paper: Test Paper\nSection: 2 Method > Equation 1\n\ndefinition before\n\nraw formula",
+        )
+        sql, _ = session.calls[0]
+        self.assertIn("c.embedding_content", sql)
+        self.assertIn("p.title", sql)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -750,7 +750,8 @@ class PaperRepository:
     ) -> dict[str, Any] | None:
         result = await self.session.execute(
             text(
-                """SELECT c.content_uuid, c.chunk_index, c.content
+                """SELECT c.content_uuid, c.chunk_index, c.content,
+                    c.embedding_content, c.section_path, c.section_id, p.title
                 FROM paper_chunks c
                 JOIN papers p ON p.paper_uuid=c.paper_uuid
                     AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
@@ -767,7 +768,15 @@ class PaperRepository:
         return {
             "content_uuid": rows[0]["content_uuid"],
             "chunks": [
-                {"chunk_index": int(row["chunk_index"]), "content": str(row["content"])}
+                {
+                    "chunk_index": int(row["chunk_index"]),
+                    "content": str(row["content"]),
+                    "embedding_text": (
+                        f"Paper: {row['title']}\n"
+                        f"Section: {row.get('section_path') or row.get('section_id') or 'Document'}\n\n"
+                        f"{row.get('embedding_content') or row['content']}"
+                    ),
+                }
                 for row in rows
             ],
         }

@@ -72,7 +72,9 @@ class EmbeddingReindexService:
             if batch is None or not batch["chunks"]:
                 raise RuntimeError("No current paper chunks are available for re-embedding")
             embedding = self.embedding_factory()
-            vectors = await embedding.embed([item["content"] for item in batch["chunks"]])
+            vectors = await embedding.embed(
+                [item.get("embedding_text") or item["content"] for item in batch["chunks"]]
+            )
             async with self.tenant_transaction_factory(tenant_id, user_id) as session:
                 repository = self.repository_factory(session)
                 await repository.set_embeddings(

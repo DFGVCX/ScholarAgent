@@ -94,12 +94,19 @@ class PaperIngestionService:
             parser_info = dict(parsed.manifest.get("parser") or {})
             parser_name = str(parser_info.get("name") or settings.pdf_parse_strategy)
             parser_version = str(parser_info.get("version") or "1")
+            requested_parser = str(
+                parsed.manifest.get("requested_parser") or settings.pdf_parse_strategy
+            )
+            actual_parser = str(parsed.manifest.get("actual_parser") or parser_name)
             parse_metadata = {
                 **dict(paper.metadata),
                 "parsing": {
                     "status": parsed.status,
                     "parser_name": parser_name,
                     "parser_version": parser_version,
+                    "requested_parser": requested_parser,
+                    "actual_parser": actual_parser,
+                    "fallback_reason": parsed.manifest.get("fallback_reason"),
                     "quality_score": parsed.quality_score,
                     "warnings": list(parsed.warnings),
                 },

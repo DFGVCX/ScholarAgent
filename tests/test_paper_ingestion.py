@@ -299,6 +299,57 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(formula.content, "$$w=\\sum_i p_i w_i$$")
         self.assertIn("aggregates client updates", formula.embedding_content)
 
+    async def test_pdf_records_requested_and_actual_parser_after_fallback(self) -> None:
+        repository = _Repository(_record())
+        embedding = _Embedding()
+        base = _parsed("ready")
+        parsed = ParsedPaper(
+            base.full_text,
+            base.pages,
+            base.sections,
+            base.metadata,
+            {
+                **base.manifest,
+                "parser": {"name": "multimodal_aware_v3", "version": "3"},
+                "requested_parser": "scholar_hierarchical_v4",
+                "actual_parser": "multimodal_aware_v3",
+                "fallback_reason": "Docling model unavailable",
+            },
+            base.status,
+            base.quality_score,
+        )
+
+        @asynccontextmanager
+        async def transaction(*_):
+            yield object()
+
+        service = PaperIngestionService(
+            embedding,
+            transaction_factory=transaction,
+            repository_factory=lambda _: repository,
+        )
+        paper = PaperInput(
+            paper_id="paper-1", source="pdf", title="Paper", file_uri="paper.pdf",
+            file_name="paper.pdf", mime_type="application/pdf", file_sha256="e" * 64,
+            file_size=456,
+        )
+        with patch(
+            "app.papers.ingestion.get_settings",
+            return_value=SimpleNamespace(
+                rag_chunk_size=900,
+                rag_chunk_overlap=120,
+                rag_chunk_strategy="multimodal_aware_v3",
+                pdf_parse_strategy="scholar_hierarchical_v4",
+            ),
+        ), patch("app.papers.ingestion.parse_pdf_hierarchical", return_value=parsed):
+            result = await service.ingest("t", "u", paper)
+
+        parsing_metadata = repository.saved_paper.metadata["parsing"]
+        self.assertEqual(result.parser_strategy, "multimodal_aware_v3")
+        self.assertEqual(parsing_metadata["requested_parser"], "scholar_hierarchical_v4")
+        self.assertEqual(parsing_metadata["actual_parser"], "multimodal_aware_v3")
+        self.assertEqual(parsing_metadata["fallback_reason"], "Docling model unavailable")
+
 
 def _parsed(status: str) -> ParsedPaper:
     if status != "ready":

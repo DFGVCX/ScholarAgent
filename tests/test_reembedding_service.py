@@ -11,6 +11,7 @@ class _Repository:
         self.saved_model = None
         self.completed_job = None
         self.failed_job = None
+        self.embedded_texts = None
 
     async def enqueue_reembedding_jobs(self, tenant_id, user_id):
         return {"created": 2, "existing": 1}
@@ -32,8 +33,16 @@ class _Repository:
         return {
             "content_uuid": "content-1",
             "chunks": [
-                {"chunk_index": 0, "content": "first"},
-                {"chunk_index": 1, "content": "second"},
+                {
+                    "chunk_index": 0,
+                    "content": "first",
+                    "embedding_text": "Paper: Test paper\nSection: Method\n\ncontextual first",
+                },
+                {
+                    "chunk_index": 1,
+                    "content": "second",
+                    "embedding_text": "Paper: Test paper\nSection: Results\n\nsecond",
+                },
             ],
         }
 
@@ -52,6 +61,7 @@ class _Embedding:
     model = "Qwen3-Embedding-4B"
 
     async def embed(self, texts):
+        self.texts = list(texts)
         return [[1.0] + [0.0] * 1023 for _ in texts]
 
 
@@ -80,12 +90,21 @@ class ReembeddingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"created": 2, "existing": 1})
 
     async def test_process_next_embeds_current_chunks_with_active_model(self) -> None:
+        embedding = _Embedding()
+        self.service.embedding_factory = lambda: embedding
         processed = await self.service.process_next("worker-test")
 
         self.assertEqual(processed.status, "completed")
         self.assertEqual(processed.chunk_count, 2)
         self.assertEqual(self.repository.saved_model, "Qwen3-Embedding-4B")
         self.assertEqual(self.repository.completed_job, "job-1")
+        self.assertEqual(
+            embedding.texts,
+            [
+                "Paper: Test paper\nSection: Method\n\ncontextual first",
+                "Paper: Test paper\nSection: Results\n\nsecond",
+            ],
+        )
 
     async def test_process_failure_is_recorded_without_secret(self) -> None:
         class BrokenEmbedding:

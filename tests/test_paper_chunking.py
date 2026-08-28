@@ -79,7 +79,7 @@ class PaperChunkingTest(unittest.TestCase):
 
         self.assertEqual(formula.content, "$$w^{t+1}=\\sum_i p_i w_i^t$$")
         self.assertEqual(formula.source_block_ids, ("eq-1",))
-        self.assertEqual(formula.parent_section_id, "method")
+        self.assertIsNone(formula.parent_section_id)
         self.assertIn("aggregation weights", formula.context_before)
         self.assertIn("p_i denotes", formula.context_after)
         self.assertIn(formula.context_before, formula.embedding_content)
@@ -152,17 +152,22 @@ class PaperChunkingTest(unittest.TestCase):
 
     def test_large_algorithm_splits_by_complete_steps_and_repeats_caption(self) -> None:
         steps = [f"{index}. Aggregate the update from client {index}." for index in range(1, 9)]
+        algorithm_text = "\n".join([
+            "Input: encrypted client updates",
+            "Output: aggregated global model",
+            *steps,
+        ])
         algorithm = ParsedBlock(
             3,
             "algorithm",
-            "\n".join(steps),
+            algorithm_text,
             (10, 20, 500, 600),
             1,
             metadata={
                 "block_id": "algorithm-1",
                 "label": "Algorithm 1",
                 "caption": "Algorithm 1. Secure aggregation",
-                "markdown": "\n".join(steps),
+                "markdown": algorithm_text,
             },
         )
         page = ParsedPage(3, algorithm.text, "hash", len(algorithm.text), "docling", "usable", (algorithm,))
@@ -177,9 +182,135 @@ class PaperChunkingTest(unittest.TestCase):
 
         self.assertGreater(len(chunks), 1)
         self.assertTrue(all(chunk.content.startswith("Algorithm 1. Secure aggregation") for chunk in chunks))
-        self.assertTrue(all(chunk.token_count <= 24 for chunk in chunks))
+        self.assertTrue(all("Input: encrypted client updates" in chunk.content for chunk in chunks))
+        self.assertTrue(all("Output: aggregated global model" in chunk.content for chunk in chunks))
         combined = "\n".join(chunk.content for chunk in chunks)
         self.assertTrue(all(combined.count(step) == 1 for step in steps))
+
+    def test_algorithm_without_caption_does_not_invent_source_text(self) -> None:
+        algorithm = ParsedBlock(
+            1,
+            "algorithm",
+            "1. Initialize weights.\n2. Aggregate updates.",
+            (0, 0, 100, 100),
+            0,
+            metadata={"block_id": "algorithm-no-caption"},
+        )
+        page = ParsedPage(1, algorithm.text, "hash", 20, "docling", "usable", (algorithm,))
+        parsed = ParsedPaper(
+            algorithm.text,
+            (page,),
+            (_section("method", "Method", algorithm.text, kind="method"),),
+            {}, {}, "ready", 1.0,
+        )
+
+        chunk = chunking.chunk_hierarchical(parsed, target_tokens=30, max_tokens=60)[0]
+
+        self.assertNotIn("Algorithm\n", chunk.content)
+        self.assertTrue(chunk.content.startswith("1. Initialize weights."))
+
+    def test_prose_chunks_keep_source_ids_pages_and_global_reading_order(self) -> None:
+        first = ParsedBlock(
+            1,
+            "body",
+            "A very long first sentence explains the system architecture and its assumptions. "
+            "A second sentence explains the client behavior and communication protocol.",
+            (0, 0, 100, 50),
+            0,
+            metadata={"block_id": "body-page-1"},
+        )
+        equation = ParsedBlock(
+            2,
+            "equation",
+            "x=y",
+            (0, 10, 100, 40),
+            0,
+            metadata={"block_id": "eq-page-2", "markdown": "$$x=y$$", "label": "Eq. 1"},
+        )
+        second = ParsedBlock(
+            2,
+            "body",
+            "Page two prose follows the equation and explains its variables in detail.",
+            (0, 50, 100, 90),
+            1,
+            metadata={"block_id": "body-page-2"},
+        )
+        page1 = ParsedPage(1, first.text, "p1", 100, "docling", "usable", (first,))
+        page2 = ParsedPage(2, equation.text + "\n" + second.text, "p2", 100, "docling", "usable", (equation, second))
+        text = first.text + "\n\n" + equation.text + "\n\n" + second.text
+        parsed = ParsedPaper(
+            text,
+            (page1, page2),
+            (_section("method", "Method", text, page_start=1, page_end=2, kind="method"),),
+            {}, {}, "ready", 1.0,
+        )
+
+        chunks = chunking.chunk_hierarchical(parsed, target_tokens=12, max_tokens=24)
+
+        prose = [chunk for chunk in chunks if chunk.chunk_type == "prose"]
+        self.assertTrue(all(chunk.source_block_ids for chunk in prose))
+        self.assertTrue(all(chunk.page_start == chunk.page_end for chunk in prose))
+        page_two_types = [chunk.chunk_type for chunk in chunks if chunk.page_start == 2]
+        self.assertEqual(page_two_types[0], "equation")
+        self.assertEqual(page_two_types[-1], "prose")
+
+    def test_equation_context_stays_in_section_and_uses_complete_sentence(self) -> None:
+        old = ParsedBlock(1, "body", "Previous section closing sentence.", (0, 0, 100, 20), 0)
+        heading = ParsedBlock(1, "heading", "2 Method", (0, 30, 100, 50), 1)
+        equation = ParsedBlock(
+            1, "equation", "x=y", (0, 60, 100, 80), 2,
+            metadata={"block_id": "eq", "markdown": "$$x=y$$", "label": "Eq. 1"},
+        )
+        explanation = ParsedBlock(
+            1,
+            "body",
+            "Here x denotes the global model. This second sentence is unrelated.",
+            (0, 90, 100, 120),
+            3,
+        )
+        page = ParsedPage(1, "", "p", 100, "docling", "usable", (old, heading, equation, explanation))
+        method_text = equation.text + "\n\n" + explanation.text
+        parsed = ParsedPaper(
+            method_text,
+            (page,),
+            (_section("method", "2 Method", method_text, kind="method"),),
+            {}, {}, "ready", 1.0,
+        )
+
+        formula = next(
+            chunk for chunk in chunking.chunk_hierarchical(parsed) if chunk.chunk_type == "equation"
+        )
+
+        self.assertEqual(formula.context_before, "")
+        self.assertEqual(formula.context_after, "Here x denotes the global model.")
+        self.assertNotIn("Previous section", formula.embedding_content)
+
+    def test_figure_embedding_uses_explicit_reference_sentence_from_section(self) -> None:
+        reference = ParsedBlock(
+            1,
+            "body",
+            "As shown in Fig. 2, the verifier checks every encrypted update.",
+            (0, 0, 100, 30),
+            0,
+            metadata={"block_id": "body-reference"},
+        )
+        figure = ParsedBlock(
+            1,
+            "figure",
+            "System model",
+            (0, 40, 100, 120),
+            1,
+            metadata={"block_id": "fig-2", "label": "Fig. 2", "caption": "Fig. 2. System model"},
+        )
+        page = ParsedPage(1, "", "p", 100, "docling", "usable", (reference, figure))
+        text = reference.text + "\n\n" + figure.text
+        parsed = ParsedPaper(text, (page,), (_section("method", "Method", text),), {}, {}, "ready", 1.0)
+
+        visual = next(
+            chunk for chunk in chunking.chunk_hierarchical(parsed) if chunk.chunk_type == "figure"
+        )
+
+        self.assertIn("As shown in Fig. 2", visual.embedding_content)
 
     def test_multimodal_visual_blocks_are_atomic_and_keep_provenance(self) -> None:
         body = ParsedBlock(2, "body", "Method prose remains searchable.", (10, 10, 200, 30), 0)

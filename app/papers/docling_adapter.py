@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 import re
 from typing import Any
@@ -11,7 +11,6 @@ from app.papers.parsing import (
     ParsedBlock,
     ParsedPage,
     ParsedPaper,
-    _build_sections,
     _document_metadata,
     _hash_text,
     _render_sections,
@@ -24,10 +23,21 @@ _LABEL_TYPES = {
     "table": "table",
     "picture": "figure",
     "figure": "figure",
-    "code": "algorithm",
+    "code": "code",
     "algorithm": "algorithm",
+    "list_item": "body",
+    "paragraph": "body",
+    "text": "body",
 }
 _HEADING_LABELS = {"title", "section_header", "heading"}
+_DROP_LABELS = {
+    "page_header",
+    "page_footer",
+    "caption",
+    "footnote",
+    "reference",
+    "form",
+}
 
 
 def _label(value: Any) -> str:
@@ -92,9 +102,139 @@ def _build_converter() -> Any:
         options.do_table_structure = True
     if hasattr(options, "do_formula_enrichment"):
         options.do_formula_enrichment = True
+    hierarchy_options = getattr(options, "heading_hierarchy_options", None)
+    if hierarchy_options is not None and hasattr(hierarchy_options, "enabled"):
+        hierarchy_options.enabled = True
     return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
     )
+
+
+def _section_kind(title: str) -> str:
+    normalized = re.sub(r"^(?:\d+(?:\.\d+)*|[ivxlcdm]+)[\s.、:：-]+", "", title.lower()).strip()
+    aliases = {
+        "abstract": "abstract",
+        "introduction": "introduction",
+        "related work": "related_work",
+        "method": "method",
+        "methods": "method",
+        "methodology": "method",
+        "experiments": "experiment",
+        "results": "experiment",
+        "discussion": "discussion",
+        "conclusion": "conclusion",
+        "references": "references",
+        "appendix": "appendix",
+    }
+    return aliases.get(normalized.rstrip(".:："), "section")
+
+
+def _stable_section_id(title: str, seen: Counter[str]) -> str:
+    slug = re.sub(r"[^a-z0-9\u3400-\u9fff]+", "-", title.lower()).strip("-") or "section"
+    slug = slug[:64]
+    seen[slug] += 1
+    return slug if seen[slug] == 1 else f"{slug}-{seen[slug]}"
+
+
+def _build_docling_sections(pages: list[ParsedPage]) -> tuple[Any, ...]:
+    from app.papers.parsing import ParsedSection
+
+    seen: Counter[str] = Counter()
+    stack: list[dict[str, Any]] = []
+    drafts: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    def finalize() -> None:
+        nonlocal current
+        if current is not None:
+            current["text"] = "\n\n".join(current.pop("paragraphs")).strip()
+            drafts.append(current)
+        current = None
+
+    for page in pages:
+        for block in page.blocks:
+            if block.block_type == "heading":
+                finalize()
+                level = max(1, int(block.metadata.get("hierarchy_level") or 1))
+                while stack and int(stack[-1]["level"]) >= level:
+                    stack.pop()
+                section_id = _stable_section_id(block.text, seen)
+                parent = stack[-1] if stack else None
+                path_titles = [str(item["title"]) for item in stack] + [block.text]
+                current = {
+                    "section_id": section_id,
+                    "kind": _section_kind(block.text),
+                    "title": block.text,
+                    "page_start": page.page_number,
+                    "page_end": page.page_number,
+                    "paragraphs": [],
+                    "parent_section_id": parent["section_id"] if parent else None,
+                    "section_path": " > ".join(path_titles),
+                    "heading_level": level,
+                }
+                stack.append({
+                    "section_id": section_id,
+                    "title": block.text,
+                    "level": level,
+                })
+                continue
+            if current is None:
+                current = {
+                    "section_id": _stable_section_id("preamble", seen),
+                    "kind": "preamble",
+                    "title": "Preamble",
+                    "page_start": page.page_number,
+                    "page_end": page.page_number,
+                    "paragraphs": [],
+                    "parent_section_id": None,
+                    "section_path": "Preamble",
+                    "heading_level": 0,
+                }
+            current["page_end"] = page.page_number
+            if block.text:
+                current["paragraphs"].append(block.text)
+    finalize()
+
+    sections: list[ParsedSection] = []
+    cursor = 0
+    for index, draft in enumerate(drafts):
+        rendered = (
+            draft["text"]
+            if draft["kind"] == "preamble"
+            else f"{draft['title']}\n\n{draft['text']}".strip()
+        )
+        sections.append(
+            ParsedSection(
+                section_id=draft["section_id"],
+                index=index,
+                kind=draft["kind"],
+                title=draft["title"],
+                page_start=draft["page_start"],
+                page_end=draft["page_end"],
+                text=draft["text"],
+                char_start=cursor,
+                char_end=cursor + len(rendered),
+                text_hash=_hash_text(draft["text"]),
+                parent_section_id=draft["parent_section_id"],
+                section_path=draft["section_path"],
+                heading_level=draft["heading_level"],
+            )
+        )
+        cursor += len(rendered) + 2
+    return tuple(sections)
+
+
+def _document_page_numbers(document: Any, populated: dict[int, list[ParsedBlock]]) -> list[int]:
+    raw_pages = getattr(document, "pages", None)
+    numbers: set[int] = set(populated)
+    if isinstance(raw_pages, dict):
+        numbers.update(int(number) for number in raw_pages if int(number) > 0)
+    elif raw_pages is not None:
+        try:
+            numbers.update(range(1, len(raw_pages) + 1))
+        except TypeError:
+            pass
+    return sorted(numbers or {1})
 
 
 def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPaper:
@@ -107,8 +247,16 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
     for source_items, entry in enumerate(document.iterate_items(), start=1):
         item, level = entry if isinstance(entry, tuple) else (entry, 0)
         source_label = _label(getattr(item, "label", "text"))
+        if source_label in _DROP_LABELS:
+            continue
         block_type = _LABEL_TYPES.get(source_label, "body")
         text, caption, markdown = _item_text(item, document, block_type)
+        if block_type == "code" and re.search(
+            r"(?i)\balgorithm\s+\d+\b", "\n".join(part for part in (caption, text) if part)
+        ):
+            block_type = "algorithm"
+        if source_label in _HEADING_LABELS:
+            block_type = "heading"
         if not text and not markdown:
             continue
         page_number, bbox = _provenance(item)
@@ -117,7 +265,15 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
             "block_id": f"docling-p{page_number}-b{reading_order}",
             "source_engine": "docling",
             "source_label": source_label,
-            "hierarchy_level": int(level or 0),
+            "hierarchy_level": max(
+                1,
+                int(
+                    getattr(item, "level", None)
+                    or getattr(item, "heading_level", None)
+                    or level
+                    or 1
+                ),
+            ) if block_type == "heading" else int(level or 0),
             "caption": caption,
             "markdown": markdown,
         }
@@ -137,7 +293,7 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
         )
 
     pages: list[ParsedPage] = []
-    for page_number in sorted(by_page):
+    for page_number in _document_page_numbers(document, by_page):
         blocks = tuple(by_page[page_number])
         text = "\n\n".join(block.text for block in blocks if block.text).strip()
         searchable_chars = len(re.sub(r"\s+", "", text))
@@ -153,7 +309,7 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
             )
         )
 
-    sections = _build_sections(pages)
+    sections = _build_docling_sections(pages)
     full_text = _render_sections(sections)
     total_chars = len(re.sub(r"\s+", "", full_text))
     low_text_pages = sum(page.searchable_chars < 40 for page in pages)
@@ -168,7 +324,7 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
         },
         "coverage": {
             "total_pages": len(pages),
-            "pages_extracted": len(pages),
+            "pages_extracted": sum(bool(page.searchable_chars) for page in pages),
             "low_text_pages": low_text_pages,
             "source_items": source_items,
             "text_truncated": False,

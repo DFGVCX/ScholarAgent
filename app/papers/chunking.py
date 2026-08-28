@@ -106,6 +106,10 @@ class _TextUnit:
     start: int
     end: int
     paragraph_index: int
+    source_block_id: str = ""
+    page_number: int = 1
+    reading_order: int = 0
+    source_offset: int = 0
 
 
 def _sentence_spans(text: str, base_offset: int, paragraph_index: int) -> list[_TextUnit]:
@@ -263,7 +267,7 @@ def chunk_sections(
     return drafts
 
 
-_ATOMIC_BLOCK_TYPES = {"equation", "table", "figure", "algorithm"}
+_ATOMIC_BLOCK_TYPES = {"equation", "table", "figure", "algorithm", "code"}
 
 
 def _section_for_page(sections: Sequence[ParsedSection], page_number: int) -> ParsedSection | None:
@@ -373,20 +377,58 @@ def _source_block_id(block: object) -> str:
     )
 
 
-def _neighbor_context(blocks: Sequence[object], index: int) -> tuple[str, str]:
+def _nearest_sentence(text: str, *, before: bool, token_budget: int) -> str:
+    sentences = _sentence_spans(text.strip(), 0, 0)
+    candidates = reversed(sentences) if before else iter(sentences)
+    for sentence in candidates:
+        if _estimate_tokens(sentence.text) <= token_budget:
+            return sentence.text
+    return ""
+
+
+def _neighbor_context(
+    blocks: Sequence[object],
+    index: int,
+    section: ParsedSection,
+    *,
+    token_budget: int,
+) -> tuple[str, str]:
     before = ""
     after = ""
     for candidate in reversed(blocks[:index]):
-        if str(getattr(candidate, "block_type", "body")).lower() == "body":
-            before = str(getattr(candidate, "text", "") or "").strip()
+        candidate_text = str(getattr(candidate, "text", "") or "").strip()
+        if (
+            str(getattr(candidate, "block_type", "body")).lower() == "body"
+            and candidate_text
+            and candidate_text in section.text
+        ):
+            before = _nearest_sentence(candidate_text, before=True, token_budget=token_budget)
             if before:
                 break
     for candidate in blocks[index + 1 :]:
-        if str(getattr(candidate, "block_type", "body")).lower() == "body":
-            after = str(getattr(candidate, "text", "") or "").strip()
+        candidate_text = str(getattr(candidate, "text", "") or "").strip()
+        if (
+            str(getattr(candidate, "block_type", "body")).lower() == "body"
+            and candidate_text
+            and candidate_text in section.text
+        ):
+            after = _nearest_sentence(candidate_text, before=False, token_budget=token_budget)
             if after:
                 break
     return before, after
+
+
+def _figure_reference(section: ParsedSection, label: str, caption: str, token_budget: int) -> str:
+    normalized = label.strip()
+    if not normalized:
+        return ""
+    pattern = re.compile(re.escape(normalized).replace(r"\ ", r"\s*"), re.IGNORECASE)
+    for paragraph in re.split(r"\n\s*\n", section.text):
+        clean = paragraph.strip()
+        if pattern.search(clean) and clean != caption.strip():
+            if _estimate_tokens(clean) <= token_budget:
+                return clean
+    return ""
 
 
 def _table_pieces(metadata: Mapping[str, Any], raw_text: str, max_tokens: int) -> list[str]:
@@ -416,15 +458,27 @@ def _table_pieces(metadata: Mapping[str, Any], raw_text: str, max_tokens: int) -
 
 def _algorithm_pieces(metadata: Mapping[str, Any], raw_text: str, max_tokens: int) -> list[str]:
     markdown = str(metadata.get("markdown") or raw_text).strip()
-    caption = str(metadata.get("caption") or metadata.get("label") or "Algorithm").strip()
+    caption = str(metadata.get("caption") or metadata.get("label") or "").strip()
     lines = [line.strip() for line in markdown.splitlines() if line.strip()]
     if not lines:
         return [caption] if caption else []
 
+    title = ""
+    inputs: list[str] = []
+    outputs: list[str] = []
     steps: list[str] = []
     current = ""
-    boundary = re.compile(r"^(?:\d+[.)]|(?:input|output|for|while|if|else|return)\b)", re.IGNORECASE)
+    boundary = re.compile(r"^(?:\d+[.)]|(?:for|while|if|else|return)\b)", re.IGNORECASE)
     for line in lines:
+        if re.match(r"^algorithm\b", line, re.IGNORECASE):
+            title = line
+            continue
+        if re.match(r"^inputs?\s*[:：]", line, re.IGNORECASE):
+            inputs.append(line)
+            continue
+        if re.match(r"^outputs?\s*[:：]", line, re.IGNORECASE):
+            outputs.append(line)
+            continue
         if current and boundary.match(line):
             steps.append(current)
             current = line
@@ -433,17 +487,20 @@ def _algorithm_pieces(metadata: Mapping[str, Any], raw_text: str, max_tokens: in
     if current:
         steps.append(current)
 
-    prefix = caption
+    prefix_parts = list(dict.fromkeys(part for part in (caption, title, *inputs, *outputs) if part))
+    prefix = "\n".join(prefix_parts)
+    if not steps:
+        return [prefix or markdown] if (prefix or markdown) else []
     pieces: list[str] = []
     selected: list[str] = []
     for step in steps:
-        candidate = "\n".join([prefix, *selected, step])
+        candidate = "\n".join(part for part in (prefix, *selected, step) if part)
         if selected and _estimate_tokens(candidate) > max_tokens:
-            pieces.append("\n".join([prefix, *selected]))
+            pieces.append("\n".join(part for part in (prefix, *selected) if part))
             selected = []
         selected.append(step)
     if selected:
-        pieces.append("\n".join([prefix, *selected]))
+        pieces.append("\n".join(part for part in (prefix, *selected) if part))
     return pieces
 
 
@@ -499,7 +556,18 @@ def _split_unit_by_tokens(unit: _TextUnit, max_tokens: int) -> list[_TextUnit]:
         leading = len(raw) - len(raw.lstrip())
         if clean:
             start = unit.start + consumed + leading
-            pieces.append(_TextUnit(clean, start, start + len(clean), unit.paragraph_index))
+            pieces.append(
+                _TextUnit(
+                    clean,
+                    start,
+                    start + len(clean),
+                    unit.paragraph_index,
+                    unit.source_block_id,
+                    unit.page_number,
+                    unit.reading_order,
+                    unit.source_offset + consumed + leading,
+                )
+            )
         consumed += cut
         remaining = remaining[cut:]
     return pieces
@@ -551,6 +619,113 @@ def _chunk_section_by_tokens(
     return drafts
 
 
+def _prose_units_for_section(
+    parsed: ParsedPaper,
+    section: ParsedSection,
+    max_tokens: int,
+) -> list[_TextUnit]:
+    units: list[_TextUnit] = []
+    search_offset = 0
+    paragraph_index = 0
+    for page in parsed.pages:
+        if not (int(section.page_start) <= int(page.page_number) <= int(section.page_end)):
+            continue
+        for block in page.blocks:
+            if str(block.block_type or "body").lower() != "body":
+                continue
+            text = str(block.text or "").strip()
+            location = section.text.find(text, search_offset)
+            if not text or location < 0:
+                location = section.text.find(text) if text else -1
+            if location < 0:
+                continue
+            source_id = _source_block_id(block)
+            local_units = _section_units(text, max_chars=max_tokens * 4)
+            for local in local_units:
+                enriched = _TextUnit(
+                    local.text,
+                    location + local.start,
+                    location + local.end,
+                    paragraph_index + local.paragraph_index,
+                    source_id,
+                    int(page.page_number),
+                    int(block.reading_order),
+                    local.start,
+                )
+                units.extend(_split_unit_by_tokens(enriched, max_tokens))
+            paragraph_index += max(1, len(local_units))
+            search_offset = location + len(text)
+    return units
+
+
+def _chunk_prose_section(
+    parsed: ParsedPaper,
+    section: ParsedSection,
+    target_tokens: int,
+    max_tokens: int,
+) -> list[tuple[int, int, ChunkDraft]]:
+    units = _prose_units_for_section(parsed, section, max_tokens)
+    ordered: list[tuple[int, int, ChunkDraft]] = []
+    current: list[_TextUnit] = []
+
+    def flush() -> None:
+        nonlocal current
+        if not current:
+            return
+        content = _join_units(current).strip()
+        first = current[0]
+        source_ids = tuple(dict.fromkeys(unit.source_block_id for unit in current if unit.source_block_id))
+        page_start = min(unit.page_number for unit in current)
+        page_end = max(unit.page_number for unit in current)
+        provenance = {
+            "page_start": page_start,
+            "page_end": page_end,
+            "reading_order_start": first.reading_order,
+            "source_offsets": [
+                {
+                    "block_id": unit.source_block_id,
+                    "start": unit.source_offset,
+                    "end": unit.source_offset + len(unit.text),
+                }
+                for unit in current
+            ],
+        }
+        ordered.append(
+            (
+                first.page_number,
+                first.reading_order * 1000 + first.source_offset,
+                ChunkDraft(
+                    position=0,
+                    content=content,
+                    content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    token_count=_estimate_tokens(content),
+                    section_id=section.section_id,
+                    section_path=section.section_path or section.title,
+                    page_start=page_start,
+                    page_end=page_end,
+                    char_start=int(section.char_start or 0) + min(unit.start for unit in current),
+                    char_end=int(section.char_start or 0) + max(unit.end for unit in current),
+                    chunk_type="prose",
+                    parent_section_id=section.parent_section_id,
+                    source_block_ids=source_ids,
+                    embedding_content=content,
+                    metadata={"provenance": provenance},
+                ),
+            )
+        )
+        current = []
+
+    for unit in units:
+        candidate = _join_units([*current, unit])
+        if current and _estimate_tokens(candidate) > target_tokens:
+            flush()
+        current.append(unit)
+        if _estimate_tokens(_join_units(current)) >= max_tokens:
+            flush()
+    flush()
+    return ordered
+
+
 def chunk_hierarchical(
     parsed: ParsedPaper,
     *,
@@ -565,7 +740,6 @@ def chunk_hierarchical(
     target_tokens = max(1, min(int(target_tokens), int(max_tokens)))
     max_tokens = max(target_tokens, int(max_tokens))
     atomic: list[tuple[int, int, ChunkDraft]] = []
-    removable_by_section: dict[str, list[str]] = {}
 
     for page in parsed.pages:
         blocks = list(page.blocks)
@@ -576,10 +750,22 @@ def chunk_hierarchical(
             section = _section_for_block(parsed.sections, block)
             if section is None:
                 continue
-            before, after = _neighbor_context(blocks, block_index)
+            context_budget = max(16, min(96, max_tokens // 4))
+            before, after = _neighbor_context(
+                blocks,
+                block_index,
+                section,
+                token_budget=context_budget,
+            )
             block_id = _source_block_id(block)
             metadata = dict(block.metadata or {})
-            label = str(metadata.get("label") or block_type.title())
+            label = str(metadata.get("label") or "").strip()
+            caption = str(metadata.get("caption") or "").strip()
+            reference = (
+                _figure_reference(section, label, caption, context_budget)
+                if block_type == "figure"
+                else ""
+            )
             provenance = {
                 "page_number": int(page.page_number),
                 "bbox": list(block.bbox),
@@ -588,10 +774,11 @@ def chunk_hierarchical(
             }
             for piece_index, content in enumerate(_atomic_contents(block, target_tokens, max_tokens)):
                 embedding_parts = [
-                    f"{block_type.title()}: {label}",
+                    f"{block_type.title()}: {label}" if label else "",
                     f"Context before: {before}" if before else "",
                     content,
                     f"Context after: {after}" if after else "",
+                    f"Referenced by: {reference}" if reference and reference not in {before, after} else "",
                 ]
                 embedding_content = "\n\n".join(part for part in embedding_parts if part)
                 atomic.append(
@@ -604,11 +791,13 @@ def chunk_hierarchical(
                             content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
                             token_count=_estimate_tokens(content),
                             section_id=section.section_id,
-                            section_path=f"{section.title} > {label}",
+                            section_path=" > ".join(
+                                part for part in (section.section_path or section.title, label) if part
+                            ),
                             page_start=int(page.page_number),
                             page_end=int(page.page_number),
                             chunk_type=block_type,
-                            parent_section_id=section.section_id,
+                            parent_section_id=section.parent_section_id,
                             source_block_ids=(block_id,),
                             context_before=before,
                             context_after=after,
@@ -621,48 +810,12 @@ def chunk_hierarchical(
                         ),
                     )
                 )
-            removable_by_section.setdefault(section.section_id, []).append(block.text)
-
-    prose_sections: list[ParsedSection] = []
-    for section in parsed.sections:
-        text = section.text
-        for value in removable_by_section.get(section.section_id, []):
-            if value:
-                text = text.replace(value, "", 1)
-        text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
-        if text:
-            prose_sections.append(replace(section, text=text))
-
-    prose_drafts = [
-        draft
-        for section in prose_sections
-        for draft in _chunk_section_by_tokens(section, target_tokens, max_tokens)
+    ordered: list[tuple[int, int, ChunkDraft]] = [
+        entry
+        for section in parsed.sections
+        if str(section.kind).lower() not in _NON_RETRIEVAL_SECTION_KINDS
+        for entry in _chunk_prose_section(parsed, section, target_tokens, max_tokens)
     ]
-    ordered: list[tuple[int, int, ChunkDraft]] = []
-    for index, draft in enumerate(prose_drafts):
-        source_ids = tuple(
-            _source_block_id(block)
-            for page in parsed.pages
-            if draft.page_start is None or int(page.page_number) >= int(draft.page_start)
-            if draft.page_end is None or int(page.page_number) <= int(draft.page_end)
-            for block in page.blocks
-            if str(block.block_type or "body").lower() == "body" and block.text in draft.content
-        )
-        ordered.append(
-            (
-                int(draft.page_start or 1),
-                50_000 + index,
-                replace(
-                    draft,
-                    token_count=_estimate_tokens(draft.content),
-                    chunk_type="prose",
-                    parent_section_id=draft.section_id,
-                    source_block_ids=source_ids,
-                    embedding_content=draft.content,
-                    metadata={"provenance": {"page_start": draft.page_start, "page_end": draft.page_end}},
-                ),
-            )
-        )
     ordered.extend(atomic)
     ordered.sort(key=lambda item: (item[0], item[1]))
     return [replace(chunk, position=index) for index, (_, _, chunk) in enumerate(ordered)]
