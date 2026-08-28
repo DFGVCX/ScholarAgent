@@ -155,13 +155,15 @@ async def get_runtime_settings(
 ) -> dict[str, Any]:
     profile = _require_tenant_admin(x_api_key)
     active_model = get_settings().rag_embedding_model
+    counts = await _embedding_stats(profile, active_model)
     return {
         "profile": profile,
         "config": public_runtime_config(),
         "embedding": {
             "active_model": active_model,
             "dimensions": 1024,
-            "counts": await _embedding_stats(profile, active_model),
+            "counts": counts,
+            "reindex_required": counts["stale"] > 0 or counts["failed"] > 0,
         },
     }
 
@@ -220,7 +222,7 @@ async def update_runtime_settings(
             "dimensions": candidate.dimensions,
             "counts": counts,
             "stale_marked": stale,
-            "reindex_required": counts["stale"] > 0,
+            "reindex_required": counts["stale"] > 0 or counts["failed"] > 0,
         }
     return {
         "status": "saved",

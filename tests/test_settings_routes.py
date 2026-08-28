@@ -10,6 +10,7 @@ from app.routes.settings import (
     EmbeddingProbeDTO,
     ModelProbeDTO,
     RuntimeConfigUpdateDTO,
+    get_runtime_settings,
     probe_embedding,
     probe_model,
     reindex_embeddings,
@@ -19,6 +20,27 @@ from app.schemas import UserContext
 
 
 class SettingsRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_marks_failed_vectors_for_reindex(self) -> None:
+        profile = {
+            "tenant_id": "tenant_demo",
+            "user_id": "user_demo",
+            "roles": ["tenant_admin"],
+        }
+        current = SimpleNamespace(rag_embedding_model="qwen3.7-text-embedding")
+        with patch(
+            "app.routes.settings._require_tenant_admin", return_value=profile
+        ), patch("app.routes.settings.get_settings", return_value=current), patch(
+            "app.routes.settings.public_runtime_config", return_value={"items": []}
+        ), patch(
+            "app.routes.settings._embedding_stats",
+            new=AsyncMock(
+                return_value={"ready": 0, "stale": 0, "failed": 77, "pending": 0}
+            ),
+        ):
+            result = await get_runtime_settings(x_api_key="demo-key")
+
+        self.assertTrue(result["embedding"]["reindex_required"])
+
     async def test_model_probe_requires_tenant_admin(self) -> None:
         request = ModelProbeDTO(provider="qwen", api_key="candidate", model="qwen-plus")
         profile = {"tenant_id": "tenant_acme", "user_id": "user_acme", "roles": ["researcher"]}

@@ -38,6 +38,18 @@ class RuntimeConfigTests(unittest.TestCase):
 
         self.assertEqual(load.call_count, 2)
 
+    def test_successive_reads_observe_external_database_updates(self) -> None:
+        before = {"SCHOLAR_RAG_EMBEDDING_API_KEY": ""}
+        after = {"SCHOLAR_RAG_EMBEDDING_API_KEY": "sk-saved-by-api"}
+        with patch(
+            "app.services.mysql_store.get_all_settings",
+            side_effect=[before, after],
+        ) as load:
+            self.assertEqual(runtime_config.read_runtime_config(), before)
+            self.assertEqual(runtime_config.read_runtime_config(), after)
+
+        self.assertEqual(load.call_count, 2)
+
     def test_update_preserves_blank_secret_when_cache_is_empty(self) -> None:
         saved = {
             "SCHOLAR_RAG_EMBEDDING_API_KEY": "sk-saved",

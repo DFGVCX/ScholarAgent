@@ -161,8 +161,6 @@ DEFAULT_VALUES: dict[str, str] = {
 def read_runtime_config() -> dict[str, str]:
     """Read runtime overrides from PostgreSQL; environment/defaults remain bootstrap inputs."""
     global _RUNTIME_CONFIG_CACHE
-    if _RUNTIME_CONFIG_CACHE is not None:
-        return dict(_RUNTIME_CONFIG_CACHE)
     try:
         from app.services import mysql_store
         all_settings = mysql_store.get_all_settings()
@@ -172,13 +170,12 @@ def read_runtime_config() -> dict[str, str]:
         }
     except Exception:
         # PostgreSQL may still be starting when the process first imports settings.
-        # Returning an empty bootstrap view is safe, but caching it would discard the
-        # saved runtime configuration for the lifetime of this worker.
-        return {}
+        # Keep the last known-good view, but retry PostgreSQL on the next read.
+        return dict(_RUNTIME_CONFIG_CACHE or {})
     if not loaded:
         # Migrations or bootstrap data can still be settling even when the table
-        # already answers successfully. Retry later instead of freezing defaults.
-        return {}
+        # already answers successfully. Keep the last known-good view and retry later.
+        return dict(_RUNTIME_CONFIG_CACHE or {})
     _RUNTIME_CONFIG_CACHE = loaded
     return dict(_RUNTIME_CONFIG_CACHE)
 

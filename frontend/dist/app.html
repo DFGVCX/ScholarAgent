@@ -8198,7 +8198,14 @@
                 $('embeddingStatusCounts').textContent = `ready ${counts.ready || 0} / stale ${counts.stale || 0} / failed ${counts.failed || 0} / pending ${counts.pending || 0}`;
             }
             if ($('embeddingReindexStatus')) {
-                $('embeddingReindexStatus').textContent = (counts.stale || 0) > 0 ? '需要重新生成向量' : '无需重建';
+                const failed = counts.failed || 0;
+                const stale = counts.stale || 0;
+                const reindexRequired = embedding?.reindex_required ?? (failed > 0 || stale > 0);
+                $('embeddingReindexStatus').textContent = failed > 0
+                    ? `${failed} 个向量失败，需要重试`
+                    : reindexRequired
+                        ? '需要重新生成向量'
+                        : '无需重建';
             }
             updateEmbeddingChangeWarning();
         }
