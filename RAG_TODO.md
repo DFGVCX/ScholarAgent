@@ -104,6 +104,10 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 向量按 Embedding 模型隔离，避免新旧模型向量混用。
 - [x] 提供 pending、ready、stale、failed 状态和重新生成向量任务。
 - [x] 网站支持填写 Embedding Base URL、API Key、模型名并执行连通性测试。
+- [x] 修复 backend、MCP Server 和 Worker 长期缓存旧运行配置的问题；常驻进程会读取 PostgreSQL 中最新的密钥和模型配置。
+- [x] 修复论文入库服务缓存旧 Embedding 客户端的问题；每次新入库都会按当前配置创建客户端。
+- [x] failed 向量会被前端明确标记为“需要重试”，并可重新入队，不再错误显示“无需重建”。
+- [x] 使用真实论文验证 failed 77 → ready 77 的重建闭环，以及中文查询无告警进入 hybrid 检索。
 
 ### 后续
 
@@ -156,10 +160,13 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 捕获 Docling 底层模型加载可能产生的 `SystemExit`，不会终止上传 Worker。
 - [x] 表格、公式、图片、算法及版面来源信息统一转换为稳定块模型。
 - [x] Docling 固定为 `2.123.0`，模型缓存挂载到 Docker 持久化卷。
+- [x] Docker 依赖固定为 CPU 版 PyTorch，避免 Docling 构建错误下载整套 CUDA 依赖。
 - [x] 浏览器 Worker 与 MCP 镜像不安装 Docling 重依赖，避免拖慢 Playwright 构建。
 - [x] 使用真实 4 页联邦学习论文验证缺模型时的回退链路，最终成功生成 25 个 v4 Chunk。
+- [x] 使用真实 13 页 IEEE 联邦学习论文完成 v4 切片回退验收：实际解析器为 `multimodal_aware_v3`，切片器为 `scholar_hierarchical_v4`，生成 77 个 Chunk。
 - [ ] 网络可稳定访问 Hugging Face 后，补齐 `TableModel04_rs` 并完成 Docling 主路径的多版式真实 PDF 验收。
-- [ ] 主路径验收通过前，生产默认值继续保留 `multimodal_aware_v3`；v4 可在网站运行配置中显式选择。
+- [ ] 完成包含 Docling 的 backend/worker 镜像全量构建；当前正在运行的复用镜像尚未安装 Docling，因此会自动回退到 `multimodal_aware_v3`。
+- [ ] Docling 主路径验收通过前，v4 仅通过网站运行配置显式选择；不要把“请求 v4”误报为“Docling 实际执行成功”。
 
 ### 后续
 
@@ -195,6 +202,8 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 图、表、公式和算法保存 `chunk_type`、父章节、来源块 ID、上下文和坐标 provenance。
 - [x] 原始 `content` 与增强后的 `embedding_content` 分离，前端调试仍显示完整原文。
 - [x] 五种策略可配置、可重复运行并可在同一评测集上比较。
+- [x] 论文结构接口返回当前内容版本的全部 Chunk，并按 `chunk_index` 排序，包含类型、章节路径、页码、完整原文、字符数、token 数、来源块和向量状态。
+- [x] 使用真实 13 页 IEEE 论文生成并检查 77 个 v4 Chunk：正文 43、公式 11、表格 8、图片 9、算法 6，序号为 0–76，向量全部 ready。
 
 ### 后续
 
@@ -288,6 +297,9 @@ arXiv
 - [x] RAG 验证界面返回 Top-K Chunk。
 - [x] 显示完整 Chunk 原文、论文、章节、页码、score、lexical rank 和 vector rank。
 - [x] 论文工作台支持原文 PDF、结构化正文和图表算法视图。
+- [x] 论文工作台增加独立“切片”视图，不经过检索即可按顺序浏览当前版本的全部 Chunk。
+- [x] 切片视图完整展示原文而不截断，并支持按正文、公式、表格、图片、算法和代码类型过滤。
+- [x] 切片浏览与 RAG Top-K 检索验证明确分离：前者检查解析/切片边界，后者检查召回和排序。
 - [x] 修复上传 413、正文滚动和中文检索回退等问题。
 
 ### 后续
@@ -386,13 +398,17 @@ arXiv
 
 ## 14. 后续执行优先级
 
-### P0：建立可信的生产检索基线
+> 当前决定：先暂停新增评测工作，优先完善一条最佳 PDF 解析与切片主路径。已有评测代码、语料和报告全部保留，待解析/切片质量稳定后再继续扩充。
 
-- [ ] 扩展评测程序，使其可以使用与网站一致的 PostgreSQL lexical/vector/hybrid 查询链路。
-- [ ] 比较 vector、lexical、hybrid，确认中文检索和 RRF 的真实收益。
-- [ ] 为当前默认 `multimodal_aware_v3` 建立正式生产基线。
-- [ ] 完成 Docker 环境端到端回归。
-- [ ] 补齐 Docling 表格模型并通过主解析路径验收，再评估是否把 v4 切为默认。
+### P0：完善最佳解析与切片主路径
+
+- [ ] 完成包含 CPU PyTorch 与 Docling 的 backend/worker 镜像构建，确认不再下载 CUDA 依赖。
+- [ ] 补齐 Docling 所需模型并通过主解析路径验收，确认 manifest 中 actual parser 确实为 Docling。
+- [ ] 使用 IEEE、arXiv、ACM、Springer、Elsevier 文本型 PDF 人工检查阅读顺序、章节、公式、表格、图片和算法。
+- [ ] 直接使用“切片”视图逐篇检查边界质量，记录过长、过短、跨章节、上下文不足、重复和乱码 Chunk。
+- [ ] 修复公式 Markdown、表格结构、图片裁剪和算法步骤的剩余质量问题。
+- [ ] 完成上传 → 解析 → v4 切片 → Embedding → 切片浏览的 Docker 端到端回归。
+- [ ] 主路径稳定后再决定是否把 `scholar_hierarchical_v4` 设为默认策略。
 
 ### P1：提高 Top-1 和上下文质量
 
@@ -407,8 +423,10 @@ arXiv
 - [ ] 扩充公式、表格、图片、算法专项数据集。
 - [ ] 建立对象解析质量与检索质量两套独立指标。
 
-### P3：规模、成本和长期维护
+### P3：恢复评测、规模和长期维护
 
+- [ ] 恢复生产检索评测，比较 lexical、vector、hybrid 和 hybrid + reranker。
+- [ ] 扩展评测程序，使其使用与网站一致的 PostgreSQL 查询链路。
 - [ ] 扩大语料规模并进行数据库与检索性能压测。
 - [ ] 增加模型调用成本和索引容量监控。
 - [ ] 建立可重复的版本回归、报告归档和发布门禁。
@@ -440,9 +458,19 @@ PostgreSQL/pgvector 基础
   → 结构/公式/多模态 PDF 解析
   → Docling 主解析 + PyMuPDF 自动回退
   → 五种 Chunk 策略（含 scholar_hierarchical_v4）
+  → 当前版本全部 Chunk 的独立前端浏览与类型过滤
   → Top-K Chunk 与混合检索
   → 前端调试能力
   → 第一版人工评测集与四策略基准
 ```
 
-当前已完成 v4 解析/切片代码和真实回退验证，正在从“RAG 能用”进入“主解析路径可验收、质量可量化、可稳定回归”的阶段。近期主线是补齐 Docling 本地模型、Docker E2E、生产检索评测、reranker、父子上下文展开、查询扩展和论文元数据补全，不包含 OCR 与扫描件解析。
+### 2026-08-29 暂停点
+
+- 当前示例论文内容版本为 v22。
+- 实际解析器为 `multimodal_aware_v3`（Docling 未安装后的显式回退）。
+- 切片策略为 `scholar_hierarchical_v4`，共有 77 个 Chunk，向量状态为 ready 77 / failed 0。
+- 网站已经能够直接查看完整切片，不需要通过 RAG 检索结果间接观察。
+- backend、MCP Server、Worker 的运行配置刷新和 Embedding 重试链路已经修复。
+- 浏览器自动点击验收受本机浏览器连接组件路径错误影响，API、静态资源和渲染器测试均已通过；下次继续时先人工打开“知识库 → 论文 → 切片”确认界面。
+
+下一次继续开发时，从 P0 的 Docling CPU 镜像完整构建和真实主路径验收开始；随后直接利用“切片”视图改进边界质量。评测、reranker、父子检索和元数据补全暂时排在其后，不包含 OCR 与扫描件解析。
