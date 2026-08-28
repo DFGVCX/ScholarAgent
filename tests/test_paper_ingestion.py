@@ -79,6 +79,20 @@ class _BrokenEmbedding:
 
 
 class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
+    def test_default_embedding_client_is_refreshed_between_ingestions(self) -> None:
+        first = _Embedding()
+        second = _Embedding()
+        service = PaperIngestionService()
+
+        with patch(
+            "app.papers.ingestion.QwenEmbeddingClient.from_settings",
+            side_effect=[first, second],
+        ) as factory:
+            self.assertIs(service._embedding(), first)
+            self.assertIs(service._embedding(), second)
+
+        self.assertEqual(factory.call_count, 2)
+
     async def _run(self, embedding):
         repository = _Repository(_record())
 

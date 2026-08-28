@@ -66,9 +66,12 @@ class _StructureSession(_Session):
                 [
                     {
                         "paper_id": "paper-1",
+                        "content_uuid": UUID("00000000-0000-0000-0000-000000000111"),
                         "content_version": 2,
                         "parser_name": "multimodal_aware_v3",
                         "parser_version": "3",
+                        "chunk_strategy": "scholar_hierarchical_v4",
+                        "chunker_version": "4",
                         "parse_status": "ready",
                         "parse_manifest": {"visual_blocks": [{"block_type": "figure"}]},
                     }
@@ -100,6 +103,43 @@ class _StructureSession(_Session):
                     }
                 ]
             )
+        if "FROM paper_chunks pc" in sql:
+            return _Result(
+                [
+                    {
+                        "chunk_uuid": UUID("00000000-0000-0000-0000-000000000301"),
+                        "chunk_index": 0,
+                        "chunk_type": "prose",
+                        "section_id": "method",
+                        "section_path": "2 Method > 2.1 Setup",
+                        "page_start": 1,
+                        "page_end": 2,
+                        "content": "Complete first chunk.\nIt keeps every character.",
+                        "embedding_content": "Paper: Test\nSection: Method\n\nComplete first chunk.",
+                        "token_count": 9,
+                        "source_block_ids": ["page-1-block-2", "page-2-block-1"],
+                        "chunk_metadata": {"strategy": "scholar_hierarchical_v4"},
+                        "embedding_status": "ready",
+                        "embedding_model": "qwen3.7-text-embedding",
+                    },
+                    {
+                        "chunk_uuid": UUID("00000000-0000-0000-0000-000000000302"),
+                        "chunk_index": 1,
+                        "chunk_type": "equation",
+                        "section_id": "method",
+                        "section_path": "2 Method > Equation 1",
+                        "page_start": 2,
+                        "page_end": 2,
+                        "content": "$$F(x)=x^2$$",
+                        "embedding_content": "Equation: F(x)=x^2",
+                        "token_count": 6,
+                        "source_block_ids": ["page-2-equation-1"],
+                        "chunk_metadata": {"strategy": "scholar_hierarchical_v4"},
+                        "embedding_status": "ready",
+                        "embedding_model": "qwen3.7-text-embedding",
+                    },
+                ]
+            )
         return _Result()
 
 
@@ -115,6 +155,18 @@ class _WriteSession(_Session):
 
 
 class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_get_structure_exposes_current_chunk_strategy(self) -> None:
+        structure = await PaperRepository(_StructureSession()).get_structure(
+            "tenant-a", "user-a", "paper-1"
+        )
+
+        self.assertIsNotNone(structure)
+        assert structure is not None
+        self.assertEqual(
+            structure["chunker"],
+            {"strategy": "scholar_hierarchical_v4", "version": "4"},
+        )
+
     async def test_get_structure_returns_current_ordered_pages_and_sections(self) -> None:
         session = _StructureSession()
 
@@ -125,6 +177,15 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(structure["parser"]["name"], "multimodal_aware_v3")
         self.assertEqual(structure["pages"][0]["blocks"][0]["block_type"], "figure")
         self.assertEqual(structure["sections"][0]["section_id"], "method")
+        self.assertEqual([chunk["index"] for chunk in structure["chunks"]], [0, 1])
+        self.assertEqual(
+            structure["chunks"][0]["content"],
+            "Complete first chunk.\nIt keeps every character.",
+        )
+        self.assertEqual(structure["chunks"][1]["type"], "equation")
+        self.assertEqual(structure["chunks"][0]["source_block_ids"], ["page-1-block-2", "page-2-block-1"])
+        chunk_sql = next(sql for sql, _ in session.statements if "FROM paper_chunks pc" in sql)
+        self.assertIn("ORDER BY pc.chunk_index", chunk_sql)
         self.assertTrue(all(params["tenant_id"] == "tenant-a" for _, params in session.statements))
         self.assertTrue(all(params["user_id"] == "user-a" for _, params in session.statements))
         self.assertIn("current_content_version", session.statements[0][0])

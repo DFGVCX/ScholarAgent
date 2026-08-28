@@ -3620,6 +3620,117 @@
             background: #e8f5f2;
             color: #075f58;
         }
+        .paper-chunk-view {
+            display: grid;
+            gap: 14px;
+            padding: 18px;
+        }
+        .paper-chunk-summary {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 15px 17px;
+            border: 1px solid #d7e2e8;
+            border-radius: 10px;
+            background: #f7fafb;
+        }
+        .paper-chunk-summary > div {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 9px;
+        }
+        .paper-chunk-summary span { color: var(--muted); font-size: 12px; }
+        .paper-chunk-summary code {
+            padding: 3px 7px;
+            border-radius: 5px;
+            background: #e8f2f1;
+            color: #075f58;
+            font-family: var(--font-mono);
+            font-size: 12px;
+        }
+        .paper-chunk-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .paper-chunk-filters button.active {
+            border-color: var(--accent);
+            background: #e8f5f2;
+            color: #075f58;
+        }
+        .paper-chunk-list {
+            display: grid;
+            gap: 14px;
+        }
+        .paper-chunk-card {
+            display: grid;
+            min-width: 0;
+            gap: 11px;
+            padding: 16px;
+            border: 1px solid #d7e1e7;
+            border-left: 4px solid #79949f;
+            border-radius: 9px;
+            background: #fff;
+            box-shadow: 0 8px 22px rgba(23,32,40,.045);
+        }
+        .paper-chunk-card[data-chunk-type="equation"] { border-left-color: #7559b7; }
+        .paper-chunk-card[data-chunk-type="table"] { border-left-color: var(--amber); }
+        .paper-chunk-card[data-chunk-type="figure"] { border-left-color: #3883a3; }
+        .paper-chunk-card[data-chunk-type="algorithm"] { border-left-color: var(--accent); }
+        .paper-chunk-card[data-chunk-type="code"] { border-left-color: #475569; }
+        .paper-chunk-head,
+        .paper-chunk-provenance,
+        .paper-chunk-foot {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 9px;
+        }
+        .paper-chunk-head { justify-content: space-between; }
+        .paper-chunk-head > div { display: flex; align-items: center; gap: 9px; }
+        .paper-chunk-type {
+            padding: 2px 7px;
+            border-radius: 999px;
+            background: #edf3f5;
+            color: #41545e;
+            font-size: 11px;
+            font-weight: 800;
+        }
+        .paper-chunk-provenance {
+            justify-content: space-between;
+            color: var(--muted);
+            font-size: 12px;
+        }
+        .paper-chunk-provenance strong { color: #34464f; }
+        .paper-chunk-source {
+            max-width: 100%;
+            max-height: none;
+            margin: 0;
+            padding: 14px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            border: 1px solid #e0e7eb;
+            border-radius: 7px;
+            background: #f9fbfc;
+            color: #253740;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.68;
+        }
+        .paper-chunk-foot {
+            color: var(--muted);
+            font-family: var(--font-mono);
+            font-size: 11px;
+        }
+        .paper-chunk-foot span:last-child {
+            min-width: 0;
+            margin-left: auto;
+            overflow-wrap: anywhere;
+        }
         .rag-verify-table {
             min-width: 980px;
             table-layout: fixed;
@@ -7160,6 +7271,7 @@
                                     <button id="previewPdfTab" class="plain active" type="button" data-preview-mode="pdf">原文</button>
                                     <button id="previewTextTab" class="plain" type="button" data-preview-mode="text">正文</button>
                                     <button id="previewEditTab" class="plain" type="button" data-preview-mode="assets">图表算法</button>
+                                    <button id="previewChunksTab" class="plain" type="button" data-preview-mode="chunks">切片</button>
                                 </div>
                                 <div class="reader-tools">
                                     <button id="paperAnnotateToggle" class="plain" type="button">批注</button>
@@ -7559,10 +7671,11 @@
         </div>
     </section>
     <div id="toast" class="toast hidden"></div>
+    <script src="/chunk-view.js"></script>
     <script>
         const storageKey = 'scholar.session.v1';
         const sidebarStorageKey = 'scholar.sidebar.collapsed.v1';
-        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', paperStructures: {}, paperStructureLoading: {}, paperAssetFilter: 'all', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, embeddingStatus: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
+        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', paperStructures: {}, paperStructureLoading: {}, paperAssetFilter: 'all', paperChunkFilter: 'all', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, embeddingStatus: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
         const routeTitles = { chat: '智能会话', tasks: '写作专项', audit: '引用审计', knowledge: '个人知识库', profile: '个人中心' };
         const sourceDefaults = {
             online: { label: '附加约束（可选）', placeholder: '例如：优先近三年、中文核心、包含公开数据集' },
@@ -9240,7 +9353,7 @@
                 state.paperStructures[item.paper_id] = false;
             } finally {
                 delete state.paperStructureLoading[item.paper_id];
-                if (state.selectedPaperId === item.paper_id && ['text', 'assets'].includes(state.paperViewMode)) {
+                if (state.selectedPaperId === item.paper_id && ['text', 'assets', 'chunks'].includes(state.paperViewMode)) {
                     renderPaperWorkbench(false);
                 }
             }
@@ -9341,6 +9454,12 @@
         function bindPaperVisualFilters() {
             document.querySelectorAll('[data-visual-filter]').forEach((button) => button.addEventListener('click', () => {
                 state.paperAssetFilter = button.dataset.visualFilter || 'all';
+                renderPaperWorkbench(false);
+            }));
+        }
+        function bindPaperChunkFilters() {
+            document.querySelectorAll('[data-chunk-filter]').forEach((button) => button.addEventListener('click', () => {
+                state.paperChunkFilter = button.dataset.chunkFilter || 'all';
                 renderPaperWorkbench(false);
             }));
         }
@@ -9560,6 +9679,7 @@
         function selectKnowledge(paperId) {
             state.selectedPaperId = paperId;
             state.paperPage = 0;
+            state.paperChunkFilter = 'all';
             state.paperViewMode = paperFileUrl(selectedPaper()) ? 'pdf' : 'text';
             renderKnowledge();
             renderPaperWorkbench(true);
@@ -9614,7 +9734,7 @@
             const item = selectedPaper();
             const viewer = $('paperViewer');
             const editor = $('paperEditor');
-            viewer.classList.toggle('structured-content', ['text', 'assets'].includes(state.paperViewMode));
+            viewer.classList.toggle('structured-content', ['text', 'assets', 'chunks'].includes(state.paperViewMode));
             if (!item) {
                 $('paperPreviewTitle').textContent = '文献预览与编辑';
                 $('paperPreviewBadge').textContent = '未选择';
@@ -9662,6 +9782,16 @@
                     viewer.innerHTML = '<div class="parsed-editor-stage"><div class="paper-visual-library"><div class="alert">暂无结构块，回退到解析全文；旧版本论文需要重新解析后才会出现图表算法。</div></div></div>';
                 }
                 bindPaperVisualFilters();
+                return;
+            }
+            if (state.paperViewMode === 'chunks') {
+                $('paperPageLabel').textContent = `${structure?.chunks?.length || 0} chunks`;
+                if (structure && window.ScholarChunkView) {
+                    viewer.innerHTML = window.ScholarChunkView.render(structure, state.paperChunkFilter);
+                } else {
+                    viewer.innerHTML = '<div class="paper-chunk-view"><div class="alert">暂无切片数据；旧版本论文需要重新解析后才能查看切片。</div></div>';
+                }
+                bindPaperChunkFilters();
                 return;
             }
             if (structure) {

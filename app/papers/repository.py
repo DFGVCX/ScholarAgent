@@ -70,7 +70,8 @@ class PaperRepository:
         current = await self.session.execute(
             text(
                 """SELECT p.paper_id, pc.content_uuid, pc.content_version,
-                    pc.parser_name, pc.parser_version, pc.parse_status, pc.parse_manifest
+                    pc.parser_name, pc.parser_version, pc.parse_status, pc.parse_manifest,
+                    pc.chunk_strategy, pc.chunker_version
                 FROM paper_contents pc
                 JOIN papers p ON p.paper_uuid=pc.paper_uuid
                     AND p.tenant_id=pc.tenant_id AND p.user_id=pc.user_id
@@ -103,6 +104,20 @@ class PaperRepository:
                 WHERE ps.tenant_id=:tenant_id AND ps.user_id=:user_id
                     AND ps.content_uuid=:content_uuid
                 ORDER BY ps.section_index"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "content_uuid": content_uuid},
+        )
+        chunk_result = await self.session.execute(
+            text(
+                """SELECT pc.chunk_uuid, pc.chunk_index, pc.chunk_type,
+                    pc.section_id, pc.section_path, pc.page_start, pc.page_end,
+                    pc.content, pc.embedding_content, pc.token_count,
+                    pc.source_block_ids, pc.chunk_metadata,
+                    pc.embedding_status, pc.embedding_model
+                FROM paper_chunks pc
+                WHERE pc.tenant_id=:tenant_id AND pc.user_id=:user_id
+                    AND pc.content_uuid=:content_uuid
+                ORDER BY pc.chunk_index"""
             ),
             {"tenant_id": tenant_id, "user_id": user_id, "content_uuid": content_uuid},
         )
@@ -139,6 +154,28 @@ class PaperRepository:
                     "content": str(section.get("content") or ""),
                 }
             )
+        chunks = []
+        for chunk in chunk_result.mappings().all():
+            content = str(chunk.get("content") or "")
+            chunks.append(
+                {
+                    "id": str(chunk["chunk_uuid"]),
+                    "index": int(chunk["chunk_index"]),
+                    "type": str(chunk.get("chunk_type") or "prose"),
+                    "section_id": str(chunk.get("section_id") or ""),
+                    "section_path": str(chunk.get("section_path") or ""),
+                    "page_start": int(chunk["page_start"]) if chunk.get("page_start") is not None else None,
+                    "page_end": int(chunk["page_end"]) if chunk.get("page_end") is not None else None,
+                    "content": content,
+                    "embedding_content": str(chunk.get("embedding_content") or ""),
+                    "character_count": len(content),
+                    "token_count": int(chunk.get("token_count") or 0),
+                    "source_block_ids": list(json_value(chunk.get("source_block_ids"), [])),
+                    "metadata": dict(json_value(chunk.get("chunk_metadata"), {})),
+                    "embedding_status": str(chunk.get("embedding_status") or "pending"),
+                    "embedding_model": str(chunk.get("embedding_model") or ""),
+                }
+            )
         return {
             "paper_id": str(row["paper_id"]),
             "content_version": int(row.get("content_version") or 0),
@@ -147,9 +184,14 @@ class PaperRepository:
                 "version": str(row.get("parser_version") or ""),
                 "status": str(row.get("parse_status") or ""),
             },
+            "chunker": {
+                "strategy": str(row.get("chunk_strategy") or ""),
+                "version": str(row.get("chunker_version") or ""),
+            },
             "manifest": dict(json_value(row.get("parse_manifest"), {})),
             "pages": pages,
             "sections": sections,
+            "chunks": chunks,
         }
 
     async def list_documents(

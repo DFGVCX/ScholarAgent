@@ -58,9 +58,9 @@ class PaperIngestionService:
         self.repository_factory = repository_factory
 
     def _embedding(self) -> QwenEmbeddingClient:
-        if self.embedding is None:
-            self.embedding = QwenEmbeddingClient.from_settings()
-        return self.embedding
+        if self.embedding is not None:
+            return self.embedding
+        return QwenEmbeddingClient.from_settings()
 
     async def ingest(self, tenant_id: str, user_id: str, paper: PaperInput) -> IngestionResult:
         settings = get_settings()

@@ -109,7 +109,7 @@ class ModelSettingsUiTests(unittest.TestCase):
 
     def test_structured_paper_views_use_the_existing_scroll_host(self) -> None:
         self.assertIn(
-            "viewer.classList.toggle('structured-content', ['text', 'assets'].includes(state.paperViewMode));",
+            "viewer.classList.toggle('structured-content', ['text', 'assets', 'chunks'].includes(state.paperViewMode));",
             self.html,
         )
         self.assertIn(
@@ -124,6 +124,8 @@ class ModelSettingsUiTests(unittest.TestCase):
             'viewer.innerHTML = `<div class="parsed-editor-stage">${renderPaperVisualLibrary(item, structure)}</div>`;',
             self.html,
         )
+        self.assertIn('data-preview-mode="chunks">切片</button>', self.html)
+        self.assertIn("window.ScholarChunkView.render(structure, state.paperChunkFilter)", self.html)
 
 
 if __name__ == "__main__":
