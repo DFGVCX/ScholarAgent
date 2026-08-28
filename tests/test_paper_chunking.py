@@ -254,6 +254,32 @@ class PaperChunkingTest(unittest.TestCase):
         self.assertEqual(page_two_types[0], "equation")
         self.assertEqual(page_two_types[-1], "prose")
 
+    def test_same_page_prose_before_equation_keeps_reading_order(self) -> None:
+        heading = ParsedBlock(1, "heading", "2 Method", (0, 0, 100, 20), 0)
+        prose = ParsedBlock(
+            1,
+            "body",
+            "The server first prepares the client weights.",
+            (0, 30, 100, 50),
+            1,
+            metadata={"block_id": "body-before-equation"},
+        )
+        equation = ParsedBlock(
+            1,
+            "equation",
+            "w=sum_i p_i w_i",
+            (0, 60, 100, 90),
+            2,
+            metadata={"block_id": "eq-after-prose", "label": "Eq. 1", "markdown": "$$w=\\sum_i p_i w_i$$"},
+        )
+        page = ParsedPage(1, "", "p", 100, "docling", "usable", (heading, prose, equation))
+        text = prose.text + "\n\n" + equation.text
+        parsed = ParsedPaper(text, (page,), (_section("method", "2 Method", text),), {}, {}, "ready", 1.0)
+
+        chunks = chunking.chunk_hierarchical(parsed)
+
+        self.assertEqual([chunk.chunk_type for chunk in chunks], ["prose", "equation"])
+
     def test_equation_context_stays_in_section_and_uses_complete_sentence(self) -> None:
         old = ParsedBlock(1, "body", "Previous section closing sentence.", (0, 0, 100, 20), 0)
         heading = ParsedBlock(1, "heading", "2 Method", (0, 30, 100, 50), 1)

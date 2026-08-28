@@ -185,6 +185,19 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
             embedding_content="Definitions before. Equation. Explanation after.",
             metadata={"provenance": {"page_number": 1}},
         )
+        code_chunk = ChunkDraft(
+            position=1,
+            content="model.fit(local_data)",
+            content_hash="code-hash",
+            token_count=6,
+            section_id="method",
+            section_path="2 Method",
+            page_start=1,
+            page_end=1,
+            chunk_type="code",
+            source_block_ids=("code-1",),
+            embedding_content="model.fit(local_data)",
+        )
 
         version = await PaperRepository(session).replace_content(
             "tenant-a",
@@ -192,7 +205,7 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
             UUID("00000000-0000-0000-0000-000000000111"),
             parsed.full_text,
             "content-hash",
-            [chunk],
+            [chunk, code_chunk],
             extraction_method="pymupdf_layout",
             parsed=parsed,
             parser_name="structure_aware_v1",
@@ -205,7 +218,10 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
         content_params = next(params for sql, params in session.statements if "INSERT INTO paper_contents" in sql)
         page_params = next(params for sql, params in session.statements if "INSERT INTO paper_pages" in sql)
         section_params = next(params for sql, params in session.statements if "INSERT INTO paper_sections" in sql)
-        chunk_params = next(params for sql, params in session.statements if "INSERT INTO paper_chunks" in sql)
+        chunk_params_list = [
+            params for sql, params in session.statements if "INSERT INTO paper_chunks" in sql
+        ]
+        chunk_params = chunk_params_list[0]
         self.assertEqual(content_params["parse_status"], "ready")
         self.assertEqual(content_params["parser_name"], "structure_aware_v1")
         self.assertEqual(page_params["page_number"], 1)
@@ -220,6 +236,8 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk_params["context_before"], "Definitions before.")
         self.assertIn("Explanation after", chunk_params["embedding_content"])
         self.assertIn('"page_number": 1', chunk_params["chunk_metadata"])
+        self.assertEqual(chunk_params_list[1]["chunk_type"], "code")
+        self.assertEqual(chunk_params_list[1]["source_block_ids"], '["code-1"]')
 
 
 if __name__ == "__main__":

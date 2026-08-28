@@ -26,7 +26,14 @@ class AlembicRevisionGraphTest(unittest.TestCase):
 
         parents = {parent for parent in revisions.values() if parent is not None}
         heads = set(revisions) - parents
-        self.assertEqual(heads, {"20260828_0005"})
+        self.assertEqual(heads, {"20260828_0006"})
+
+    def test_hierarchical_chunk_constraint_accepts_source_code(self) -> None:
+        migration = Path("alembic/versions/20260828_0006_code_chunks.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("'algorithm','code'", migration)
 
 
 if __name__ == "__main__":

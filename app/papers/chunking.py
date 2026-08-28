@@ -663,9 +663,9 @@ def _chunk_prose_section(
     section: ParsedSection,
     target_tokens: int,
     max_tokens: int,
-) -> list[tuple[int, int, ChunkDraft]]:
+) -> list[tuple[int, int, int, int, ChunkDraft]]:
     units = _prose_units_for_section(parsed, section, max_tokens)
-    ordered: list[tuple[int, int, ChunkDraft]] = []
+    ordered: list[tuple[int, int, int, int, ChunkDraft]] = []
     current: list[_TextUnit] = []
 
     def flush() -> None:
@@ -693,7 +693,9 @@ def _chunk_prose_section(
         ordered.append(
             (
                 first.page_number,
-                first.reading_order * 1000 + first.source_offset,
+                first.reading_order,
+                first.source_offset,
+                0,
                 ChunkDraft(
                     position=0,
                     content=content,
@@ -739,7 +741,7 @@ def chunk_hierarchical(
     """
     target_tokens = max(1, min(int(target_tokens), int(max_tokens)))
     max_tokens = max(target_tokens, int(max_tokens))
-    atomic: list[tuple[int, int, ChunkDraft]] = []
+    atomic: list[tuple[int, int, int, int, ChunkDraft]] = []
 
     for page in parsed.pages:
         blocks = list(page.blocks)
@@ -784,7 +786,9 @@ def chunk_hierarchical(
                 atomic.append(
                     (
                         int(page.page_number),
-                        int(block.reading_order) * 100 + piece_index,
+                        int(block.reading_order),
+                        piece_index,
+                        1,
                         ChunkDraft(
                             position=0,
                             content=content,
@@ -810,12 +814,12 @@ def chunk_hierarchical(
                         ),
                     )
                 )
-    ordered: list[tuple[int, int, ChunkDraft]] = [
+    ordered: list[tuple[int, int, int, int, ChunkDraft]] = [
         entry
         for section in parsed.sections
         if str(section.kind).lower() not in _NON_RETRIEVAL_SECTION_KINDS
         for entry in _chunk_prose_section(parsed, section, target_tokens, max_tokens)
     ]
     ordered.extend(atomic)
-    ordered.sort(key=lambda item: (item[0], item[1]))
-    return [replace(chunk, position=index) for index, (_, _, chunk) in enumerate(ordered)]
+    ordered.sort(key=lambda item: item[:4])
+    return [replace(item[-1], position=index) for index, item in enumerate(ordered)]
