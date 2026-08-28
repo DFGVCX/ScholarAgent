@@ -34,6 +34,11 @@ class AlembicRevisionGraphTest(unittest.TestCase):
         )
 
         self.assertIn("'algorithm','code'", migration)
+        downgrade = migration.split("def downgrade() -> None:", 1)[1]
+        self.assertLess(
+            downgrade.index("UPDATE paper_chunks SET chunk_type='prose'"),
+            downgrade.index("CHECK (chunk_type IN ('prose','equation','table','figure','algorithm'))"),
+        )
 
 
 if __name__ == "__main__":

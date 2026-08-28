@@ -22,6 +22,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("ALTER TABLE paper_chunks DROP CONSTRAINT IF EXISTS ck_paper_chunks_type")
+    op.execute("UPDATE paper_chunks SET chunk_type='prose' WHERE chunk_type='code'")
     op.execute(
         "ALTER TABLE paper_chunks ADD CONSTRAINT ck_paper_chunks_type "
         "CHECK (chunk_type IN ('prose','equation','table','figure','algorithm'))"
