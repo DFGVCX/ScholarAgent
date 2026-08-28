@@ -11,11 +11,12 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 import unicodedata
 
-from app.papers.chunking import ChunkDraft, chunk_multimodal, chunk_sections, chunk_text
+from app.papers.chunking import ChunkDraft, chunk_hierarchical, chunk_multimodal, chunk_sections, chunk_text
 from app.papers.parsing import (
     ParsedPaper,
     parse_pdf,
     parse_pdf_formula_aware,
+    parse_pdf_hierarchical,
     parse_pdf_legacy,
     parse_pdf_multimodal,
 )
@@ -315,6 +316,17 @@ def _chunks_for_strategy(
     elif strategy == "multimodal_aware_v3":
         parsed = parse_pdf_multimodal(path)
         chunks = chunk_multimodal(parsed, chunk_size, chunk_overlap) if parsed.status == "ready" else []
+    elif strategy == "scholar_hierarchical_v4":
+        parsed = parse_pdf_hierarchical(path)
+        chunks = (
+            chunk_hierarchical(
+                parsed,
+                target_tokens=max(300, min(600, chunk_size // 2)),
+                max_tokens=800,
+            )
+            if parsed.status == "ready"
+            else []
+        )
     else:
         raise ValueError(f"unsupported strategy: {strategy}")
     return parsed, chunks
@@ -475,7 +487,13 @@ async def compare_strategies(
     top_k: int = 10,
 ) -> dict[str, Any]:
     reports = []
-    for strategy in ("legacy_fixed", "structure_aware_v1", "formula_aware_v2", "multimodal_aware_v3"):
+    for strategy in (
+        "legacy_fixed",
+        "structure_aware_v1",
+        "formula_aware_v2",
+        "multimodal_aware_v3",
+        "scholar_hierarchical_v4",
+    ):
         reports.append(
             await evaluate_strategy(
                 strategy=strategy,

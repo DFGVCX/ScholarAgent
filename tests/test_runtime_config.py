@@ -63,6 +63,18 @@ class RuntimeConfigTests(unittest.TestCase):
         set_setting.assert_any_call("SCHOLAR_RAG_EMBEDDING_API_KEY", "sk-saved")
         execute.assert_not_called()
 
+    def test_runtime_settings_expose_all_pdf_and_chunk_strategies(self) -> None:
+        with patch.object(runtime_config, "read_runtime_config", return_value={}), patch(
+            "app.services.mysql_store.configured_database_name", return_value="scholar_agent"
+        ):
+            payload = runtime_config.public_runtime_config()
+
+        fields = {item["key"]: item for item in payload["items"]}
+        self.assertIn("SCHOLAR_PDF_PARSE_STRATEGY", fields)
+        self.assertIn("scholar_hierarchical_v4", fields["SCHOLAR_PDF_PARSE_STRATEGY"]["options"])
+        self.assertIn("scholar_hierarchical_v4", fields["SCHOLAR_RAG_CHUNK_STRATEGY"]["options"])
+        self.assertIn("multimodal_aware_v3", fields["SCHOLAR_RAG_CHUNK_STRATEGY"]["options"])
+
 
 if __name__ == "__main__":
     unittest.main()

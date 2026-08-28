@@ -36,6 +36,7 @@ services:
       - SCHOLAR_BROWSER_WORKER_TOKEN=${SCHOLAR_BROWSER_WORKER_TOKEN:-}
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
       - SCHOLAR_UPLOAD_DIR=/app/storage/uploads
+      - HF_HOME=/app/storage/models/huggingface
     volumes:
       - scholar_storage:/app/storage
     networks:
@@ -101,6 +102,7 @@ services:
       - SCHOLAR_RAG_CHUNK_STRATEGY=${SCHOLAR_RAG_CHUNK_STRATEGY:-multimodal_aware_v3}
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
       - SCHOLAR_UPLOAD_DIR=/app/storage/uploads
+      - HF_HOME=/app/storage/models/huggingface
       - SCHOLAR_MCP_URL=http://mcp_server:8001/mcp/
       - SCHOLAR_MCP_TOKEN=${SCHOLAR_MCP_TOKEN:-}
     volumes:

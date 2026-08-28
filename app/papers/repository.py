@@ -431,11 +431,16 @@ class PaperRepository:
                     """INSERT INTO paper_chunks (
                         tenant_id, user_id, paper_uuid, content_uuid, content_version,
                         chunk_index, section_id, section_path, page_start, page_end,
-                        char_start, char_end, content, content_hash, token_count
+                        char_start, char_end, content, content_hash, token_count,
+                        chunk_type, parent_section_id, source_block_ids,
+                        context_before, context_after, embedding_content, chunk_metadata
                     ) VALUES (
                         :tenant_id, :user_id, :paper_uuid, :content_uuid, :version,
                         :position, :section_id, :section_path, :page_start, :page_end,
-                        :char_start, :char_end, :content, :content_hash, :token_count)"""
+                        :char_start, :char_end, :content, :content_hash, :token_count,
+                        :chunk_type, :parent_section_id, CAST(:source_block_ids AS jsonb),
+                        :context_before, :context_after, :embedding_content,
+                        CAST(:chunk_metadata AS jsonb))"""
                 ),
                 {
                     "tenant_id": tenant_id,
@@ -453,6 +458,13 @@ class PaperRepository:
                     "content": chunk.content,
                     "content_hash": chunk.content_hash,
                     "token_count": chunk.token_count,
+                    "chunk_type": chunk.chunk_type,
+                    "parent_section_id": chunk.parent_section_id,
+                    "source_block_ids": json.dumps(list(chunk.source_block_ids), ensure_ascii=False),
+                    "context_before": chunk.context_before,
+                    "context_after": chunk.context_after,
+                    "embedding_content": chunk.embedding_content,
+                    "chunk_metadata": json.dumps(dict(chunk.metadata), ensure_ascii=False),
                 },
             )
         await self.session.execute(

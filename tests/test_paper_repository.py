@@ -177,6 +177,13 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
             page_end=1,
             char_start=0,
             char_end=17,
+            chunk_type="equation",
+            parent_section_id="method",
+            source_block_ids=("eq-1",),
+            context_before="Definitions before.",
+            context_after="Explanation after.",
+            embedding_content="Definitions before. Equation. Explanation after.",
+            metadata={"provenance": {"page_number": 1}},
         )
 
         version = await PaperRepository(session).replace_content(
@@ -207,6 +214,12 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk_params["section_id"], "method")
         self.assertEqual(chunk_params["section_path"], "2 Method")
         self.assertEqual(chunk_params["page_start"], 1)
+        self.assertEqual(chunk_params["chunk_type"], "equation")
+        self.assertEqual(chunk_params["parent_section_id"], "method")
+        self.assertEqual(chunk_params["source_block_ids"], '["eq-1"]')
+        self.assertEqual(chunk_params["context_before"], "Definitions before.")
+        self.assertIn("Explanation after", chunk_params["embedding_content"])
+        self.assertIn('"page_number": 1', chunk_params["chunk_metadata"])
 
 
 if __name__ == "__main__":

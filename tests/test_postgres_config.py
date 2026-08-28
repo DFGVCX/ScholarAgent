@@ -54,6 +54,20 @@ class PostgreSQLConfigTest(unittest.TestCase):
         self.assertEqual(settings.pdf_parse_strategy, "formula_aware_v2")
         self.assertEqual(settings.rag_chunk_strategy, "formula_aware_v2")
 
+    def test_hierarchical_v4_strategy_is_selectable(self) -> None:
+        env = {
+            "SCHOLAR_DATABASE_URL": "postgresql+psycopg://u:p@db/scholar",
+            "SCHOLAR_PDF_PARSE_STRATEGY": "scholar_hierarchical_v4",
+            "SCHOLAR_RAG_CHUNK_STRATEGY": "scholar_hierarchical_v4",
+        }
+        with patch.dict(os.environ, env, clear=False), patch(
+            "app.config.read_runtime_config", return_value={}
+        ):
+            settings = get_settings()
+
+        self.assertEqual(settings.pdf_parse_strategy, "scholar_hierarchical_v4")
+        self.assertEqual(settings.rag_chunk_strategy, "scholar_hierarchical_v4")
+
     def test_database_url_must_be_postgresql(self) -> None:
         with patch.dict(
             os.environ,

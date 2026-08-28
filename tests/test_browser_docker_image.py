@@ -31,6 +31,16 @@ class BrowserDockerImageTests(unittest.TestCase):
         self.assertIn("--retries 10", dockerfile)
         self.assertNotIn("--no-cache-dir", dockerfile)
 
+    def test_browser_image_does_not_install_heavy_paper_models(self) -> None:
+        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+        base_path = ROOT / "requirements-base.txt"
+        self.assertTrue(base_path.is_file())
+        base_requirements = base_path.read_text(encoding="utf-8")
+
+        self.assertIn("requirements-base.txt", dockerfile)
+        self.assertNotIn("requirements.txt /app/requirements.txt", dockerfile)
+        self.assertNotIn("docling", base_requirements.lower())
+
     def test_debian_sources_use_https_before_playwright_installs_dependencies(self) -> None:
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 

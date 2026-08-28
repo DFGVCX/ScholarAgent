@@ -106,6 +106,10 @@ class RetrievalService:
                     section_path=candidate.section_path,
                     page_start=candidate.page_start,
                     page_end=candidate.page_end,
+                    chunk_type=candidate.chunk_type,
+                    parent_section_id=candidate.parent_section_id,
+                    source_block_ids=candidate.source_block_ids,
+                    chunk_metadata=candidate.chunk_metadata,
                 )
             )
             if len(hits) >= limit:

@@ -41,6 +41,10 @@ class RetrievalCandidate:
     section_path: str | None = None
     page_start: int | None = None
     page_end: int | None = None
+    chunk_type: str = "prose"
+    parent_section_id: str | None = None
+    source_block_ids: tuple[str, ...] = ()
+    chunk_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -64,10 +68,15 @@ class LocalHit:
     section_path: str | None = None
     page_start: int | None = None
     page_end: int | None = None
+    chunk_type: str = "prose"
+    parent_section_id: str | None = None
+    source_block_ids: tuple[str, ...] = ()
+    chunk_metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["authors"] = list(self.authors)
+        value["source_block_ids"] = list(self.source_block_ids)
         if isinstance(self.published_at, datetime):
             value["published_at"] = self.published_at.isoformat()
         return value

@@ -2,7 +2,7 @@
 
 ## PDF chunking comparison
 
-ScholarAgent keeps `legacy_fixed` (`pypdf` plus the original character/paragraph chunker), `structure_aware_v1` (PyMuPDF page/section parsing plus hierarchical chunking), and `formula_aware_v2` (layout parsing plus targeted pypdf formula recovery and equation-atomic chunking). Compare all three with the same Qwen embedding model and labeled queries:
+ScholarAgent keeps five versioned parsing/chunking strategies. `scholar_hierarchical_v4` uses Docling first, falls back to `multimodal_aware_v3`, and creates hierarchy-aware prose, equation, table, figure, and algorithm chunks. The four historical strategies remain available for regression comparisons.
 
 ```powershell
 python scripts/compare_chunk_strategies.py `
@@ -44,6 +44,17 @@ ScholarAgent/
 本仓库只保留项目运行和协作开发需要的代码、配置模板与测试资产。个人学习文档、本地运行数据、模型权重、上传文件和历史草稿默认不进入 Git。
 
 ## 快速启动
+
+推荐直接使用 Docker Compose：
+
+```powershell
+docker compose up --build -d
+docker compose ps
+```
+
+打开 `http://127.0.0.1:3000/`。首次显式选择 `scholar_hierarchical_v4` 时，Docling 会下载本地版面模型；缓存保存在 `scholar_storage` 卷中。模型暂不可用时会自动回退到 v3，不会丢失论文。数据库升级会由 `migrate` 服务自动执行到 Alembic `20260828_0005`。
+
+以下是不用 Compose、逐个启动服务的开发方式：
 
 1. 创建虚拟环境并安装依赖：
 

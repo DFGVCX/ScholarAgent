@@ -21,6 +21,8 @@ FORMULA_AWARE_PARSER_NAME = "formula_aware_v2"
 FORMULA_AWARE_PARSER_VERSION = "2"
 MULTIMODAL_PARSER_NAME = "multimodal_aware_v3"
 MULTIMODAL_PARSER_VERSION = "3"
+HIERARCHICAL_PARSER_NAME = "scholar_hierarchical_v4"
+HIERARCHICAL_PARSER_VERSION = "4"
 LEGACY_PARSER_NAME = "legacy_fixed"
 LEGACY_PARSER_VERSION = "1"
 
@@ -743,6 +745,41 @@ def parse_pdf_multimodal(path: Path) -> ParsedPaper:
         parser_version=MULTIMODAL_PARSER_VERSION,
         formula_aware=True,
         visual_aware=True,
+    )
+
+
+def parse_pdf_hierarchical(path: Path) -> ParsedPaper:
+    """Use Docling first and retain the proven v3 parser as a safe fallback."""
+    from app.papers.docling_adapter import parse_docling_pdf
+
+    try:
+        parsed = parse_docling_pdf(path)
+        if parsed.status == "ready":
+            return parsed
+        reason = "; ".join(parsed.warnings) or parsed.status
+    except SystemExit as exc:
+        reason = f"Docling exited with status {exc.code}"
+    except Exception as exc:
+        reason = str(exc) or exc.__class__.__name__
+
+    fallback = parse_pdf_multimodal(path)
+    manifest = {
+        **dict(fallback.manifest),
+        "parser": {
+            "name": HIERARCHICAL_PARSER_NAME,
+            "version": HIERARCHICAL_PARSER_VERSION,
+            "engine": "pymupdf_multimodal",
+        },
+        "fallback": {
+            "from": "docling",
+            "to": MULTIMODAL_PARSER_NAME,
+            "reason": reason,
+        },
+    }
+    return replace(
+        fallback,
+        manifest=manifest,
+        warnings=tuple(dict.fromkeys((*fallback.warnings, "docling_fallback"))),
     )
 
 

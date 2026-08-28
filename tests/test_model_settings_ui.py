@@ -63,11 +63,22 @@ class ModelSettingsUiTests(unittest.TestCase):
         )
         self.assertIn("if (!state.runtimeConfig)", self.html)
 
+    def test_rag_settings_can_select_hierarchical_parser_and_chunker(self) -> None:
+        self.assertIn('id="cfgPdfParseStrategy"', self.html)
+        self.assertIn('data-config-key="SCHOLAR_PDF_PARSE_STRATEGY"', self.html)
+        self.assertIn('id="cfgRagChunkStrategy"', self.html)
+        self.assertIn('data-config-key="SCHOLAR_RAG_CHUNK_STRATEGY"', self.html)
+        self.assertGreaterEqual(self.html.count('value="scholar_hierarchical_v4"'), 2)
+        self.assertIn("Docling 主解析 + PyMuPDF 自动回退", self.html)
+
     def test_rag_console_renders_chunk_section_and_page_provenance(self) -> None:
         self.assertIn("ragChunkProvenance(item)", self.html)
         self.assertIn("item.section_path || item.section_id", self.html)
         self.assertIn("item.page_start", self.html)
         self.assertIn("item.page_end", self.html)
+        self.assertIn("item.chunk_type", self.html)
+        self.assertIn("公式", self.html)
+        self.assertIn("表格", self.html)
 
     def test_paper_workbench_renders_structured_visual_blocks(self) -> None:
         self.assertIn('data-preview-mode="assets">图表算法</button>', self.html)

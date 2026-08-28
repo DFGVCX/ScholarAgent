@@ -7442,6 +7442,26 @@
                                         <input id="cfgExternalTimeout" type="number" min="1" step="0.5" data-config-key="SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS" placeholder="8">
                                     </div>
                                     <div>
+                                        <label for="cfgPdfParseStrategy">PDF 解析策略</label>
+                                        <select id="cfgPdfParseStrategy" data-config-key="SCHOLAR_PDF_PARSE_STRATEGY">
+                                            <option value="scholar_hierarchical_v4">层级解析 v4（Docling 主解析 + PyMuPDF 自动回退）</option>
+                                            <option value="multimodal_aware_v3">多模态解析 v3</option>
+                                            <option value="formula_aware_v2">公式感知 v2</option>
+                                            <option value="structure_aware_v1">结构感知 v1</option>
+                                            <option value="legacy_fixed">旧版固定解析</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label for="cfgRagChunkStrategy">论文切片策略</label>
+                                        <select id="cfgRagChunkStrategy" data-config-key="SCHOLAR_RAG_CHUNK_STRATEGY">
+                                            <option value="scholar_hierarchical_v4">层级语义切片 v4（推荐）</option>
+                                            <option value="multimodal_aware_v3">多模态切片 v3</option>
+                                            <option value="formula_aware_v2">公式感知 v2</option>
+                                            <option value="structure_aware_v1">结构感知 v1</option>
+                                            <option value="legacy_fixed">旧版固定切片</option>
+                                        </select>
+                                    </div>
+                                    <div>
                                         <label for="cfgRagChunkSize">切片长度</label>
                                         <input id="cfgRagChunkSize" type="number" min="200" step="50" data-config-key="SCHOLAR_RAG_CHUNK_SIZE" placeholder="900">
                                     </div>
@@ -8309,14 +8329,15 @@
             }
         }
         function ragChunkProvenance(item) {
+            const type = ({ prose: '正文', equation: '公式', table: '表格', figure: '图片', algorithm: '算法' })[item.chunk_type] || '正文';
             const section = escapeHtml(item.section_path || item.section_id || '章节未标注');
             const pageStart = item.page_start == null ? null : Number(item.page_start);
             const pageEnd = item.page_end == null ? pageStart : Number(item.page_end);
-            if (!Number.isFinite(pageStart)) return `${section} · 页码未标注`;
+            if (!Number.isFinite(pageStart)) return `${type} · ${section} · 页码未标注`;
             const pages = Number.isFinite(pageEnd) && pageEnd !== pageStart
                 ? `第 ${pageStart}–${pageEnd} 页`
                 : `第 ${pageStart} 页`;
-            return `${section} · ${pages}`;
+            return `${type} · ${section} · ${pages}`;
         }
         async function searchProfileRag() {
             const query = $('profileRagQuery')?.value.trim() || '';

@@ -26,7 +26,7 @@ class AlembicRevisionGraphTest(unittest.TestCase):
 
         parents = {parent for parent in revisions.values() if parent is not None}
         heads = set(revisions) - parents
-        self.assertEqual(heads, {"20260717_0004"})
+        self.assertEqual(heads, {"20260828_0005"})
 
 
 if __name__ == "__main__":

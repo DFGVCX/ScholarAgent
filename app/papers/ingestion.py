@@ -9,10 +9,12 @@ from typing import Any, Callable
 
 from app.config import get_settings
 from app.db.session import tenant_transaction
-from app.papers.chunking import chunk_multimodal, chunk_sections, chunk_text
+from app.papers.chunking import chunk_hierarchical, chunk_multimodal, chunk_sections, chunk_text
 from app.papers.models import PaperInput, PaperRecord
 from app.papers.parsing import (
     FORMULA_AWARE_PARSER_NAME,
+    HIERARCHICAL_PARSER_NAME,
+    HIERARCHICAL_PARSER_VERSION,
     LEGACY_PARSER_NAME,
     STRUCTURED_PARSER_NAME,
     MULTIMODAL_PARSER_NAME,
@@ -22,6 +24,7 @@ from app.papers.parsing import (
     ParsedSection,
     parse_pdf,
     parse_pdf_formula_aware,
+    parse_pdf_hierarchical,
     parse_pdf_legacy,
     parse_pdf_multimodal,
 )
@@ -83,6 +86,8 @@ class PaperIngestionService:
                     parser = parse_pdf_formula_aware
                 elif settings.pdf_parse_strategy == MULTIMODAL_PARSER_NAME:
                     parser = parse_pdf_multimodal
+                elif settings.pdf_parse_strategy == HIERARCHICAL_PARSER_NAME:
+                    parser = parse_pdf_hierarchical
                 else:
                     parser = parse_pdf
             parsed = await asyncio.to_thread(parser, Path(str(paper.file_uri)))
@@ -126,7 +131,13 @@ class PaperIngestionService:
                 chunk_strategy=settings.rag_chunk_strategy,
             )
 
-        if settings.rag_chunk_strategy == MULTIMODAL_PARSER_NAME:
+        if settings.rag_chunk_strategy == HIERARCHICAL_PARSER_NAME:
+            chunks = chunk_hierarchical(
+                parsed,
+                target_tokens=max(300, min(600, settings.rag_chunk_size // 2)),
+                max_tokens=800,
+            )
+        elif settings.rag_chunk_strategy == MULTIMODAL_PARSER_NAME:
             chunks = chunk_multimodal(parsed, settings.rag_chunk_size, settings.rag_chunk_overlap)
         elif settings.rag_chunk_strategy in {STRUCTURED_PARSER_NAME, FORMULA_AWARE_PARSER_NAME}:
             chunks = chunk_sections(parsed.sections, settings.rag_chunk_size, settings.rag_chunk_overlap)
@@ -153,7 +164,11 @@ class PaperIngestionService:
                     parser_name=parser_name,
                     parser_version=parser_version,
                     chunk_strategy=settings.rag_chunk_strategy,
-                    chunker_version="1",
+                    chunker_version=(
+                        HIERARCHICAL_PARSER_VERSION
+                        if settings.rag_chunk_strategy == HIERARCHICAL_PARSER_NAME
+                        else "1"
+                    ),
                 )
 
         if content_version is None:

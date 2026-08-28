@@ -109,12 +109,12 @@ def get_settings() -> Settings:
     chunk_strategy = _setting_value(
         overrides, "SCHOLAR_RAG_CHUNK_STRATEGY", "multimodal_aware_v3"
     ).strip().lower()
-    if chunk_strategy not in {"legacy_fixed", "structure_aware_v1", "formula_aware_v2", "multimodal_aware_v3"}:
+    if chunk_strategy not in {"legacy_fixed", "structure_aware_v1", "formula_aware_v2", "multimodal_aware_v3", "scholar_hierarchical_v4"}:
         chunk_strategy = "multimodal_aware_v3"
     pdf_parse_strategy = _setting_value(
         overrides, "SCHOLAR_PDF_PARSE_STRATEGY", "multimodal_aware_v3"
     ).strip().lower()
-    if pdf_parse_strategy not in {"legacy_fixed", "structure_aware_v1", "formula_aware_v2", "multimodal_aware_v3"}:
+    if pdf_parse_strategy not in {"legacy_fixed", "structure_aware_v1", "formula_aware_v2", "multimodal_aware_v3", "scholar_hierarchical_v4"}:
         pdf_parse_strategy = "multimodal_aware_v3"
     return Settings(
         env=_setting_value(overrides, "SCHOLAR_ENV", "development"),

@@ -83,6 +83,10 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
             section_path="3 Method",
             page_start=4,
             page_end=5,
+            chunk_type="equation",
+            parent_section_id="method",
+            source_block_ids=("eq-3",),
+            chunk_metadata={"provenance": {"page_number": 4}},
         )
 
         hit = RetrievalService._fuse([candidate], [], 1)[0]
@@ -93,6 +97,10 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["page_start"], 4)
         self.assertEqual(payload["page_end"], 5)
         self.assertEqual(payload["snippet"], candidate.content)
+        self.assertEqual(payload["chunk_type"], "equation")
+        self.assertEqual(payload["parent_section_id"], "method")
+        self.assertEqual(payload["source_block_ids"], ["eq-3"])
+        self.assertEqual(payload["chunk_metadata"]["provenance"]["page_number"], 4)
 
     def test_rrf_merges_by_id_without_recency(self) -> None:
         merged = reciprocal_rank_fusion([["a", "b"], ["b", "c"]], k=60)

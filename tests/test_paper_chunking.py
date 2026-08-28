@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+import app.papers.chunking as chunking
 from app.papers.chunking import chunk_multimodal, chunk_sections, chunk_text
 from app.papers.parsing import ParsedBlock, ParsedPage, ParsedPaper, ParsedSection
 
@@ -30,6 +31,156 @@ def _section(
 
 
 class PaperChunkingTest(unittest.TestCase):
+    def test_hierarchical_chunks_keep_source_text_and_add_retrieval_context(self) -> None:
+        self.assertTrue(hasattr(chunking, "chunk_hierarchical"))
+        before = ParsedBlock(
+            1,
+            "body",
+            "The aggregation weights are proportional to local dataset sizes.",
+            (10, 10, 500, 30),
+            0,
+            metadata={"block_id": "body-before"},
+        )
+        equation = ParsedBlock(
+            1,
+            "equation",
+            "w^{t+1}=sum_i p_i w_i^t",
+            (10, 40, 500, 80),
+            1,
+            metadata={
+                "block_id": "eq-1",
+                "label": "Equation 1",
+                "markdown": "$$w^{t+1}=\\sum_i p_i w_i^t$$",
+            },
+        )
+        after = ParsedBlock(
+            1,
+            "body",
+            "Here p_i denotes the normalized weight of client i.",
+            (10, 90, 500, 120),
+            2,
+            metadata={"block_id": "body-after"},
+        )
+        text = "\n\n".join(block.text for block in (before, equation, after))
+        page = ParsedPage(1, text, "hash", len(text), "docling", "usable", (before, equation, after))
+        section = _section("method", "2 Method", text, kind="method")
+        parsed = ParsedPaper(
+            full_text=text,
+            pages=(page,),
+            sections=(section,),
+            metadata={},
+            manifest={"parser": {"name": "scholar_hierarchical_v4", "version": "4"}},
+            status="ready",
+            quality_score=0.95,
+        )
+
+        chunks = chunking.chunk_hierarchical(parsed, target_tokens=30, max_tokens=80)
+        formula = next(chunk for chunk in chunks if chunk.chunk_type == "equation")
+
+        self.assertEqual(formula.content, "$$w^{t+1}=\\sum_i p_i w_i^t$$")
+        self.assertEqual(formula.source_block_ids, ("eq-1",))
+        self.assertEqual(formula.parent_section_id, "method")
+        self.assertIn("aggregation weights", formula.context_before)
+        self.assertIn("p_i denotes", formula.context_after)
+        self.assertIn(formula.context_before, formula.embedding_content)
+        self.assertIn(formula.context_after, formula.embedding_content)
+        self.assertEqual(formula.metadata["provenance"]["page_number"], 1)
+
+    def test_large_table_chunks_repeat_caption_and_header_by_complete_rows(self) -> None:
+        self.assertTrue(hasattr(chunking, "chunk_hierarchical"))
+        rows = ["| Method | Score |", "| --- | --- |"] + [
+            f"| Model {index} | {80 + index}.0 |" for index in range(8)
+        ]
+        table = ParsedBlock(
+            2,
+            "table",
+            "Table 2. Results",
+            (10, 20, 500, 500),
+            1,
+            metadata={
+                "block_id": "table-2",
+                "label": "Table 2",
+                "caption": "Table 2. Results",
+                "markdown": "\n".join(rows),
+            },
+        )
+        page = ParsedPage(2, table.text, "hash", len(table.text), "docling", "usable", (table,))
+        section = _section("results", "4 Results", table.text, page_start=2, page_end=2, kind="experiment")
+        parsed = ParsedPaper(table.text, (page,), (section,), {}, {}, "ready", 0.9)
+
+        chunks = [
+            chunk
+            for chunk in chunking.chunk_hierarchical(parsed, target_tokens=12, max_tokens=24)
+            if chunk.chunk_type == "table"
+        ]
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(chunk.content.startswith("Table 2. Results\n\n| Method | Score |") for chunk in chunks))
+        self.assertTrue(all(chunk.source_block_ids == ("table-2",) for chunk in chunks))
+        rendered_rows = "\n".join(chunk.content for chunk in chunks)
+        self.assertIn("| Model 0 | 80.0 |", rendered_rows)
+        self.assertIn("| Model 7 | 87.0 |", rendered_rows)
+
+    def test_hierarchical_prose_uses_soft_token_target_without_blind_overlap(self) -> None:
+        sentences = [f"Sentence {index} explains federated aggregation clearly." for index in range(8)]
+        text = " ".join(sentences)
+        blocks = tuple(
+            ParsedBlock(
+                1, "body", sentence, (10, index * 20, 500, index * 20 + 15), index,
+                metadata={"block_id": f"body-{index}"},
+            )
+            for index, sentence in enumerate(sentences)
+        )
+        page = ParsedPage(1, text, "hash", len(text), "docling", "usable", blocks)
+        parsed = ParsedPaper(
+            text,
+            (page,),
+            (_section("method", "2 Method", text, kind="method"),),
+            {}, {}, "ready", 0.9,
+        )
+
+        chunks = [
+            chunk
+            for chunk in chunking.chunk_hierarchical(parsed, target_tokens=12, max_tokens=100)
+            if chunk.chunk_type == "prose"
+        ]
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(chunk.token_count <= 24 for chunk in chunks))
+        combined = " ".join(chunk.content for chunk in chunks)
+        self.assertTrue(all(combined.count(sentence) == 1 for sentence in sentences))
+
+    def test_large_algorithm_splits_by_complete_steps_and_repeats_caption(self) -> None:
+        steps = [f"{index}. Aggregate the update from client {index}." for index in range(1, 9)]
+        algorithm = ParsedBlock(
+            3,
+            "algorithm",
+            "\n".join(steps),
+            (10, 20, 500, 600),
+            1,
+            metadata={
+                "block_id": "algorithm-1",
+                "label": "Algorithm 1",
+                "caption": "Algorithm 1. Secure aggregation",
+                "markdown": "\n".join(steps),
+            },
+        )
+        page = ParsedPage(3, algorithm.text, "hash", len(algorithm.text), "docling", "usable", (algorithm,))
+        section = _section("method", "3 Method", algorithm.text, page_start=3, page_end=3, kind="method")
+        parsed = ParsedPaper(algorithm.text, (page,), (section,), {}, {}, "ready", 0.9)
+
+        chunks = [
+            chunk
+            for chunk in chunking.chunk_hierarchical(parsed, target_tokens=10, max_tokens=24)
+            if chunk.chunk_type == "algorithm"
+        ]
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(chunk.content.startswith("Algorithm 1. Secure aggregation") for chunk in chunks))
+        self.assertTrue(all(chunk.token_count <= 24 for chunk in chunks))
+        combined = "\n".join(chunk.content for chunk in chunks)
+        self.assertTrue(all(combined.count(step) == 1 for step in steps))
+
     def test_multimodal_visual_blocks_are_atomic_and_keep_provenance(self) -> None:
         body = ParsedBlock(2, "body", "Method prose remains searchable.", (10, 10, 200, 30), 0)
         table_markdown = "| Method | Score |\n| --- | --- |\n" + "\n".join(

@@ -72,6 +72,33 @@ class RetrievalEvaluationTest(unittest.TestCase):
         self.assertIs(result, parsed)
         self.assertEqual(chunks, [])
 
+    def test_hierarchical_v4_strategy_remains_available_for_later_comparison(self) -> None:
+        parsed = ParsedPaper(
+            full_text="",
+            pages=(),
+            sections=(),
+            metadata={},
+            manifest={"parser": {"name": "scholar_hierarchical_v4", "version": "4"}},
+            status="ready",
+            quality_score=1.0,
+        )
+        with patch(
+            "app.evaluation.retrieval.parse_pdf_hierarchical", return_value=parsed, create=True
+        ) as parser:
+            try:
+                result, chunks = _chunks_for_strategy(
+                    "scholar_hierarchical_v4",
+                    {"path": str(Path("paper.pdf"))},
+                    chunk_size=900,
+                    chunk_overlap=120,
+                )
+            except ValueError as exc:
+                self.fail(f"v4 should remain selectable for a later comparison: {exc}")
+
+        parser.assert_called_once()
+        self.assertIs(result, parsed)
+        self.assertEqual(chunks, [])
+
     def test_ranking_metrics_compute_recall_precision_mrr_and_ndcg(self) -> None:
         ranked = ["irrelevant", "relevant-a", "relevant-b"]
         relevant = {"relevant-a", "relevant-b"}

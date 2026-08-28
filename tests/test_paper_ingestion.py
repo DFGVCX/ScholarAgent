@@ -243,6 +243,62 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.parse_status, "manual")
         self.assertEqual(repository.saved_paper.full_text, paper.full_text)
 
+    async def test_hierarchical_v4_routes_parser_and_typed_chunker(self) -> None:
+        repository = _Repository(_record())
+        embedding = _Embedding()
+        prose = ParsedBlock(
+            1, "body", "The server aggregates client updates.", (1, 1, 100, 20), 0,
+            metadata={"block_id": "body-1"},
+        )
+        equation = ParsedBlock(
+            1, "equation", "w=sum_i p_i w_i", (1, 30, 100, 50), 1,
+            metadata={"block_id": "eq-1", "label": "Equation 1", "markdown": "$$w=\\sum_i p_i w_i$$"},
+        )
+        text = f"{prose.text}\n\n{equation.text}"
+        parsed = ParsedPaper(
+            text,
+            (ParsedPage(1, text, "hash", len(text), "docling", "usable", (prose, equation)),),
+            (ParsedSection("method", 0, "method", "2 Method", 1, 1, text, 0, len(text), "hash"),),
+            {},
+            {"parser": {"name": "scholar_hierarchical_v4", "version": "4"}},
+            "ready",
+            0.9,
+        )
+
+        @asynccontextmanager
+        async def transaction(*_):
+            yield object()
+
+        service = PaperIngestionService(
+            embedding,
+            transaction_factory=transaction,
+            repository_factory=lambda _: repository,
+        )
+        paper = PaperInput(
+            paper_id="paper-1", source="pdf", title="Paper", file_uri="paper.pdf",
+            file_name="paper.pdf", mime_type="application/pdf", file_sha256="d" * 64,
+            file_size=456,
+        )
+        with patch(
+            "app.papers.ingestion.get_settings",
+            return_value=SimpleNamespace(
+                rag_chunk_size=900,
+                rag_chunk_overlap=120,
+                rag_chunk_strategy="scholar_hierarchical_v4",
+                pdf_parse_strategy="scholar_hierarchical_v4",
+            ),
+        ), patch(
+            "app.papers.ingestion.parse_pdf_hierarchical", return_value=parsed, create=True
+        ) as parser:
+            result = await service.ingest("t", "u", paper)
+
+        parser.assert_called_once()
+        self.assertEqual(result.parser_strategy, "scholar_hierarchical_v4")
+        self.assertEqual(repository.replace_kwargs["chunker_version"], "4")
+        formula = next(chunk for chunk in repository.saved_chunks if chunk.chunk_type == "equation")
+        self.assertEqual(formula.content, "$$w=\\sum_i p_i w_i$$")
+        self.assertIn("aggregates client updates", formula.embedding_content)
+
 
 def _parsed(status: str) -> ParsedPaper:
     if status != "ready":

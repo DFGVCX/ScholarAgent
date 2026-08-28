@@ -1,0 +1,448 @@
+# ScholarAgent RAG 总体 TODO 与完成记录
+
+> 本文档记录 ScholarAgent RAG 子系统从基础建设到最终验收的完整路线，包括已经完成、正在推进和后续计划的工作。它不是仅记录剩余事项的临时清单。
+
+## 1. 范围与边界
+
+### 1.1 RAG 负责范围
+
+RAG 子系统负责以下完整链路：
+
+```text
+论文进入系统
+  → 论文身份与元数据归一化
+  → PDF 解析与结构恢复
+  → Chunk 生成
+  → Embedding
+  → PostgreSQL/pgvector 存储与索引
+  → lexical/vector/hybrid 检索
+  → rerank 与上下文组织
+  → 返回带完整来源信息的 Top-K Chunk
+  → 离线评测、回归测试和运行监控
+```
+
+### 1.2 与 Agent 的边界
+
+RAG 向 Agent 提供统一、稳定、可审计的检索结果，包括：
+
+- 完整 Chunk 原文；
+- 论文 ID、标题和可用元数据；
+- 章节路径、页码、Chunk 序号；
+- lexical、vector、融合或 rerank 分数；
+- 检索模式、告警和降级信息；
+- 本地内容是否可以引用；
+- 外部候选是否仍需采集、解析和入库。
+
+Agent 负责理解意图、决定何时检索、调用检索接口、组织证据、生成回答、执行引用校验和反思。Agent 不应绕过 RAG 接口直接查询数据库。
+
+### 1.3 当前不做
+
+- [ ] **OCR 与扫描版 PDF 解析：暂不做。** 当前目标语料是从 arXiv、出版社、会议网站等渠道下载的可搜索文本 PDF。解析器检测到文本不足时可以继续标记 `needs_ocr`，但近期不接入 OCR 引擎，也不为扫描件效果设定验收指标。
+
+## 2. 状态说明
+
+- `[x]`：已完成并已有代码、测试或评测结果。
+- `[ ]`：尚未完成，需要进入后续开发。
+- “部分完成”：已经具备基础能力，但还未达到最终目标。
+
+## 3. 阶段一：PostgreSQL 与 pgvector 基础设施
+
+### 已完成
+
+- [x] 新分支允许使用全新的 PostgreSQL 数据库，不迁移原有 SQLite、JSON 或 Chroma 数据。
+- [x] PostgreSQL 成为关系数据和论文检索的统一事实源，不再提供运行时 Chroma/SQLite 回退。
+- [x] 使用 PostgreSQL 17 与 `pgvector/pgvector:0.8.5-pg17-bookworm`。
+- [x] 使用 Alembic 创建数据库结构和索引。
+- [x] `paper_chunks.embedding` 使用 `vector(1024)`。
+- [x] 为全文检索建立 `tsvector`/GIN 索引，为向量检索建立 pgvector 索引。
+- [x] 数据访问加入 tenant/user 条件和 PostgreSQL RLS 隔离。
+- [x] 健康检查能够报告 PostgreSQL、pgvector 和当前 Embedding 配置。
+- [x] Docker Compose 包含 PostgreSQL、迁移、后端、Worker、前端等所需服务。
+
+### 后续
+
+- [ ] 增加数据库备份、恢复和迁移回滚的实际演练文档。
+- [ ] 增加面向大规模 Chunk 数量的 HNSW 参数和查询延迟压测。
+- [ ] 建立数据库容量指标，包括论文数、Chunk 数、向量数、索引大小和失败任务数。
+
+参考：
+
+- `docs/superpowers/specs/2026-07-16-postgresql-pgvector-retrieval-design.md`
+- `docs/superpowers/plans/2026-07-16-postgresql-pgvector-retrieval.md`
+- `alembic/versions/20260716_0001_postgres_foundation.py`
+
+## 4. 阶段二：论文数据模型与存储一致性
+
+### 已完成
+
+- [x] 建立 `papers`、`paper_assets`、`paper_contents`、`paper_pages`、`paper_sections`、`paper_chunks` 和 ingestion/re-embedding job 等数据结构。
+- [x] 论文、内容版本、页面、章节、Chunk 和向量之间具有明确关联。
+- [x] 论文身份支持 DOI、arXiv ID 和来源标识归一化。
+- [x] 同一论文重新解析时使用内容版本替换，只有当前版本参与检索。
+- [x] 保存文件 URI、SHA-256、大小、MIME 类型和解析状态。
+- [x] 解析成功但 Embedding 失败时保留正文和 lexical 检索能力。
+- [x] 更换 Embedding 模型时旧向量会变为 stale，并通过持久化任务重新生成。
+- [x] Chunk 保存完整原文、哈希、序号、章节、页码和字符范围。
+- [x] 论文删除、列表、详情和知识库开关遵守租户隔离。
+
+### 后续
+
+- [ ] 为内容版本替换、Worker 重试和并发上传增加真实 PostgreSQL 集成测试。
+- [ ] 明确文件资产的生命周期：论文删除、内容换版、孤立截图和临时文件清理。
+- [ ] 增加数据库约束审计，确认任何 ready Chunk 不会引用非当前或失败内容版本。
+
+## 5. 阶段三：千问 Embedding 与向量生命周期
+
+### 已完成
+
+- [x] 实现 OpenAI 兼容的千问 Embedding 客户端。
+- [x] 当前模型统一为 `qwen3.7-text-embedding`。
+- [x] 当前向量维度统一为 1024。
+- [x] 对返回向量执行数量、维度、有限数值、零向量和归一化检查。
+- [x] 支持批量调用、失败重试和批次大小限制。
+- [x] 支持在保存配置前探测模型是否真实可用。
+- [x] 向量按 Embedding 模型隔离，避免新旧模型向量混用。
+- [x] 提供 pending、ready、stale、failed 状态和重新生成向量任务。
+- [x] 网站支持填写 Embedding Base URL、API Key、模型名并执行连通性测试。
+
+### 后续
+
+- [ ] 在模型用量页面显示本项目累计 Embedding Token、调用次数、失败率和估算费用。
+- [ ] 增加 Embedding 批处理吞吐量、延迟和限流回退测试。
+- [ ] 形成模型切换验收流程：探测 → 保存 → 标记 stale → 重建 → 新模型检索回归。
+
+## 6. 阶段四：PDF 解析
+
+### 6.1 `legacy_fixed` 基线
+
+- [x] 保留旧 `pypdf` 纯文本解析代码用于对照。
+- [x] 保留原有前 50,000 字符截断行为，确保历史基线可复现。
+- [x] 明确该策略不作为生产默认值。
+
+### 6.2 `structure_aware_v1`
+
+- [x] 使用 PyMuPDF 提取文本块、坐标和字号。
+- [x] 重建单栏/双栏阅读顺序。
+- [x] 删除跨页重复的页眉、页脚和页码。
+- [x] 识别摘要、引言、相关工作、方法、实验、结论、参考文献等章节。
+- [x] 保存页面、文本块、章节、页码范围和字符范围。
+- [x] 不再截断论文后部正文。
+
+### 6.3 `formula_aware_v2`
+
+- [x] 保留结构感知解析能力。
+- [x] 检测带编号的展示公式及其空间碎片。
+- [x] 使用 PyMuPDF 与 `pypdf` 文本候选恢复公式。
+- [x] 将可恢复公式保存为 Markdown/LaTeX 展示块。
+- [x] 保存公式编号、边界框、原始候选、恢复来源和置信度。
+- [x] 对低置信度公式保存源 PDF 截图用于人工核查。
+
+### 6.4 `multimodal_aware_v3`
+
+- [x] 保留公式感知解析能力。
+- [x] 检测并区分 equation、table、figure、algorithm。
+- [x] 保存对象标签、标题、页码、边界框、Markdown/原文和截图资产。
+- [x] 改善 IEEE 表格标题识别。
+- [x] 收紧图表截图范围，减少相邻正文被错误截入和大面积留白。
+- [x] 在论文正文工作台展示结构化正文、公式、图、表和算法。
+- [x] 修复结构化正文页面滚动问题。
+
+### 6.5 `scholar_hierarchical_v4`
+
+- [x] 引入 Docling 作为主解析器，并将其输出归一化到项目现有 `ParsedPaper/Page/Section/Block` 模型，业务层不依赖 Docling 类型。
+- [x] 明确关闭 OCR；当前版本只面向网上下载的可搜索文本 PDF。
+- [x] Docling 不可用、模型缺失或解析质量不足时自动回退 `multimodal_aware_v3`。
+- [x] 回退后的 parser engine、原始异常和目标策略写入 parse manifest，避免静默降级。
+- [x] 捕获 Docling 底层模型加载可能产生的 `SystemExit`，不会终止上传 Worker。
+- [x] 表格、公式、图片、算法及版面来源信息统一转换为稳定块模型。
+- [x] Docling 固定为 `2.123.0`，模型缓存挂载到 Docker 持久化卷。
+- [x] 浏览器 Worker 与 MCP 镜像不安装 Docling 重依赖，避免拖慢 Playwright 构建。
+- [x] 使用真实 4 页联邦学习论文验证缺模型时的回退链路，最终成功生成 25 个 v4 Chunk。
+- [ ] 网络可稳定访问 Hugging Face 后，补齐 `TableModel04_rs` 并完成 Docling 主路径的多版式真实 PDF 验收。
+- [ ] 主路径验收通过前，生产默认值继续保留 `multimodal_aware_v3`；v4 可在网站运行配置中显式选择。
+
+### 后续
+
+- [ ] 为不同出版社版式建立解析回归样本：arXiv、IEEE、ACM、Springer、Elsevier。
+- [ ] 为公式恢复建立人工标注的正确率评测，而不只依赖检索 Recall。
+- [ ] 为表格建立结构完整性指标，包括行列数、表头、合并单元格和标题匹配。
+- [ ] 为图片裁剪建立 IoU/人工可用性评测，减少混入正文、漏裁和留白。
+- [ ] 为算法建立步骤完整性、输入输出和编号保真度检查。
+- [ ] 对无法可靠恢复的对象明确输出低置信度和原图回退，禁止伪造结构化内容。
+
+参考：
+
+- `docs/superpowers/plans/2026-07-17-structured-pdf-parsing.md`
+- `docs/superpowers/plans/2026-07-18-formula-aware-pdf-parsing.md`
+- `docs/superpowers/plans/2026-07-18-multimodal-paper-blocks.md`
+
+## 7. 阶段五：Chunk 策略
+
+### 已完成
+
+- [x] 保留 `legacy_fixed` 固定长度/段落切片基线。
+- [x] 实现 `structure_aware_v1` 章节内切片，不跨章节合并。
+- [x] 优先沿段落和句子边界切分，保留完整文本单元重叠。
+- [x] 参考文献、致谢、页眉和页脚不进入检索 Chunk。
+- [x] Embedding 文本加入论文标题和章节路径，但返回内容仍是完整原文。
+- [x] 实现 `formula_aware_v2` 公式边界保护。
+- [x] 实现 `multimodal_aware_v3` 图、表、公式、算法原子 Chunk。
+- [x] 从普通正文中移除已生成原子块的内容，降低重复索引。
+- [x] 实现 `scholar_hierarchical_v4` 层级语义切片：正文按软 token 目标聚合且不盲目重叠。
+- [x] 公式 Chunk 保留 LaTeX/Markdown 原文，并向 Embedding 文本注入前后解释上下文。
+- [x] 大表按完整行拆分，每块重复表题和表头。
+- [x] 长算法按完整步骤拆分，每块重复算法标题，步骤不重复。
+- [x] 图、表、公式和算法保存 `chunk_type`、父章节、来源块 ID、上下文和坐标 provenance。
+- [x] 原始 `content` 与增强后的 `embedding_content` 分离，前端调试仍显示完整原文。
+- [x] 五种策略可配置、可重复运行并可在同一评测集上比较。
+
+### 后续
+
+- [ ] 实现父子 Chunk：小 Chunk 用于召回，父章节/相邻上下文用于交给 Agent。
+- [ ] 实现相邻 Chunk 合并，避免答案跨 Chunk 边界时丢失上下文。
+- [ ] 实现同证据、相邻重叠和同对象重复结果去重。
+- [ ] 比较不同 `chunk_size`、overlap 和原子块上下文注入参数。
+- [ ] 为摘要、结论、公式解释、图表标题等内容设计可控的上下文增强，而不是无条件重复标题。
+- [x] 记录每个 Chunk 的父级章节和来源对象 ID，为后续父子检索提供稳定关系。
+- [ ] 将相邻节点从当前上下文文本升级为可导航的稳定 Chunk ID 关系。
+
+## 8. 阶段六：统一检索接口
+
+### 已完成
+
+- [x] 建立统一 `RetrievalRequest`、`RetrievalResponse`、`LocalHit` 和外部候选契约。
+- [x] 排名和返回单位统一为 Chunk，而不是论文。
+- [x] Top-K 允许返回同一论文的多个 Chunk。
+- [x] 返回完整 Chunk 原文，不在后端或前端截断调试内容。
+- [x] 返回论文、章节、页码、Chunk 序号和可引用状态。
+- [x] 返回 Chunk 类型、父章节、来源块 ID 和结构化 provenance。
+- [x] 实现 PostgreSQL lexical 检索。
+- [x] 实现 pgvector cosine semantic 检索。
+- [x] 使用 RRF 融合 lexical 与 vector 排名。
+- [x] Embedding 不可用时降级到 lexical 检索。
+- [x] 为常见中文查询增加词面别名/英文术语兜底。
+- [x] 本地已入库内容与外部候选分开；外部候选在解析入库前不可引用。
+- [x] Agent、写作流程、API 和 MCP 统一消费检索服务。
+
+### 后续
+
+- [ ] 接入千问 reranker 或可替换的交叉编码 reranker。
+- [ ] 比较“仅 vector、仅 lexical、RRF hybrid、hybrid + reranker”四种生产检索策略。
+- [ ] 增加中文查询扩展：原中文、英文术语、缩写和混合查询。
+- [ ] 支持论文、年份、作者、渠道、章节和对象类型过滤。
+- [ ] 为不同查询类型设置候选池大小，例如普通概念、公式、表格、图和算法查询。
+- [ ] 增加父子检索与多样性约束，避免 Top-K 被同一论文的高度相似 Chunk 占满。
+- [ ] 输出可审计的分数明细：lexical rank、vector rank、RRF、rerank 和最终顺序。
+- [ ] 制定检索超时和降级策略，确保向量服务失败时 lexical 结果仍可用。
+
+## 9. 阶段七：论文元数据
+
+### 已完成或部分完成
+
+- [x] 标题基础字段和 PDF metadata 标题候选。
+- [x] 作者基础字段支持存储和手工/API 输入。
+- [x] 摘要基础字段支持存储。
+- [x] 发表时间基础字段支持存储和手工/API 输入。
+- [x] DOI 提取、归一化和唯一性约束。
+- [x] arXiv ID 提取、归一化和唯一性约束。
+- [x] GitHub/GitLab 代码或项目链接初步提取。
+
+### 后续
+
+- [ ] 提高正文首页标题识别质量，并与 PDF metadata、arXiv/Crossref 结果交叉校验。
+- [ ] 增加标题中文翻译，明确原始标题与派生翻译不能相互覆盖。
+- [ ] 从首页和外部权威元数据中提取完整作者列表。
+- [ ] 提取作者机构及作者—机构对应关系。
+- [ ] 提取并规范化发表时间。
+- [ ] 提取发表渠道，包括期刊、会议、预印本平台。
+- [ ] 合并正文、PDF metadata、Crossref、arXiv 中的 DOI/arXiv 信息并记录来源。
+- [ ] 区分代码仓库、项目主页、数据集和补充材料链接。
+- [ ] 识别论文类型，例如研究论文、综述、系统论文、方法论文和预印本。
+- [ ] 为每个元数据字段保存值、来源、置信度和人工编辑状态。
+- [ ] 在论文工作台完整展示并允许修正上述字段。
+
+目标论文信息：
+
+```text
+标题
+标题翻译
+作者
+机构
+发表时间
+发表渠道
+DOI
+arXiv
+代码 / 项目
+论文类型
+```
+
+## 10. 阶段八：前端调试与运维界面
+
+### 已完成
+
+- [x] 提供模型路由和运行配置界面。
+- [x] 支持填写 API Key、Base URL 和模型名。
+- [x] 支持模型连通性检测。
+- [x] 支持查看 Embedding 状态并重新生成向量。
+- [x] 支持在网站运行配置中选择 PDF 解析策略和 Chunk 策略，包括 v4 与全部历史基线。
+- [x] RAG 验证界面返回 Top-K Chunk。
+- [x] 显示完整 Chunk 原文、论文、章节、页码、score、lexical rank 和 vector rank。
+- [x] 论文工作台支持原文 PDF、结构化正文和图表算法视图。
+- [x] 修复上传 413、正文滚动和中文检索回退等问题。
+
+### 后续
+
+- [ ] 增加单次查询调试抽屉，展示 query embedding、候选池和各阶段排名变化。
+- [ ] 增加策略切换，允许在相同查询下并排比较 vector、lexical、hybrid 和 rerank。
+- [ ] 增加 Chunk 父子关系、相邻 Chunk 和合并后上下文预览。
+- [ ] 增加低置信度公式、表格、图片和算法的人工修正入口。
+- [ ] 增加论文元数据完整度和待修正字段提示。
+
+## 11. 阶段九：RAG 评测体系
+
+### 已完成
+
+- [x] 建立 `evaluation/corpus.jsonl` 固定论文身份、路径、页数和 SHA-256。
+- [x] 建立 `evaluation/queries.jsonl` 保存中英文查询和策略无关的人工证据。
+- [x] 当前语料包含 7 篇联邦学习论文，共 82 页。
+- [x] 当前查询包含 28 条，其中中文 21 条、英文 7 条。
+- [x] 每条查询标注来源论文、页码、证据短语和证据原文。
+- [x] 使用固定千问 Embedding 比较四种解析/切片策略。
+- [x] 输出完整 Top-10 排名、Chunk 原文和来源信息。
+- [x] 计算 Recall@K、Precision@K、MRR 和 NDCG@K。
+- [x] 使用语料指纹和查询指纹保证跨版本结果可比。
+- [x] 完成第一轮四策略基准报告。
+
+第一轮结果摘要：
+
+- `structure_aware_v1` 的纯文本 Top-1 和 MRR 最好。
+- `formula_aware_v2` 与结构感知基本持平，同时保留更好的公式边界。
+- `multimodal_aware_v3` 保真度更高，但更多、更短的原子 Chunk 使 Top-1 略有下降。
+- `legacy_fixed` 受语义边界和 50,000 字符截断影响，只保留为基线。
+
+### 后续
+
+- [ ] 扩充到更多论文和更多版式，避免 7 篇论文产生偶然结论。
+- [ ] 增加公式专项查询及人工公式证据。
+- [ ] 增加表格专项查询及单元格/行级证据。
+- [ ] 增加图片专项查询及图题、图中文字和视觉证据。
+- [ ] 增加算法专项查询及步骤级证据。
+- [ ] 分别报告中文、英文、缩写和跨语言查询指标。
+- [ ] 建立生产检索评测，比较 lexical、vector、hybrid 和 hybrid + reranker。
+- [ ] 增加查询级失败分类：未解析、未切入、未召回、排序过低、证据判定问题。
+- [ ] 增加检索延迟、Embedding Token、索引大小和调用成本指标。
+- [ ] 每次调整解析、切片、Embedding 或排序后自动生成新报告并与基线比较。
+
+参考：
+
+- `evaluation/README.md`
+- `evaluation/reports/analysis.md`
+- `evaluation/reports/chunk-comparison.md`
+- `evaluation/reports/chunk-comparison.json`
+
+## 12. 阶段十：RAG 与 Agent 集成验收
+
+### 已完成
+
+- [x] Agent、写作 Agent、MCP 和 Web API 使用统一检索契约。
+- [x] 本地 ready Chunk 标记为可引用。
+- [x] 外部搜索候选在采集和入库前保持不可引用。
+- [x] 检索结果包含完整 Chunk 和来源信息，能够支持引用定位。
+
+### RAG 侧后续
+
+- [ ] 为 Agent 提供稳定的父级上下文展开接口。
+- [ ] 为 Agent 提供按 token budget 截取上下文的能力，但不得截断原始存储 Chunk。
+- [ ] 为回答中的每条引用提供 paper/chunk/page 可追溯标识。
+- [ ] 增加 Agent 调用场景的检索回放：保存查询、策略、候选和最终上下文。
+- [ ] 建立“RAG 已正确返回证据，但 Agent 未采用”与“RAG 未返回证据”的错误归因。
+
+### 不属于 RAG 的工作
+
+- Agent 意图规划、任务分解和多 Agent 调度。
+- 写作风格、章节生成和反思重写。
+- Agent 长短期记忆和会话压缩。
+- 引用文本如何融入最终答案的语言生成策略。
+
+## 13. 阶段十一：测试、文档与发布质量
+
+### 已完成
+
+- [x] 主要解析、切片、Embedding、repository、retrieval 和 evaluation 模块具有单元测试。
+- [x] 已使用真实联邦学习论文进行浏览器和 API 调试。
+- [x] 已编写中文启动文档和 Docker Compose 启动流程。
+- [x] 已保留各阶段设计、实施计划和评测报告。
+
+### 后续
+
+- [ ] 修复或规避 Windows Python 3.14 ProactorEventLoop 与异步 psycopg 的本地测试兼容问题。
+- [ ] Docker 启动后重新执行 PostgreSQL、上传、解析、索引、检索和页面展示的完整 E2E。
+- [ ] 建立固定的 RAG 回归测试命令和 CI 任务。
+- [ ] 更新仍提到 Chroma 或“尚未迁移 PostgreSQL/pgvector”的过时文档。
+- [ ] 将旧计划文档中的复选框状态与实际提交同步，或明确标注为历史计划。
+- [ ] 清理 `tmp/` 中的调试 PDF、截图和 JSON 结果，防止测试资产混入正式提交。
+- [ ] 检查密钥、上传论文、生成截图和数据库数据均未进入 Git。
+- [ ] 在提交和发布前运行完整测试、`docker compose config` 和浏览器验收。
+
+## 14. 后续执行优先级
+
+### P0：建立可信的生产检索基线
+
+- [ ] 扩展评测程序，使其可以使用与网站一致的 PostgreSQL lexical/vector/hybrid 查询链路。
+- [ ] 比较 vector、lexical、hybrid，确认中文检索和 RRF 的真实收益。
+- [ ] 为当前默认 `multimodal_aware_v3` 建立正式生产基线。
+- [ ] 完成 Docker 环境端到端回归。
+- [ ] 补齐 Docling 表格模型并通过主解析路径验收，再评估是否把 v4 切为默认。
+
+### P1：提高 Top-1 和上下文质量
+
+- [ ] 接入 reranker。
+- [ ] 实现父子 Chunk、相邻合并和重复结果去重。
+- [ ] 增加中文/英文术语查询扩展。
+- [ ] 重点观察 Recall@1、MRR、NDCG@3 和下游上下文 Token。
+
+### P2：补全论文信息和专项评测
+
+- [ ] 完成标题翻译、作者、机构、时间、渠道、代码/项目和论文类型。
+- [ ] 扩充公式、表格、图片、算法专项数据集。
+- [ ] 建立对象解析质量与检索质量两套独立指标。
+
+### P3：规模、成本和长期维护
+
+- [ ] 扩大语料规模并进行数据库与检索性能压测。
+- [ ] 增加模型调用成本和索引容量监控。
+- [ ] 建立可重复的版本回归、报告归档和发布门禁。
+
+## 15. RAG 最终完成标准
+
+只有同时满足以下条件，RAG 子系统才可以标记为稳定版本：
+
+- [ ] 文本型论文 PDF 能稳定解析，正文顺序、章节和来源页码可追溯。
+- [ ] 论文元数据达到目标字段要求，并记录来源与人工修正状态。
+- [ ] 图、表、公式和算法具有可审计的结构化内容或可靠原图回退。
+- [ ] Chunk 不跨无关章节，公式/表格/图片/算法不会被破坏性切分。
+- [ ] PostgreSQL 中不存在当前内容版本与 ready 向量不一致的问题。
+- [ ] lexical、vector、hybrid 和 rerank 都可以独立调试和评测。
+- [ ] 中文和英文查询在固定评测集上达到确定的 Recall@K、MRR 和 NDCG 门槛。
+- [ ] 检索结果向 Agent 提供完整原文、论文、章节、页码、分数和可引用状态。
+- [ ] Embedding 或 reranker 不可用时具有明确、可测试的降级行为。
+- [ ] 上传、解析、索引、检索、重新生成向量和删除流程通过 Docker E2E。
+- [ ] 所有结果可以通过语料指纹、查询指纹、模型和策略版本复现。
+
+## 16. 当前里程碑
+
+当前已经完成：
+
+```text
+PostgreSQL/pgvector 基础
+  → 论文模型与存储一致性
+  → 千问 Embedding
+  → 结构/公式/多模态 PDF 解析
+  → Docling 主解析 + PyMuPDF 自动回退
+  → 五种 Chunk 策略（含 scholar_hierarchical_v4）
+  → Top-K Chunk 与混合检索
+  → 前端调试能力
+  → 第一版人工评测集与四策略基准
+```
+
+当前已完成 v4 解析/切片代码和真实回退验证，正在从“RAG 能用”进入“主解析路径可验收、质量可量化、可稳定回归”的阶段。近期主线是补齐 Docling 本地模型、Docker E2E、生产检索评测、reranker、父子上下文展开、查询扩展和论文元数据补全，不包含 OCR 与扫描件解析。
