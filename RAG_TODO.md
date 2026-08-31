@@ -61,7 +61,8 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 
 ### 后续
 
-- [ ] 增加数据库备份、恢复和迁移回滚的实际演练文档。
+- [x] 增加数据库备份、隔离恢复和迁移回滚的一键演练脚本与文档；脚本只在一次性 `_restore_check_<PID>` 数据库执行恢复和 Alembic downgrade/upgrade，静态安全回归已通过。
+- [ ] Docker 恢复后实际运行 `scripts/postgres_disaster_rehearsal.ps1`，记录备份 SHA-256、恢复后的论文/Chunk 数与 Alembic revision；当前 Linux engine pipe 缺失，不能虚报真实演练完成。
 - [ ] 增加面向大规模 Chunk 数量的 HNSW 参数和查询延迟压测。
 - [x] 建立数据库容量指标：论文、当前 Chunk、ready 向量、失败/待处理任务、Chunk 表字节和索引字节，并通过 `/knowledge/rag/stats` 返回。
 

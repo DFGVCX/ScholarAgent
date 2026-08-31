@@ -36,6 +36,7 @@ AGENTS.md
 # Runtime data and generated artifacts
 storage/
 logs/
+backups/
 *.log
 *.tmp
 
