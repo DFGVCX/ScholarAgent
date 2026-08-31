@@ -10,6 +10,7 @@ from typing import Any, Callable
 from app.config import get_settings
 from app.db.session import tenant_transaction
 from app.papers.chunking import chunk_hierarchical, chunk_multimodal, chunk_sections, chunk_text
+from app.papers.metadata import build_bibliography
 from app.papers.models import PaperInput, PaperRecord
 from app.papers.parsing import (
     FORMULA_AWARE_PARSER_NAME,
@@ -120,6 +121,18 @@ class PaperIngestionService:
             )
         else:
             parsed = _manual_parsed_paper(paper.full_text)
+
+        prepared = replace(
+            prepared,
+            metadata={
+                **dict(prepared.metadata),
+                "bibliography": build_bibliography(
+                    prepared,
+                    parsed.metadata,
+                    parsed.full_text,
+                ),
+            },
+        )
 
         if parsed.status not in {"ready", "manual"}:
             warning = "; ".join(parsed.warnings) or parsed.error or "PDF parsing failed"

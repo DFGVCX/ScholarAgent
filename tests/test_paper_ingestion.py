@@ -174,6 +174,25 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repository.saved_chunks[0].section_id, "method")
         self.assertTrue(embedding.texts[0].startswith("Paper: Paper\nSection: 2 Method\n\n"))
         self.assertEqual(repository.replace_kwargs["parser_name"], "structure_aware_v1")
+        self.assertEqual(
+            set(repository.saved_paper.metadata["bibliography"]),
+            {
+                "title",
+                "title_translation",
+                "authors",
+                "institutions",
+                "published_at",
+                "venue",
+                "doi",
+                "arxiv_id",
+                "links",
+                "paper_type",
+            },
+        )
+        self.assertEqual(
+            repository.saved_paper.metadata["bibliography"]["title"]["value"],
+            "Paper",
+        )
 
     async def test_needs_ocr_pdf_is_not_embedded(self) -> None:
         repository = _Repository(_record())

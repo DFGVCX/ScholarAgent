@@ -24,6 +24,7 @@ RAG_TEST_TARGETS: tuple[str, ...] = (
     "tests.test_paper_assets",
     "tests.test_paper_chunking",
     "tests.test_paper_ingestion",
+    "tests.test_paper_metadata",
     "tests.test_paper_repository",
     "tests.test_qwen_embedding",
     "tests.test_embedding_lifecycle",
