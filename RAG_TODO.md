@@ -408,7 +408,7 @@ arXiv
 
 - [x] 修复 Windows Python 3.14 默认 ProactorEventLoop 与异步 psycopg 不兼容：数据库运行时入口在 Windows 提前切换 Selector policy，并有平台专项测试；Python 3.16 移除 policy API 时需改用宿主 `loop_factory`。
 - [ ] Docker 启动后重新执行 PostgreSQL、上传、解析、索引、检索和页面展示的完整 E2E。
-- [ ] 建立固定的 RAG 回归测试命令和 CI 任务。
+- [x] 建立固定 RAG 回归命令 `python scripts/run_rag_regression.py` 和 GitHub Actions 任务；固定清单显式排除 Docker、真实 PostgreSQL、浏览器和外部模型 API 测试，E2E 仍是独立门禁。
 - [ ] 更新仍提到 Chroma 或“尚未迁移 PostgreSQL/pgvector”的过时文档。
 - [ ] 将旧计划文档中的复选框状态与实际提交同步，或明确标注为历史计划。
 - [ ] 清理 `tmp/` 中的调试 PDF、截图和 JSON 结果，防止测试资产混入正式提交。
@@ -499,6 +499,7 @@ PostgreSQL/pgvector 基础
 - 已增加 Docling 模型 `prepare/check` 诊断，模型不完整或不是 CPU PyTorch 时不会误报 ready。
 - 当前 Docker Desktop 4.69.0 在损坏的 `%LOCALAPPDATA%\Docker\run\dockerInference` ReparsePoint 上稳定复现错误 1920 并崩溃；当前工具不能删除该对象，恢复步骤已写入中文启动说明。
 - Windows Python 3.14 的 async psycopg 已从 Proactor 切到 Selector event loop；专项测试通过。原先两个知识库集成用例不再抛 `InterfaceError`，但在 Docker daemon 不可用时会继续等待 PostgreSQL，不能把这部分误报为 E2E 通过。
+- 已建立无外部服务依赖的固定 RAG 回归入口与 CI；本地首次清单审计排除了会真实写库的 `test_paper_acquisition`，最终 164 个解析、切片、公式、多模态、仓储、Embedding、检索和评测测试通过。
 - Docker daemon 恢复后，先执行模型准备命令，再完成 backend/worker 全量构建和真实 PDF 主路径验收；这两项仍保持未完成。
 - 已对 7 篇、82 页真实文本 PDF 跑 `multimodal_aware_v3` 回退解析 + `scholar_hierarchical_v4` 切片审计；所有原子 Chunk 非空且无超 800 token 项，详细记录见 `docs/operations/RAG_CHUNK_AUDIT_2026-08-31.md`。
 - 审计发现并修复同页重复公式编号造成的元数据串写/重复 Chunk；另记录 4 个作者、机构或 arXiv 标识短 preamble Chunk，待首页元数据结构化后安全排除，不使用长度阈值直接误删。
