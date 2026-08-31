@@ -23,6 +23,65 @@ class RetrievalRequest:
 
 
 @dataclass(frozen=True)
+class ContextWindowRequest:
+    tenant_id: str
+    user_id: str
+    chunk_id: str
+    before: int = 1
+    after: int = 1
+    token_budget: int = 2048
+
+    def __post_init__(self) -> None:
+        if not self.tenant_id or not self.user_id or not self.chunk_id:
+            raise ValueError("tenant_id, user_id and chunk_id are required")
+        object.__setattr__(self, "before", max(0, min(int(self.before), 8)))
+        object.__setattr__(self, "after", max(0, min(int(self.after), 8)))
+        object.__setattr__(self, "token_budget", max(1, min(int(self.token_budget), 32768)))
+
+
+@dataclass(frozen=True)
+class ContextChunk:
+    chunk_id: str
+    chunk_index: int
+    content: str
+    token_count: int
+    section_id: str | None = None
+    section_path: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    chunk_type: str = "prose"
+    parent_section_id: str | None = None
+    source_block_ids: tuple[str, ...] = ()
+    chunk_metadata: dict[str, Any] | None = None
+    truncated: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["source_block_ids"] = list(self.source_block_ids)
+        return value
+
+
+@dataclass(frozen=True)
+class ContextWindowResponse:
+    center_chunk_id: str
+    chunks: tuple[ContextChunk, ...]
+    token_budget: int
+    total_tokens: int
+    budget_exceeded: bool
+    truncated: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "center_chunk_id": self.center_chunk_id,
+            "chunks": [chunk.to_dict() for chunk in self.chunks],
+            "token_budget": self.token_budget,
+            "total_tokens": self.total_tokens,
+            "budget_exceeded": self.budget_exceeded,
+            "truncated": self.truncated,
+        }
+
+
+@dataclass(frozen=True)
 class RetrievalCandidate:
     chunk_id: str
     chunk_index: int

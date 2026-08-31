@@ -5,6 +5,9 @@ from typing import Any, Protocol
 
 from app.retrieval.embedding import EmbeddingUnavailable, QwenEmbeddingClient
 from app.retrieval.models import (
+    ContextChunk,
+    ContextWindowRequest,
+    ContextWindowResponse,
     ExternalCandidate,
     LocalHit,
     RetrievalCandidate,
@@ -14,6 +17,8 @@ from app.retrieval.models import (
 
 
 class RetrievalRepository(Protocol):
+    async def context_window(self, request: ContextWindowRequest) -> list[ContextChunk]: ...
+
     async def lexical_candidates(self, request: RetrievalRequest) -> list[RetrievalCandidate]: ...
 
     async def vector_candidates(
@@ -68,6 +73,60 @@ class RetrievalService:
             local_hits=tuple(hits),
             external_candidates=external,
             warnings=tuple(warnings),
+        )
+
+    async def expand_context(self, request: ContextWindowRequest) -> ContextWindowResponse:
+        chunks = await self.repository.context_window(request)
+        if not any(chunk.chunk_id == request.chunk_id for chunk in chunks):
+            raise LookupError("chunk not found in the current knowledge-base version")
+        return self._budget_context(request, chunks)
+
+    @staticmethod
+    def _budget_context(
+        request: ContextWindowRequest, chunks: Sequence[ContextChunk]
+    ) -> ContextWindowResponse:
+        center = next(
+            (chunk for chunk in chunks if chunk.chunk_id == request.chunk_id),
+            None,
+        )
+        if center is None:
+            raise LookupError("center chunk is missing from the context window")
+
+        before = [chunk for chunk in chunks if chunk.chunk_index < center.chunk_index]
+        after = [chunk for chunk in chunks if chunk.chunk_index > center.chunk_index]
+        before = before[-request.before :] if request.before else []
+        after = after[: request.after] if request.after else []
+        selected = [center]
+        total_tokens = max(1, center.token_count)
+        before_nearest = list(reversed(before))
+        before_blocked = False
+        after_blocked = False
+        for distance in range(max(len(before_nearest), len(after))):
+            if distance < len(before_nearest) and not before_blocked:
+                chunk = before_nearest[distance]
+                chunk_tokens = max(1, chunk.token_count)
+                if total_tokens + chunk_tokens <= request.token_budget:
+                    selected.append(chunk)
+                    total_tokens += chunk_tokens
+                else:
+                    before_blocked = True
+            if distance < len(after) and not after_blocked:
+                chunk = after[distance]
+                chunk_tokens = max(1, chunk.token_count)
+                if total_tokens + chunk_tokens <= request.token_budget:
+                    selected.append(chunk)
+                    total_tokens += chunk_tokens
+                else:
+                    after_blocked = True
+        selected.sort(key=lambda chunk: chunk.chunk_index)
+        requested_count = 1 + len(before) + len(after)
+        return ContextWindowResponse(
+            center_chunk_id=request.chunk_id,
+            chunks=tuple(selected),
+            token_budget=request.token_budget,
+            total_tokens=total_tokens,
+            budget_exceeded=total_tokens > request.token_budget,
+            truncated=len(selected) < requested_count,
         )
 
     @staticmethod

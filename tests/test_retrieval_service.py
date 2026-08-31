@@ -4,7 +4,12 @@ from dataclasses import replace
 import unittest
 
 from app.retrieval.embedding import EmbeddingUnavailable
-from app.retrieval.models import RetrievalRequest, RetrievalCandidate
+from app.retrieval.models import (
+    ContextChunk,
+    ContextWindowRequest,
+    RetrievalCandidate,
+    RetrievalRequest,
+)
 from app.retrieval.service import RetrievalService, reciprocal_rank_fusion
 
 
@@ -55,6 +60,77 @@ class _BrokenEmbedding:
 
 
 class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
+    def test_context_window_keeps_whole_chunks_within_budget(self) -> None:
+        chunks = [
+            ContextChunk("before-2", 0, "older", 3, "method"),
+            ContextChunk("before-1", 1, "before", 4, "method"),
+            ContextChunk("center", 2, "center evidence", 8, "method"),
+            ContextChunk("after-1", 3, "after", 5, "method"),
+            ContextChunk("after-2", 4, "newer", 6, "method"),
+        ]
+
+        response = RetrievalService._budget_context(
+            ContextWindowRequest(
+                "tenant", "user", "center", before=2, after=2, token_budget=17
+            ),
+            chunks,
+        )
+
+        self.assertEqual(
+            [chunk.chunk_id for chunk in response.chunks],
+            ["before-1", "center", "after-1"],
+        )
+        self.assertEqual(response.total_tokens, 17)
+        self.assertFalse(response.budget_exceeded)
+        self.assertTrue(response.truncated)
+        self.assertEqual(response.center_chunk_id, "center")
+
+    def test_context_window_never_truncates_center_chunk(self) -> None:
+        chunks = [ContextChunk("center", 7, "x" * 500, 120, "results")]
+
+        response = RetrievalService._budget_context(
+            ContextWindowRequest("tenant", "user", "center", token_budget=32),
+            chunks,
+        )
+
+        self.assertEqual(response.chunks[0].content, "x" * 500)
+        self.assertEqual(response.total_tokens, 120)
+        self.assertTrue(response.budget_exceeded)
+        self.assertFalse(response.chunks[0].truncated)
+
+    def test_context_window_can_request_center_only(self) -> None:
+        chunks = [
+            ContextChunk("before", 0, "before", 3),
+            ContextChunk("center", 1, "center", 4),
+            ContextChunk("after", 2, "after", 3),
+        ]
+
+        response = RetrievalService._budget_context(
+            ContextWindowRequest("tenant", "user", "center", before=0, after=0),
+            chunks,
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in response.chunks], ["center"])
+
+    def test_context_window_never_skips_an_oversized_immediate_neighbor(self) -> None:
+        chunks = [
+            ContextChunk("far-before", 0, "far", 2),
+            ContextChunk("near-before", 1, "near" * 20, 40),
+            ContextChunk("center", 2, "center", 8),
+            ContextChunk("near-after", 3, "after", 3),
+        ]
+
+        response = RetrievalService._budget_context(
+            ContextWindowRequest(
+                "tenant", "user", "center", before=2, after=1, token_budget=16
+            ),
+            chunks,
+        )
+
+        self.assertEqual(
+            [chunk.chunk_id for chunk in response.chunks], ["center", "near-after"]
+        )
+
     def test_hit_snippet_preserves_complete_chunk(self) -> None:
         long_content = "x" * 1500
         candidate = replace(_candidate("a", "p1", 1.0), content=long_content)

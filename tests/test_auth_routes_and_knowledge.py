@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -13,6 +14,7 @@ from app.routes.knowledge import (
     FileTextUpdateDTO,
     KnowledgePaperDTO,
     delete_knowledge,
+    expand_rag_context,
     get_file_annotations,
     get_knowledge_file,
     list_knowledge,
@@ -26,6 +28,29 @@ from app.services.rag_service import rag_service
 
 
 class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_context_expansion_uses_authenticated_tenant_and_user(self):
+        chunk_id = uuid4()
+        expected = {
+            "center_chunk_id": str(chunk_id),
+            "chunks": [],
+            "token_budget": 512,
+        }
+        with patch.object(
+            rag_service, "expand_context", new=AsyncMock(return_value=expected)
+        ) as expand:
+            response = await expand_rag_context(
+                chunk_id,
+                before=2,
+                after=3,
+                token_budget=512,
+                x_api_key="demo-key",
+            )
+
+        self.assertEqual(response, expected)
+        expand.assert_awaited_once_with(
+            "tenant_demo", "user_demo", str(chunk_id), 2, 3, 512
+        )
+
     async def test_visual_asset_resolution_requires_manifest_reference_and_safe_name(self):
         from tempfile import TemporaryDirectory
 

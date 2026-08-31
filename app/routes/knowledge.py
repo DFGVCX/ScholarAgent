@@ -4,6 +4,7 @@ import hashlib
 import mimetypes
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 from zipfile import ZipFile
 import xml.etree.ElementTree as ET
 
@@ -549,6 +550,28 @@ async def search_rag(
 ) -> dict[str, Any]:
     user = _current_user(x_api_key)
     return await rag_service.search(user.tenant_id, user.user_id, query, limit)
+
+
+@router.get("/rag/chunks/{chunk_id}/context")
+async def expand_rag_context(
+    chunk_id: UUID,
+    before: int = Query(default=1, ge=0, le=8),
+    after: int = Query(default=1, ge=0, le=8),
+    token_budget: int = Query(default=2048, ge=1, le=32768),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    try:
+        return await rag_service.expand_context(
+            user.tenant_id,
+            user.user_id,
+            str(chunk_id),
+            before,
+            after,
+            token_budget,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/rag/stats")

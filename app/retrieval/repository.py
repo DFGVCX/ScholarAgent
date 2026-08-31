@@ -7,7 +7,12 @@ from typing import Any, Mapping, Sequence
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.retrieval.models import RetrievalCandidate, RetrievalRequest
+from app.retrieval.models import (
+    ContextChunk,
+    ContextWindowRequest,
+    RetrievalCandidate,
+    RetrievalRequest,
+)
 
 
 _CHINESE_ACADEMIC_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -42,6 +47,44 @@ def _lexical_aliases(query: str) -> tuple[str, ...]:
 class PostgresRetrievalRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def context_window(self, request: ContextWindowRequest) -> list[ContextChunk]:
+        result = await self.session.execute(
+            text(
+                """WITH center AS (
+                    SELECT c.content_uuid, c.chunk_index
+                    FROM paper_chunks c
+                    JOIN papers p ON p.paper_uuid=c.paper_uuid
+                        AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                    WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id
+                        AND p.deleted_at IS NULL AND p.in_knowledge_base=true
+                        AND c.content_version=p.current_content_version
+                        AND c.chunk_uuid=CAST(:chunk_id AS uuid)
+                )
+                SELECT c.chunk_uuid::text AS chunk_id, c.chunk_index,
+                    c.content, c.token_count, c.section_id, c.section_path,
+                    c.page_start, c.page_end, c.chunk_type, c.parent_section_id,
+                    c.source_block_ids, c.chunk_metadata
+                FROM center
+                JOIN paper_chunks c ON c.content_uuid=center.content_uuid
+                    AND c.tenant_id=:tenant_id AND c.user_id=:user_id
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.content_version=p.current_content_version
+                    AND p.deleted_at IS NULL AND p.in_knowledge_base=true
+                    AND c.chunk_index BETWEEN center.chunk_index - :before
+                        AND center.chunk_index + :after
+                ORDER BY c.chunk_index"""
+            ),
+            {
+                "tenant_id": request.tenant_id,
+                "user_id": request.user_id,
+                "chunk_id": request.chunk_id,
+                "before": request.before,
+                "after": request.after,
+            },
+        )
+        return [self._context_chunk(row) for row in result.mappings().all()]
 
     async def lexical_candidates(self, request: RetrievalRequest) -> list[RetrievalCandidate]:
         aliases = _lexical_aliases(request.query)
@@ -191,4 +234,21 @@ class PostgresRetrievalRepository:
                 str(row["previous_chunk_id"]) if row.get("previous_chunk_id") else None
             ),
             next_chunk_id=str(row["next_chunk_id"]) if row.get("next_chunk_id") else None,
+        )
+
+    @staticmethod
+    def _context_chunk(row: Mapping[str, Any]) -> ContextChunk:
+        return ContextChunk(
+            chunk_id=str(row["chunk_id"]),
+            chunk_index=int(row["chunk_index"]),
+            content=str(row.get("content") or ""),
+            token_count=max(1, int(row.get("token_count") or 0)),
+            section_id=row.get("section_id"),
+            section_path=row.get("section_path"),
+            page_start=int(row["page_start"]) if row.get("page_start") is not None else None,
+            page_end=int(row["page_end"]) if row.get("page_end") is not None else None,
+            chunk_type=str(row.get("chunk_type") or "prose"),
+            parent_section_id=row.get("parent_section_id"),
+            source_block_ids=tuple(row.get("source_block_ids") or ()),
+            chunk_metadata=dict(row.get("chunk_metadata") or {}),
         )

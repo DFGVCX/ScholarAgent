@@ -223,6 +223,14 @@ GET http://127.0.0.1:8000/knowledge/rag/stats
 GET http://127.0.0.1:8000/knowledge/rag/search?query=citation&limit=5
 ```
 
+检索结果中的 `previous_chunk_id` / `next_chunk_id` 可用于按需展开完整上下文。接口只返回当前用户知识库、当前论文内容版本中的 Chunk，并且只按完整 Chunk 控制 token 预算，不截断原文：
+
+```text
+GET http://127.0.0.1:8000/knowledge/rag/chunks/{chunk_id}/context?before=2&after=2&token_budget=2048
+```
+
+当中心 Chunk 自身超过预算时，响应仍保留中心完整原文，并返回 `budget_exceeded=true`；`truncated=true` 表示部分请求的相邻 Chunk 因预算未被选入。
+
 调用时需要携带：
 
 ```http

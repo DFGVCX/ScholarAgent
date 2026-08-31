@@ -16,7 +16,7 @@ from app.papers.chunking import chunk_text
 from app.papers.models import PaperInput
 from app.papers.repository import PaperRepository
 from app.retrieval.embedding import QwenEmbeddingClient
-from app.retrieval.models import RetrievalRequest
+from app.retrieval.models import ContextWindowRequest, RetrievalRequest
 from app.retrieval.repository import PostgresRetrievalRepository
 from app.retrieval.service import RetrievalService
 
@@ -169,6 +169,31 @@ class RagService:
                 )
             )
         return response.to_legacy_dict()
+
+    async def expand_context(
+        self,
+        tenant_id: str,
+        user_id: str,
+        chunk_id: str,
+        before: int = 1,
+        after: int = 1,
+        token_budget: int = 2048,
+    ) -> dict[str, Any]:
+        async with tenant_transaction(tenant_id, user_id) as session:
+            retrieval = RetrievalService(
+                PostgresRetrievalRepository(session), QwenEmbeddingClient.from_settings()
+            )
+            response = await retrieval.expand_context(
+                ContextWindowRequest(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    chunk_id=chunk_id,
+                    before=before,
+                    after=after,
+                    token_budget=token_budget,
+                )
+            )
+        return response.to_dict()
 
     async def stats(self, tenant_id: str, user_id: str) -> dict[str, Any]:
         settings = get_settings()

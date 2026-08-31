@@ -383,7 +383,7 @@ arXiv
 ### RAG 侧后续
 
 - [ ] 为 Agent 提供稳定的父级上下文展开接口。
-- [ ] 为 Agent 提供按 token budget 截取上下文的能力，但不得截断原始存储 Chunk。
+- [x] 为 Agent 提供按 token budget 选择完整相邻 Chunk 的能力；中心 Chunk 始终完整保留，任何存储 Chunk 都不会被截断。
 - [ ] 为回答中的每条引用提供 paper/chunk/page 可追溯标识。
 - [ ] 增加 Agent 调用场景的检索回放：保存查询、策略、候选和最终上下文。
 - [ ] 建立“RAG 已正确返回证据，但 Agent 未采用”与“RAG 未返回证据”的错误归因。
@@ -507,6 +507,7 @@ PostgreSQL/pgvector 基础
 - 已审计现存 54 个 figure PNG，未复现大面积留白；但当前 figure Chunk 为 41 个，说明历史解析会残留候选资产，后续需按 content version 建立资产清单和安全清理策略，不能粗暴删除旧目录。
 - 已建立 content-version 级 `asset_inventory` 并由结构 API/下载白名单统一消费；旧 manifest 自动归一化。孤立资产目前只做安全候选计算，待确定旧版本保留策略后才执行删除。
 - 已在 RRF Top-K 后抑制同论文完全重复正文，并返回 `context_before/context_after/previous_chunk_id/next_chunk_id`；同论文不同 Chunk 与跨论文相同文字不会被误删。
+- 已增加 `GET /knowledge/rag/chunks/{chunk_id}/context`：严格按 tenant/user、知识库状态和当前 content version 展开相邻 Chunk；按距离和 token budget 选择连续整块，预算小于中心块时仍保留中心全文并返回 `budget_exceeded=true`。
 - 已解除论文解析包与数据库初始化的导入时耦合，离线 PDF 批处理不再产生 PostgreSQL 连接超时。
 - 已将 Docling 2.123.0 的必需模型目录固定为轻量检查清单，检查过程不再导入 Docling/Torch；缺模型的 4 页真实论文显式回退总耗时由 17.154 秒降至 2.826 秒。
 - 已增加按模型目录复用 Docling 转换器的进程内缓存，待 Docker 恢复并补齐模型后验证连续解析多篇论文时只初始化一次模型。

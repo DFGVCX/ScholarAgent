@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.papers.repository import PaperRepository
-from app.retrieval.models import RetrievalRequest
+from app.retrieval.models import ContextWindowRequest, RetrievalRequest
 from app.retrieval.repository import PostgresRetrievalRepository
 
 
@@ -37,6 +37,27 @@ class _Session:
 
 
 class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_context_window_is_tenant_scoped_and_uses_current_version(self) -> None:
+        session = _Session([_Result()])
+        repository = PostgresRetrievalRepository(session)
+
+        await repository.context_window(
+            ContextWindowRequest(
+                "tenant", "user", "00000000-0000-0000-0000-000000000301",
+                before=2, after=3, token_budget=1024,
+            )
+        )
+
+        sql, params = session.calls[0]
+        self.assertIn("p.tenant_id=:tenant_id", sql)
+        self.assertIn("p.user_id=:user_id", sql)
+        self.assertIn("c.content_version=p.current_content_version", sql)
+        self.assertIn("p.in_knowledge_base=true", sql)
+        self.assertIn("c.chunk_uuid=CAST(:chunk_id AS uuid)", sql)
+        self.assertIn("ORDER BY c.chunk_index", sql)
+        self.assertEqual(params["before"], 2)
+        self.assertEqual(params["after"], 3)
+
     async def test_lexical_query_selects_chunk_index(self) -> None:
         session = _Session([_Result()])
         repository = PostgresRetrievalRepository(session)
