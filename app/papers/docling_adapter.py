@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 import os
 from pathlib import Path
 import re
+import threading
 from typing import Any
 
 from app.papers.parsing import (
@@ -39,6 +40,10 @@ _DROP_LABELS = {
     "reference",
     "form",
 }
+
+_CONVERTER_CACHE: dict[str, Any] = {}
+_CONVERTER_CACHE_LOCK = threading.Lock()
+_CONVERTER_USE_LOCK = threading.Lock()
 
 
 def _configured_artifacts_path() -> Path | None:
@@ -95,6 +100,17 @@ def _item_text(item: Any, document: Any, block_type: str) -> tuple[str, str, str
 
 
 def _build_converter() -> Any:
+    artifacts_path = _configured_artifacts_path()
+    if artifacts_path is not None:
+        from app.papers.docling_models import inspect_artifacts
+
+        report = inspect_artifacts(artifacts_path)
+        if not report["ready"]:
+            missing = ", ".join(str(item) for item in report.get("missing") or ())
+            raise RuntimeError(
+                "Docling artifacts are incomplete; run the docling_models prepare command"
+                + (f" ({missing})" if missing else "")
+            )
     try:
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -102,7 +118,6 @@ def _build_converter() -> Any:
     except ImportError as exc:  # pragma: no cover - exercised by fallback contract
         raise RuntimeError("Docling is not installed") from exc
 
-    artifacts_path = _configured_artifacts_path()
     options = (
         PdfPipelineOptions(artifacts_path=artifacts_path)
         if artifacts_path
@@ -119,6 +134,28 @@ def _build_converter() -> Any:
     return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
     )
+
+
+def _converter_cache_key() -> str:
+    artifacts_path = _configured_artifacts_path()
+    return str(artifacts_path.resolve()) if artifacts_path is not None else "<docling-default-cache>"
+
+
+def _get_converter() -> Any:
+    """Reuse heavyweight Docling models for all PDFs using the same artifact root."""
+    key = _converter_cache_key()
+    with _CONVERTER_CACHE_LOCK:
+        converter = _CONVERTER_CACHE.get(key)
+        if converter is None:
+            converter = _build_converter()
+            _CONVERTER_CACHE[key] = converter
+        return converter
+
+
+def _clear_converter_cache() -> None:
+    """Reset process-local converters for deterministic tests and config changes."""
+    with _CONVERTER_CACHE_LOCK:
+        _CONVERTER_CACHE.clear()
 
 
 def _section_kind(title: str) -> str:
@@ -250,7 +287,12 @@ def _document_page_numbers(document: Any, populated: dict[int, list[ParsedBlock]
 
 def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPaper:
     """Convert Docling output into ScholarAgent's stable paper model."""
-    result = (converter or _build_converter()).convert(path)
+    if converter is None:
+        shared_converter = _get_converter()
+        with _CONVERTER_USE_LOCK:
+            result = shared_converter.convert(path)
+    else:
+        result = converter.convert(path)
     document = result.document
     by_page: dict[int, list[ParsedBlock]] = defaultdict(list)
     source_items = 0

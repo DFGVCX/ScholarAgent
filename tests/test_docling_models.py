@@ -1,10 +1,31 @@
 from pathlib import Path
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 
 
 class DoclingModelInspectionTest(unittest.TestCase):
+    def test_artifact_inspection_does_not_load_docling_or_torch(self) -> None:
+        with TemporaryDirectory() as directory:
+            script = (
+                "import sys; "
+                "from pathlib import Path; "
+                "from app.papers.docling_models import inspect_artifacts; "
+                f"inspect_artifacts(Path({directory!r})); "
+                "print('docling' in sys.modules, 'torch' in sys.modules)"
+            )
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+        self.assertEqual(completed.stdout.strip(), "False False")
+
     def test_model_without_expected_directories_is_not_ready(self) -> None:
         from app.papers.docling_models import inspect_artifacts
 

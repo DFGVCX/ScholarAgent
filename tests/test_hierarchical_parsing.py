@@ -20,6 +20,37 @@ class DoclingConfigurationTest(unittest.TestCase):
         with patch.dict(os.environ, {"DOCLING_ARTIFACTS_PATH": "   "}):
             self.assertIsNone(_configured_artifacts_path())
 
+    def test_converter_is_reused_for_same_artifact_directory(self) -> None:
+        from app.papers.docling_adapter import _clear_converter_cache, _get_converter
+
+        converter = object()
+        _clear_converter_cache()
+        try:
+            with (
+                patch.dict(os.environ, {"DOCLING_ARTIFACTS_PATH": "/models/docling"}),
+                patch("app.papers.docling_adapter._build_converter", return_value=converter) as build,
+            ):
+                self.assertIs(_get_converter(), converter)
+                self.assertIs(_get_converter(), converter)
+
+            build.assert_called_once()
+        finally:
+            _clear_converter_cache()
+
+    def test_configured_incomplete_models_fail_before_converter_creation(self) -> None:
+        from app.papers.docling_adapter import _build_converter
+
+        report = {
+            "ready": False,
+            "missing": ["tableformer:docling-project--docling-models"],
+        }
+        with (
+            patch.dict(os.environ, {"DOCLING_ARTIFACTS_PATH": "/models/docling"}),
+            patch("app.papers.docling_models.inspect_artifacts", return_value=report),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Docling artifacts are incomplete"):
+                _build_converter()
+
 
 class _DoclingItem:
     def __init__(

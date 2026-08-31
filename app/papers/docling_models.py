@@ -9,30 +9,23 @@ from typing import Any, Mapping
 
 RequiredArtifacts = Mapping[str, tuple[Path, ...]]
 
+# Folder names produced by ``docling.utils.model_downloader.download_models``
+# for the project-pinned Docling 2.123.0. Keeping the readiness check static is
+# intentional: upload workers can reject an incomplete volume without importing
+# Docling, Transformers, or Torch just to discover these names.
+_PINNED_REQUIRED_ARTIFACTS: dict[str, tuple[Path, ...]] = {
+    "layout": (
+        Path("docling-project--docling-layout-heron"),
+        Path("docling-project--docling-layout-heron-onnx"),
+    ),
+    "tableformer": (Path("docling-project--docling-models"),),
+    "code_formula": (Path("docling-project--CodeFormulaV2"),),
+}
+
 
 def required_artifact_directories() -> dict[str, tuple[Path, ...]]:
-    """Resolve model directories from the pinned Docling implementation."""
-    from docling.datamodel.pipeline_options import LayoutObjectDetectionOptions
-    from docling.models.stages.code_formula.code_formula_model import CodeFormulaModel
-    from docling.models.stages.table_structure.table_structure_model import (
-        TableStructureModel,
-    )
-
-    layout_spec = LayoutObjectDetectionOptions().model_spec
-    repositories = {layout_spec.repo_id: layout_spec.revision}
-    for override in layout_spec.engine_overrides.values():
-        merged = override.merge_with(layout_spec.repo_id, layout_spec.revision)
-        if merged.repo_id:
-            repositories[merged.repo_id] = merged.revision
-
-    return {
-        "layout": tuple(
-            Path(repo_id.replace("/", "--"))
-            for repo_id in sorted(repo_id for repo_id in repositories if repo_id)
-        ),
-        "tableformer": (Path(TableStructureModel._model_repo_folder),),
-        "code_formula": (Path(CodeFormulaModel._model_repo_folder),),
-    }
+    """Return the model layout for the pinned Docling release without loading it."""
+    return {name: tuple(paths) for name, paths in _PINNED_REQUIRED_ARTIFACTS.items()}
 
 
 def inspect_artifacts(
