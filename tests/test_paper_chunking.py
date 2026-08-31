@@ -187,6 +187,104 @@ class PaperChunkingTest(unittest.TestCase):
         combined = "\n".join(chunk.content for chunk in chunks)
         self.assertTrue(all(combined.count(step) == 1 for step in steps))
 
+    def test_inline_colon_numbered_algorithm_restores_step_boundaries(self) -> None:
+        markdown = (
+            "```text\n"
+            "1: Input: client updates 2: Output: global model "
+            "3: Initialize the accumulator 4: for each client do aggregate its update "
+            "5: return the global model\n"
+            "```"
+        )
+        algorithm = ParsedBlock(
+            1,
+            "algorithm",
+            markdown,
+            (0, 0, 100, 100),
+            0,
+            metadata={
+                "block_id": "algorithm-inline",
+                "label": "Algorithm 1",
+                "caption": "Aggregate client updates",
+                "markdown": markdown,
+            },
+        )
+        page = ParsedPage(1, markdown, "hash", len(markdown), "test", "usable", (algorithm,))
+        parsed = ParsedPaper(
+            markdown,
+            (page,),
+            (_section("method", "Method", markdown, kind="method"),),
+            {},
+            {},
+            "ready",
+            1.0,
+        )
+
+        chunks = [
+            chunk
+            for chunk in chunking.chunk_hierarchical(parsed, target_tokens=10, max_tokens=28)
+            if chunk.chunk_type == "algorithm"
+        ]
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(chunk.content.startswith("Algorithm 1. Aggregate client updates") for chunk in chunks))
+        self.assertTrue(all("Input: client updates" in chunk.content for chunk in chunks))
+        self.assertTrue(all("Output: global model" in chunk.content for chunk in chunks))
+        self.assertTrue(all("```" not in chunk.content for chunk in chunks))
+        combined = "\n".join(chunk.content for chunk in chunks)
+        for step in (
+            "3: Initialize the accumulator",
+            "4: for each client do aggregate its update",
+            "5: return the global model",
+        ):
+            self.assertEqual(combined.count(step), 1)
+
+    def test_inline_bare_numbered_algorithm_restores_step_boundaries(self) -> None:
+        markdown = (
+            "```text\n"
+            "1 Initialize the model 2 for each client do aggregate its update "
+            "3 Verifier: check the encrypted result 4 return the global model\n"
+            "```"
+        )
+        algorithm = ParsedBlock(
+            1,
+            "algorithm",
+            markdown,
+            (0, 0, 100, 100),
+            0,
+            metadata={
+                "block_id": "algorithm-inline-bare",
+                "label": "Algorithm 2",
+                "caption": "Verify aggregation",
+                "markdown": markdown,
+            },
+        )
+        page = ParsedPage(1, markdown, "hash", len(markdown), "test", "usable", (algorithm,))
+        parsed = ParsedPaper(
+            markdown,
+            (page,),
+            (_section("method", "Method", markdown, kind="method"),),
+            {},
+            {},
+            "ready",
+            1.0,
+        )
+
+        chunks = [
+            chunk
+            for chunk in chunking.chunk_hierarchical(parsed, target_tokens=8, max_tokens=24)
+            if chunk.chunk_type == "algorithm"
+        ]
+
+        combined = "\n".join(chunk.content for chunk in chunks)
+        for step in (
+            "1 Initialize the model",
+            "2 for each client do aggregate its update",
+            "3 Verifier: check the encrypted result",
+            "4 return the global model",
+        ):
+            self.assertEqual(combined.count(step), 1)
+        self.assertTrue(all(chunk.token_count <= 24 for chunk in chunks))
+
     def test_algorithm_without_caption_does_not_invent_source_text(self) -> None:
         algorithm = ParsedBlock(
             1,

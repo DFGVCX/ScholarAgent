@@ -458,26 +458,57 @@ def _table_pieces(metadata: Mapping[str, Any], raw_text: str, max_tokens: int) -
 
 def _algorithm_pieces(metadata: Mapping[str, Any], raw_text: str, max_tokens: int) -> list[str]:
     markdown = str(metadata.get("markdown") or raw_text).strip()
-    caption = str(metadata.get("caption") or metadata.get("label") or "").strip()
-    lines = [line.strip() for line in markdown.splitlines() if line.strip()]
+    label = str(metadata.get("label") or "").strip()
+    caption = str(metadata.get("caption") or "").strip()
+    if label and caption and label.lower() not in caption.lower():
+        descriptor = f"{label}. {caption}"
+    else:
+        descriptor = caption or label
+    bare_step_action = (
+        r"(?:[A-Z]|for\b|while\b|if\b|else\b|return\b|repeat\b|until\b|"
+        r"[A-Za-z][A-Za-z0-9_]*\s*(?:=|←))"
+    )
+    inline_step = rf"(?:\d+\s*[:.)]\s+\S|\d+\s+{bare_step_action})"
+    lines: list[str] = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        line = re.sub(r"^```(?:text)?\s*", "", line, flags=re.IGNORECASE)
+        line = re.sub(r"\s*```$", "", line)
+        if not line:
+            continue
+        lines.extend(
+            piece.strip()
+            for piece in re.split(rf"(?<!\S)(?={inline_step})", line)
+            if piece.strip()
+        )
     if not lines:
-        return [caption] if caption else []
+        return [descriptor] if descriptor else []
 
     title = ""
     inputs: list[str] = []
     outputs: list[str] = []
     steps: list[str] = []
     current = ""
-    boundary = re.compile(r"^(?:\d+[.)]|(?:for|while|if|else|return)\b)", re.IGNORECASE)
+    boundary = re.compile(
+        rf"^(?:{inline_step}|(?:for|while|if|else|return)\b)",
+        re.IGNORECASE,
+    )
     for line in lines:
         if re.match(r"^algorithm\b", line, re.IGNORECASE):
             title = line
             continue
-        if re.match(r"^inputs?\s*[:：]", line, re.IGNORECASE):
-            inputs.append(line)
+        unnumbered = re.sub(r"^\d+\s*[:.)]\s*", "", line)
+        unnumbered = re.sub(
+            rf"^\d+\s+(?={bare_step_action})",
+            "",
+            unnumbered,
+            flags=re.IGNORECASE,
+        )
+        if re.match(r"^inputs?\s*[:：]", unnumbered, re.IGNORECASE):
+            inputs.append(unnumbered)
             continue
-        if re.match(r"^outputs?\s*[:：]", line, re.IGNORECASE):
-            outputs.append(line)
+        if re.match(r"^outputs?\s*[:：]", unnumbered, re.IGNORECASE):
+            outputs.append(unnumbered)
             continue
         if current and boundary.match(line):
             steps.append(current)
@@ -487,7 +518,7 @@ def _algorithm_pieces(metadata: Mapping[str, Any], raw_text: str, max_tokens: in
     if current:
         steps.append(current)
 
-    prefix_parts = list(dict.fromkeys(part for part in (caption, title, *inputs, *outputs) if part))
+    prefix_parts = list(dict.fromkeys(part for part in (descriptor, title, *inputs, *outputs) if part))
     prefix = "\n".join(prefix_parts)
     if not steps:
         return [prefix or markdown] if (prefix or markdown) else []
