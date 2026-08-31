@@ -605,8 +605,12 @@ class ConversationToolLoop:
             items = [*local_hits, *external_candidates]
             if not items:
                 return "没有检索到符合条件的论文。可以补充关键词、年份或研究方向后继续检索。"
+            local_paper_count = len(
+                {str(item.get("paper_id") or "") for item in local_hits}
+            )
             lines = [
-                f"已检索到 {len(local_hits)} 篇本地可引用论文，"
+                f"已检索到 {len(local_hits)} 个本地可引用证据 Chunk"
+                f"（来自 {local_paper_count} 篇论文），"
                 f"以及 {len(external_candidates)} 篇外部候选："
             ]
             for index, item in enumerate(items[:5], 1):

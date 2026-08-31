@@ -418,6 +418,91 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.external_candidates, ())
         self.assertEqual(repository.embedding_model, "Qwen3-Embedding-4B")
 
+    async def test_search_exposes_adjacent_hits_as_document_order_context(self) -> None:
+        second = replace(
+            _candidate("second", "p1", 0.9, chunk_index=5),
+            content="Second half of the evidence.",
+            section_id="method",
+            section_path="3 Method",
+            page_start=4,
+            page_end=5,
+            content_version=2,
+        )
+        first = replace(
+            _candidate("first", "p1", 0.8, chunk_index=4),
+            content="First half of the evidence.",
+            section_id="method",
+            section_path="3 Method",
+            page_start=3,
+            page_end=4,
+            content_version=2,
+        )
+
+        class _AdjacentRepository(_Repository):
+            async def lexical_candidates(self, request):
+                return [second, first]
+
+            async def vector_candidates(self, request, vector, embedding_model):
+                return []
+
+        response = await RetrievalService(
+            _AdjacentRepository(), _BrokenEmbedding()
+        ).search(RetrievalRequest("t", "u", "boundary", limit=2))
+        payload = response.to_dict()
+
+        self.assertEqual([hit["chunk_id"] for hit in payload["local_hits"]], ["second", "first"])
+        self.assertEqual(len(payload["merged_contexts"]), 1)
+        merged = payload["merged_contexts"][0]
+        self.assertEqual(merged["chunk_ids"], ["first", "second"])
+        self.assertEqual(
+            merged["content"],
+            "First half of the evidence.\n\nSecond half of the evidence.",
+        )
+        self.assertEqual(merged["page_start"], 3)
+        self.assertEqual(merged["page_end"], 5)
+        self.assertEqual(merged["best_rank"], 1)
+        self.assertEqual(
+            merged["citation_keys"],
+            ["p1@v2#first", "p1@v2#second"],
+        )
+
+    async def test_adjacent_context_never_crosses_section_version_or_index_gap(self) -> None:
+        candidates = [
+            replace(
+                _candidate("a", "p1", 1.0, chunk_index=1),
+                section_id="method",
+                content_version=1,
+            ),
+            replace(
+                _candidate("b", "p1", 0.9, chunk_index=2),
+                section_id="results",
+                content_version=1,
+            ),
+            replace(
+                _candidate("c", "p1", 0.8, chunk_index=3),
+                section_id="results",
+                content_version=2,
+            ),
+            replace(
+                _candidate("d", "p1", 0.7, chunk_index=5),
+                section_id="results",
+                content_version=2,
+            ),
+        ]
+
+        class _SeparatedRepository(_Repository):
+            async def lexical_candidates(self, request):
+                return candidates
+
+            async def vector_candidates(self, request, vector, embedding_model):
+                return []
+
+        response = await RetrievalService(
+            _SeparatedRepository(), _BrokenEmbedding()
+        ).search(RetrievalRequest("t", "u", "boundary", limit=4))
+
+        self.assertEqual(response.to_dict()["merged_contexts"], [])
+
     async def test_response_echoes_normalized_filters_for_audit(self) -> None:
         request = RetrievalRequest(
             "t",
@@ -461,6 +546,7 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
                 "exact_duplicate_scope": "same_paper",
                 "near_duplicate_prose_threshold": 0.92,
                 "near_duplicate_requires": "shared_source_or_adjacent_section",
+                "adjacent_context_scope": "same_paper_version_section_top_k",
             },
         )
 

@@ -12,6 +12,7 @@ from app.retrieval.models import (
     ContextWindowResponse,
     ExternalCandidate,
     LocalHit,
+    MergedContext,
     ParentContextRequest,
     ParentSectionContext,
     RetrievalCandidate,
@@ -147,7 +148,9 @@ class RetrievalService:
                 "exact_duplicate_scope": "same_paper",
                 "near_duplicate_prose_threshold": 0.92,
                 "near_duplicate_requires": "shared_source_or_adjacent_section",
+                "adjacent_context_scope": "same_paper_version_section_top_k",
             },
+            merged_contexts=tuple(self._merge_adjacent_hits(hits)),
         )
 
     async def _semantic_candidates(
@@ -340,6 +343,55 @@ class RetrievalService:
                 )
             )
         return hits
+
+    @staticmethod
+    def _merge_adjacent_hits(hits: Sequence[LocalHit]) -> list[MergedContext]:
+        grouped: dict[tuple[str, int, str], list[LocalHit]] = {}
+        for hit in hits:
+            if not hit.section_id:
+                continue
+            grouped.setdefault(
+                (hit.paper_id, hit.content_version, hit.section_id), []
+            ).append(hit)
+
+        merged: list[MergedContext] = []
+        for (paper_id, content_version, section_id), candidates in grouped.items():
+            ordered = sorted(candidates, key=lambda hit: (hit.chunk_index, hit.final_rank))
+            run: list[LocalHit] = []
+            for candidate in ordered:
+                if run and candidate.chunk_index != run[-1].chunk_index + 1:
+                    if len(run) > 1:
+                        merged.append(RetrievalService._merged_context(run))
+                    run = []
+                run.append(candidate)
+            if len(run) > 1:
+                merged.append(RetrievalService._merged_context(run))
+        return sorted(merged, key=lambda context: (context.best_rank, context.context_id))
+
+    @staticmethod
+    def _merged_context(hits: Sequence[LocalHit]) -> MergedContext:
+        first, last = hits[0], hits[-1]
+        page_starts = [hit.page_start for hit in hits if hit.page_start is not None]
+        page_ends = [hit.page_end for hit in hits if hit.page_end is not None]
+        return MergedContext(
+            context_id=(
+                f"{first.paper_id}@v{first.content_version}#"
+                f"{first.chunk_id}..{last.chunk_id}"
+            ),
+            paper_id=first.paper_id,
+            content_version=first.content_version,
+            section_id=first.section_id or "",
+            section_path=first.section_path or "",
+            chunk_ids=tuple(hit.chunk_id for hit in hits),
+            chunk_types=tuple(hit.chunk_type for hit in hits),
+            content="\n\n".join(hit.snippet for hit in hits),
+            page_start=min(page_starts) if page_starts else None,
+            page_end=max(page_ends) if page_ends else None,
+            best_rank=min(hit.final_rank for hit in hits),
+            citation_keys=tuple(
+                f"{hit.paper_id}@v{hit.content_version}#{hit.chunk_id}" for hit in hits
+            ),
+        )
 
     @staticmethod
     def _external(item: ExternalCandidate | dict[str, Any]) -> ExternalCandidate:

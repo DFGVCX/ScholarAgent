@@ -230,9 +230,19 @@ async def search_papers(
     local_hits: list[dict[str, Any]] = []
     external_candidates: list[dict[str, Any]] = []
     external_error: str | None = None
+    retrieval_mode = "metadata"
+    merged_contexts: list[dict[str, Any]] = []
+    retrieval_warnings: list[str] = []
+    ranking_policy: dict[str, Any] = {}
+    query_expansions: list[str] = []
     if source in {"all", "local"}:
         if query.strip():
             retrieval = await rag_service.search(tenant_id, user_id, query, limit)
+            retrieval_mode = str(retrieval.get("retrieval_mode") or "lexical")
+            merged_contexts = list(retrieval.get("merged_contexts") or [])
+            retrieval_warnings = list(retrieval.get("warnings") or [])
+            ranking_policy = dict(retrieval.get("ranking_policy") or {})
+            query_expansions = list(retrieval.get("query_expansions") or [])
             for hit in retrieval.get("local_hits") or retrieval.get("items") or []:
                 document = await knowledge_store.get(tenant_id, user_id, str(hit["paper_id"]))
                 local_hits.append({**(document or {}), **hit, "can_cite": True})
@@ -265,7 +275,10 @@ async def search_papers(
                     if source == source_name:
                         raise RuntimeError(str(exc)) from exc
             external_error = " | ".join(external_errors) if external_errors else None
-    unique_local: dict[str, dict[str, Any]] = {item["paper_id"]: item for item in local_hits}
+    unique_local: dict[str, dict[str, Any]] = {}
+    for item in local_hits:
+        identity = str(item.get("chunk_id") or item["paper_id"])
+        unique_local.setdefault(identity, item)
     unique_external: dict[str, dict[str, Any]] = {
         item["paper_id"]: item for item in external_candidates
     }
@@ -275,7 +288,11 @@ async def search_papers(
         "items": [*local_values, *external_values],
         "local_hits": local_values,
         "external_candidates": external_values,
-        "retrieval_mode": "hybrid_rrf" if query.strip() and local_values else "metadata",
+        "retrieval_mode": retrieval_mode if query.strip() and local_values else "metadata",
+        "merged_contexts": merged_contexts,
+        "warnings": retrieval_warnings,
+        "ranking_policy": ranking_policy,
+        "query_expansions": query_expansions,
         "has_more": False,
         "next_cursor": None,
         "external_error": external_error,

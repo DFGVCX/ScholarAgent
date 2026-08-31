@@ -5,10 +5,26 @@ from unittest.mock import AsyncMock, patch
 
 from app.routes.tasks import SurveyTaskRequestDTO
 from app.schemas import RetrievalStrategy, SurveyTaskRequest
+from agents.conversation_tool_loop import ConversationToolLoop
 from mcp_server.scholar_mcp.tools import search_papers
 
 
 class RetrievalStrategySchemaTests(unittest.TestCase):
+    def test_agent_search_summary_counts_chunks_and_source_papers_separately(self) -> None:
+        message = ConversationToolLoop._result_message(
+            "search_papers",
+            {
+                "local_hits": [
+                    {"paper_id": "paper-1", "title": "Paper", "can_cite": True},
+                    {"paper_id": "paper-1", "title": "Paper", "can_cite": True},
+                ],
+                "external_candidates": [],
+            },
+        )
+
+        self.assertIn("2 个本地可引用证据 Chunk", message)
+        self.assertIn("来自 1 篇论文", message)
+
     def test_public_survey_request_uses_retrieval_strategy(self) -> None:
         request = SurveyTaskRequestDTO.model_validate(
             {
@@ -62,6 +78,49 @@ class RetrievalScopeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["items"][0]["paper_id"], local_item["paper_id"])
         self.assertTrue(result["items"][0]["can_cite"])
         self.assertEqual(result["external_candidates"], [])
+
+    async def test_local_scope_preserves_top_k_chunks_and_merged_contexts(self) -> None:
+        paper = {
+            "paper_id": "paper:local:1",
+            "tenant_id": "tenant-a",
+            "user_id": "user-a",
+            "title": "本地论文",
+        }
+        hits = [
+            {**paper, "chunk_id": "chunk-1", "snippet": "first", "can_cite": True},
+            {**paper, "chunk_id": "chunk-2", "snippet": "second", "can_cite": True},
+        ]
+        contexts = [
+            {
+                "context_id": "paper:local:1@v1#chunk-1..chunk-2",
+                "chunk_ids": ["chunk-1", "chunk-2"],
+                "content": "first\n\nsecond",
+            }
+        ]
+        local_search = AsyncMock(
+            return_value={
+                "local_hits": hits,
+                "items": hits,
+                "merged_contexts": contexts,
+                "retrieval_mode": "hybrid",
+            }
+        )
+        with patch(
+            "mcp_server.scholar_mcp.tools.rag_service.search", local_search
+        ), patch(
+            "mcp_server.scholar_mcp.tools.knowledge_store.get",
+            AsyncMock(return_value=paper),
+        ):
+            result = await search_papers(
+                "tenant-a", "user-a", "边界证据", source="local", limit=2
+            )
+
+        self.assertEqual(
+            [item["chunk_id"] for item in result["local_hits"]],
+            ["chunk-1", "chunk-2"],
+        )
+        self.assertEqual(result["merged_contexts"], contexts)
+        self.assertEqual(result["retrieval_mode"], "hybrid")
 
     async def test_hybrid_scope_combines_local_and_external_results(self) -> None:
         local_item = {

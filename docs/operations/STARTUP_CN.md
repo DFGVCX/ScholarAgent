@@ -251,6 +251,8 @@ lexical 检索会把常见学术概念做中英术语和缩写的双向扩展，
 
 每个本地命中还包含 `citation`，其中稳定 key 由 `paper_id + content_version + chunk_id` 组成，并附页码范围和章节路径。论文重新解析产生新内容版本后，旧 key 不会静默漂移到新 Chunk；最终回答是否采用该证据由 Agent 层决定。
 
+当本次 Top-K 中存在同论文、同内容版本、同章节且 `chunk_index` 连续的命中时，响应还会返回 `merged_contexts`。它不会替换或重排 `local_hits`，只按论文顺序拼接完整原文，并保留组成它的 `chunk_ids`、`chunk_types` 和逐 Chunk `citation_keys`。MCP/Agent 调用链按 `chunk_id` 保留多个同论文命中，不再退化成“一篇论文只留一个 Chunk”。
+
 检索结果中的 `previous_chunk_id` / `next_chunk_id` 可用于按需展开完整上下文。接口只返回当前用户知识库、当前论文内容版本中的 Chunk，并且只按完整 Chunk 控制 token 预算，不截断原文：
 
 ```text

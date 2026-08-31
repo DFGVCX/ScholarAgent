@@ -248,6 +248,29 @@ class LocalHit:
 
 
 @dataclass(frozen=True)
+class MergedContext:
+    context_id: str
+    paper_id: str
+    content_version: int
+    section_id: str
+    section_path: str
+    chunk_ids: tuple[str, ...]
+    chunk_types: tuple[str, ...]
+    content: str
+    page_start: int | None
+    page_end: int | None
+    best_rank: int
+    citation_keys: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["chunk_ids"] = list(self.chunk_ids)
+        value["chunk_types"] = list(self.chunk_types)
+        value["citation_keys"] = list(self.citation_keys)
+        return value
+
+
+@dataclass(frozen=True)
 class ExternalCandidate:
     source: str
     external_id: str
@@ -276,6 +299,7 @@ class RetrievalResponse:
     filters: dict[str, Any] | None = None
     query_expansions: tuple[str, ...] = ()
     ranking_policy: dict[str, Any] | None = None
+    merged_contexts: tuple[MergedContext, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -288,6 +312,7 @@ class RetrievalResponse:
             "filters": dict(self.filters or {}),
             "query_expansions": list(self.query_expansions),
             "ranking_policy": dict(self.ranking_policy or {}),
+            "merged_contexts": [context.to_dict() for context in self.merged_contexts],
         }
 
     def to_legacy_dict(self) -> dict[str, Any]:
