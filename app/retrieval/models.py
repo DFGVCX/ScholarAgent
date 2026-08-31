@@ -158,6 +158,9 @@ class LocalHit:
     score: float
     lexical_rank: int | None
     vector_rank: int | None
+    rrf_score: float
+    final_rank: int
+    rerank_score: float | None = None
     can_cite: bool = True
     section_id: str | None = None
     section_path: str | None = None

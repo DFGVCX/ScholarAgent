@@ -245,6 +245,19 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(merged[0][0], "b")
         self.assertAlmostEqual(merged[0][1], 1 / 62 + 1 / 61)
 
+    def test_hits_expose_auditable_rrf_and_final_rank(self) -> None:
+        hits = RetrievalService._fuse(
+            [_candidate("a", "p1", 0.9), _candidate("b", "p2", 0.8)],
+            [_candidate("b", "p2", 0.95), _candidate("c", "p3", 0.7)],
+            3,
+        )
+
+        payloads = [hit.to_dict() for hit in hits]
+        self.assertEqual([item["final_rank"] for item in payloads], [1, 2, 3])
+        self.assertEqual(payloads[0]["chunk_id"], "b")
+        self.assertEqual(payloads[0]["rrf_score"], payloads[0]["score"])
+        self.assertIsNone(payloads[0]["rerank_score"])
+
     async def test_hybrid_results_are_fused_and_citeable(self) -> None:
         repository = _Repository()
         service = RetrievalService(repository, _Embedding())
