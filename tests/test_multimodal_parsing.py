@@ -217,6 +217,14 @@ class MultimodalPdfParsingTest(unittest.TestCase):
                 self.assertTrue(asset_name.endswith(".png"))
                 self.assertTrue((pdf_path.parent / "visual_assets" / asset_name).is_file())
                 self.assertIn(typed[kind].metadata["quality_status"], {"usable", "review"})
+                self.assertIsInstance(typed[kind].metadata["extraction_confidence"], float)
+                self.assertTrue(typed[kind].metadata["source_image_available"])
+                self.assertIn(
+                    typed[kind].metadata["fallback_mode"],
+                    {"none", "source_image", "caption_only"},
+                )
+            self.assertFalse(typed["figure"].metadata["structured_content_available"])
+            self.assertTrue(typed["algorithm"].metadata["structured_content_available"])
             self.assertIn("visual_blocks", parsed.manifest)
             self.assertEqual(len(parsed.manifest["visual_blocks"]), 2)
             inventory = parsed.to_manifest()["asset_inventory"]

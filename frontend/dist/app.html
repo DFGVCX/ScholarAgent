@@ -9399,13 +9399,18 @@
             const raw = block.text && !markdown
                 ? `<pre class="paper-visual-source">${escapeHtml(block.text)}</pre>`
                 : '';
+            const confidence = Number(metadata.extraction_confidence ?? (quality === 'usable' ? 1 : 0));
+            const lowConfidence = quality !== 'usable' || confidence < 0.7;
+            const fallbackNotice = lowConfidence
+                ? `<div class="alert ${asset ? '' : 'bad'}">低置信度：${escapeHtml((metadata.quality_reasons || []).join('、') || '结构恢复需要人工核查')}。${asset ? '已提供原图回退，请以原图为准。' : '原图回退不可用，仅保留可审计的标题或原始文本。'}</div>`
+                : '';
             return `
                 <article class="paper-visual-card" data-block-type="${escapeHtml(kind)}">
                     <div class="paper-visual-head">
                         <div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(caption || block.text || '未提取到标题')}</span></div>
                         <em class="badge ${quality === 'usable' ? 'ok' : quality === 'rejected' ? 'bad' : 'warn'}">${escapeHtml(quality)}</em>
                     </div>
-                    ${image}${structured}${raw}
+                    ${fallbackNotice}${image}${structured}${raw}
                 </article>
             `;
         }
@@ -9416,8 +9421,13 @@
                 ? `<img class="paper-visual-image paper-equation-crop" src="${escapeHtml(asset)}" alt="Equation ${escapeHtml(metadata.label || '')} source" loading="eager">`
                 : '';
             const provenance = [metadata.confidence, metadata.recovery_source].filter(Boolean).join(' · ');
+            const confidence = Number(metadata.extraction_confidence ?? (metadata.confidence === 'high' ? 0.95 : 0.5));
+            const fallbackNotice = confidence < 0.7
+                ? `<div class="alert ${asset ? '' : 'bad'}">低置信度公式。${asset ? '已提供原图回退，请对照原公式。' : '原图回退不可用，当前 Markdown 只作为待核查候选。'}</div>`
+                : '';
             return `
                 <article class="paper-structure-body paper-equation-block" data-block-type="equation">
+                    ${fallbackNotice}
                     ${image}
                     <div class="markdown-preview">${renderMarkdown(block.text || metadata.markdown || '')}</div>
                     ${provenance ? `<div class="subtle">${escapeHtml(provenance)}</div>` : ''}

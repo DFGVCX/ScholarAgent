@@ -480,6 +480,7 @@ def extract_visual_candidates(
                 source_text += "\n" + "\n".join(line for line in lines if line)
                 quality_status = "usable"
             else:
+                bbox = _caption_backed_table_crop(page, caption_bbox, blocks, consumed)
                 quality_reasons.append("algorithm_body_unavailable")
         else:
             bbox = _figure_crop(page, caption_index, caption_bbox, captions, blocks)
@@ -498,6 +499,18 @@ def extract_visual_candidates(
                 quality_status = "rejected"
                 quality_reasons.append("crop_render_failed")
 
+        structured_content_available = bool(markdown.strip())
+        source_image_available = bool(asset_name)
+        if quality_status == "usable":
+            extraction_confidence = 0.9 if structured_content_available else 0.85
+            fallback_mode = "none"
+        elif quality_status == "review":
+            extraction_confidence = 0.45 if source_image_available else 0.2
+            fallback_mode = "source_image" if source_image_available else "caption_only"
+        else:
+            extraction_confidence = 0.0
+            fallback_mode = "source_image" if source_image_available else "caption_only"
+
         output.append(
             {
                 "block_type": kind,
@@ -513,6 +526,10 @@ def extract_visual_candidates(
                     "asset_name": asset_name,
                     "quality_status": quality_status,
                     "quality_reasons": quality_reasons,
+                    "extraction_confidence": extraction_confidence,
+                    "structured_content_available": structured_content_available,
+                    "source_image_available": source_image_available,
+                    "fallback_mode": fallback_mode,
                     "source_bbox": list(bbox or caption_bbox),
                 },
             }

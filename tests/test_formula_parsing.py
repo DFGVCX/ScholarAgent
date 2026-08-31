@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.papers.parsing import ParsedBlock, _formula_aware_blocks
+from app.papers.parsing import ParsedBlock, _audited_equation_metadata, _formula_aware_blocks
 from app.papers.formulas import (
     FormulaCandidate,
     contains_invalid_controls,
@@ -12,6 +12,21 @@ from app.papers.formulas import (
 
 
 class FormulaParsingTest(unittest.TestCase):
+    def test_low_confidence_equation_declares_source_image_fallback(self) -> None:
+        metadata = _audited_equation_metadata(
+            {
+                "confidence": "medium",
+                "latex": "x + y",
+                "asset_name": "page_001_equation_7.png",
+            }
+        )
+
+        self.assertEqual(metadata["quality_status"], "review")
+        self.assertEqual(metadata["extraction_confidence"], 0.55)
+        self.assertTrue(metadata["structured_content_available"])
+        self.assertTrue(metadata["source_image_available"])
+        self.assertEqual(metadata["fallback_mode"], "source_image")
+
     def test_big_o_complexity_is_not_misclassified_as_equation_number(self) -> None:
         block = ParsedBlock(
             1,

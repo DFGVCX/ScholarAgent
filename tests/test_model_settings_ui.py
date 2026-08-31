@@ -97,6 +97,8 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn('class="paper-equation-debug"', self.html)
         self.assertIn("paper-equation-source", self.html)
         self.assertIn("function renderEquationBlock", self.html)
+        self.assertIn("低置信度", self.html)
+        self.assertIn("原图回退", self.html)
         self.assertIn("paper-equation-crop", self.html)
 
     def test_visual_debug_assets_are_loaded_eagerly(self) -> None:

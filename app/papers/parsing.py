@@ -437,6 +437,34 @@ def _matching_equation_record(
     return None
 
 
+def _audited_equation_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Attach explicit confidence and fallback state to recovered equation text."""
+
+    audited = dict(metadata)
+    confidence = str(audited.get("confidence") or "low").lower()
+    source_image_available = bool(audited.get("asset_name"))
+    audited.update(
+        {
+            "quality_status": "usable" if confidence == "high" else "review",
+            "extraction_confidence": {
+                "high": 0.95,
+                "medium": 0.55,
+                "low": 0.25,
+            }.get(confidence, 0.0),
+            "structured_content_available": bool(
+                audited.get("latex") or audited.get("markdown")
+            ),
+            "source_image_available": source_image_available,
+            "fallback_mode": (
+                "source_image"
+                if confidence != "high" and source_image_available
+                else "text_only" if confidence != "high" else "none"
+            ),
+        }
+    )
+    return audited
+
+
 def _heading_kind(block: ParsedBlock, median_font: float) -> str | None:
     value = _normalize_space(block.text)
     if not value or len(value) > 140:
@@ -673,6 +701,10 @@ def _parse_layout_pdf(
                                 record.update(metadata)
                         except Exception:
                             metadata["asset_name"] = ""
+                    metadata = _audited_equation_metadata(metadata)
+                    record = _matching_equation_record(page_equations, equation_block)
+                    if record is not None:
+                        record.update(metadata)
                     equation_blocks.append(replace(equation_block, metadata=metadata))
                 body_blocks = tuple(equation_blocks)
                 candidates = extract_visual_candidates(
