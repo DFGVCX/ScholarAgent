@@ -161,7 +161,9 @@ class RagService:
         settings = get_settings()
         async with tenant_transaction(tenant_id, user_id) as session:
             retrieval = RetrievalService(
-                PostgresRetrievalRepository(session), QwenEmbeddingClient.from_settings()
+                PostgresRetrievalRepository(session),
+                QwenEmbeddingClient.from_settings(),
+                semantic_timeout_seconds=settings.rag_semantic_timeout_seconds,
             )
             response = await retrieval.search(
                 RetrievalRequest(
@@ -231,6 +233,7 @@ class RagService:
             "chunk_overlap": settings.rag_chunk_overlap,
             "top_k": settings.rag_top_k,
             "candidate_limit": settings.rag_candidate_limit,
+            "semantic_timeout_seconds": settings.rag_semantic_timeout_seconds,
         }
 
 

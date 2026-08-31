@@ -261,7 +261,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [ ] 为不同查询类型设置候选池大小，例如普通概念、公式、表格、图和算法查询。
 - [ ] 增加父子检索与多样性约束，避免 Top-K 被同一论文的高度相似 Chunk 占满。
 - [x] 输出可审计的排名明细：`lexical_rank`、`vector_rank`、`rrf_score`、`rerank_score`（未启用时为 null）和 `final_rank`；旧 `score` 保持为 RRF 分数以兼容现有前端。
-- [ ] 制定检索超时和降级策略，确保向量服务失败时 lexical 结果仍可用。
+- [x] 制定检索超时和降级策略：交互语义链路默认总预算 8 秒，可通过 `SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS` 配置；超时或 Embedding 失败时取消 semantic 并保留 lexical 结果和警告。
 
 ## 9. 阶段七：论文元数据
 
@@ -510,6 +510,7 @@ PostgreSQL/pgvector 基础
 - 已增加 `GET /knowledge/rag/chunks/{chunk_id}/context`：严格按 tenant/user、知识库状态和当前 content version 展开相邻 Chunk；按距离和 token budget 选择连续整块，预算小于中心块时仍保留中心全文并返回 `budget_exceeded=true`。
 - 已增加 `GET /knowledge/rag/chunks/{chunk_id}/parent`：召回小 Chunk 后可按需读取完整父章节，返回章节 ID、标题、类型、路径、页码、字符数和估算 token 数，不自动膨胀每次 Top-K 响应。
 - 检索 hit 已明确输出 lexical/vector 排名、RRF 分数、rerank 分数占位与最终顺序；未接 reranker 前 `rerank_score=null`，不伪造模型分数。
+- 交互检索已增加独立于批量入库的语义总超时；查询 Embedding 或 pgvector 候选超过预算时取消语义链路并返回 lexical 结果，避免千问重试把页面阻塞到客户端超时。
 - 已解除论文解析包与数据库初始化的导入时耦合，离线 PDF 批处理不再产生 PostgreSQL 连接超时。
 - 已将 Docling 2.123.0 的必需模型目录固定为轻量检查清单，检查过程不再导入 Docling/Torch；缺模型的 4 页真实论文显式回退总耗时由 17.154 秒降至 2.826 秒。
 - 已增加按模型目录复用 Docling 转换器的进程内缓存，待 Docker 恢复并补齐模型后验证连续解析多篇论文时只初始化一次模型。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 import unittest
 
@@ -59,6 +60,14 @@ class _BrokenEmbedding:
 
     async def embed(self, texts):
         raise EmbeddingUnavailable("offline")
+
+
+class _SlowEmbedding:
+    model = "Qwen3-Embedding-4B"
+
+    async def embed(self, texts):
+        await asyncio.sleep(0.05)
+        return [[1.0] + [0.0] * 1023]
 
 
 class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -283,6 +292,17 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.mode, "lexical")
         self.assertEqual(len(response.local_hits), 2)
         self.assertTrue(response.warnings)
+
+    async def test_semantic_timeout_keeps_lexical_results(self) -> None:
+        service = RetrievalService(
+            _Repository(), _SlowEmbedding(), semantic_timeout_seconds=0.001
+        )
+
+        response = await service.search(RetrievalRequest("t", "u", "retrieval"))
+
+        self.assertEqual(response.mode, "lexical")
+        self.assertEqual([hit.chunk_id for hit in response.local_hits], ["a", "b"])
+        self.assertTrue(any("timed out" in warning for warning in response.warnings))
 
 
 if __name__ == "__main__":

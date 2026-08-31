@@ -32,6 +32,7 @@ class Settings:
     rag_embedding_api_key: str = ""
     rag_embedding_model: str = "qwen3.7-text-embedding"
     rag_embedding_dimensions: int = 1024
+    rag_semantic_timeout_seconds: float = 8.0
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 120
     rag_chunk_strategy: str = "multimodal_aware_v3"
@@ -147,6 +148,10 @@ def get_settings() -> Settings:
             overrides, "SCHOLAR_RAG_EMBEDDING_MODEL", "qwen3.7-text-embedding"
         ).strip(),
         rag_embedding_dimensions=_setting_int(overrides, "SCHOLAR_RAG_EMBEDDING_DIMENSIONS", 1024),
+        rag_semantic_timeout_seconds=max(
+            0.1,
+            _setting_float(overrides, "SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS", 8.0),
+        ),
         rag_chunk_size=max(200, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_SIZE", 900)),
         rag_chunk_overlap=max(0, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_OVERLAP", 120)),
         rag_chunk_strategy=chunk_strategy,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
@@ -48,10 +49,13 @@ class RetrievalService:
         repository: RetrievalRepository,
         embedding: QwenEmbeddingClient,
         external_search: Callable[[str, int], Awaitable[Sequence[ExternalCandidate | dict[str, Any]]]] | None = None,
+        *,
+        semantic_timeout_seconds: float = 8.0,
     ) -> None:
         self.repository = repository
         self.embedding = embedding
         self.external_search = external_search
+        self.semantic_timeout_seconds = max(0.001, float(semantic_timeout_seconds))
 
     async def search(self, request: RetrievalRequest) -> RetrievalResponse:
         lexical = await self.repository.lexical_candidates(request)
@@ -60,11 +64,16 @@ class RetrievalService:
         mode = "metadata" if not request.query else "lexical"
         if request.query:
             try:
-                embeddings = await self.embedding.embed([request.query])
-                vector = await self.repository.vector_candidates(
-                    request, embeddings[0], self.embedding.model
+                vector = await asyncio.wait_for(
+                    self._semantic_candidates(request),
+                    timeout=self.semantic_timeout_seconds,
                 )
                 mode = "hybrid"
+            except TimeoutError:
+                warnings.append(
+                    "semantic retrieval timed out after "
+                    f"{self.semantic_timeout_seconds:g}s; lexical results were preserved"
+                )
             except EmbeddingUnavailable as exc:
                 warnings.append(f"semantic retrieval unavailable: {exc}")
 
@@ -79,6 +88,14 @@ class RetrievalService:
             local_hits=tuple(hits),
             external_candidates=external,
             warnings=tuple(warnings),
+        )
+
+    async def _semantic_candidates(
+        self, request: RetrievalRequest
+    ) -> list[RetrievalCandidate]:
+        embeddings = await self.embedding.embed([request.query])
+        return await self.repository.vector_candidates(
+            request, embeddings[0], self.embedding.model
         )
 
     async def expand_context(self, request: ContextWindowRequest) -> ContextWindowResponse:

@@ -214,7 +214,10 @@ $env:SCHOLAR_RAG_EMBEDDING_BASE_URL="https://dashscope.aliyuncs.com/compatible-m
 $env:SCHOLAR_RAG_EMBEDDING_API_KEY="你的embedding密钥"
 $env:SCHOLAR_RAG_EMBEDDING_MODEL="qwen3.7-text-embedding"
 $env:SCHOLAR_RAG_EMBEDDING_DIMENSIONS="1024"
+$env:SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS="8"
 ```
+
+`SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS` 是单次交互检索中“查询 Embedding + pgvector 候选”的总时间预算。超时会取消语义链路，保留已经完成的 PostgreSQL lexical 结果，并在响应 `warnings` 中写明降级原因；它不影响后台论文入库的 Embedding 批处理超时。
 
 常用检查接口：
 
