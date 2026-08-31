@@ -411,9 +411,9 @@ arXiv
 - [ ] Docker 启动后重新执行 PostgreSQL、上传、解析、索引、检索和页面展示的完整 E2E。
 - [x] 建立固定 RAG 回归命令 `python scripts/run_rag_regression.py` 和 GitHub Actions 任务；固定清单显式排除 Docker、真实 PostgreSQL、浏览器和外部模型 API 测试，E2E 仍是独立门禁。
 - [x] 更新仍提到 Chroma、SQLite/TinyDB fallback 或“尚未迁移 PostgreSQL/pgvector”的过时架构文档与测试注释；SQLite SQL 翻译单测仅保留为旧调用兼容，不代表存储回退。
-- [ ] 将旧计划文档中的复选框状态与实际提交同步，或明确标注为历史计划。
+- [x] 将 `docs/superpowers/plans/` 明确标注为历史实施计划；其中复选框不再代表当前状态，RAG 进度只以本文件为准。
 - [ ] 清理 `tmp/` 中的调试 PDF、截图和 JSON 结果，防止测试资产混入正式提交。
-- [ ] 检查密钥、上传论文、生成截图和数据库数据均未进入 Git。
+- [x] 静态审计 Git 跟踪内容：未跟踪私有 `.env`、常见真实 Key、上传 PDF/PNG 或 `storage/tmp/models/logs` 运行资产；发布前仍由门禁重复检查。
 - [ ] 在提交和发布前运行完整测试、`docker compose config` 和浏览器验收。
 
 ## 14. 后续执行优先级
