@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from difflib import SequenceMatcher
 from typing import Any, Protocol
 
 from app.retrieval.embedding import EmbeddingUnavailable, QwenEmbeddingClient
@@ -42,6 +43,49 @@ def reciprocal_rank_fusion(
         for rank, item_id in enumerate(ranking, start=1):
             scores[item_id] = scores.get(item_id, 0.0) + 1.0 / (k + rank)
     return sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+
+
+def _normalized_evidence(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def _character_ngrams(text: str, width: int = 5) -> set[str]:
+    compact = _normalized_evidence(text)
+    if len(compact) <= width:
+        return {compact} if compact else set()
+    return {compact[index : index + width] for index in range(len(compact) - width + 1)}
+
+
+def _is_near_duplicate(
+    candidate: RetrievalCandidate, accepted: RetrievalCandidate
+) -> bool:
+    if candidate.paper_uuid != accepted.paper_uuid:
+        return False
+    if candidate.chunk_type != "prose" or accepted.chunk_type != "prose":
+        return False
+    shared_source = bool(
+        set(candidate.source_block_ids).intersection(accepted.source_block_ids)
+    )
+    adjacent_in_section = bool(
+        candidate.section_id
+        and candidate.section_id == accepted.section_id
+        and abs(candidate.chunk_index - accepted.chunk_index) == 1
+    )
+    if not shared_source and not adjacent_in_section:
+        return False
+    left = _normalized_evidence(candidate.content)
+    right = _normalized_evidence(accepted.content)
+    if min(len(left), len(right)) < 120:
+        return False
+    shorter, longer = sorted((left, right), key=len)
+    if shorter in longer and len(shorter) / len(longer) >= 0.85:
+        return True
+    if SequenceMatcher(None, left, right, autojunk=False).ratio() >= 0.92:
+        return True
+    left_grams = _character_ngrams(left)
+    right_grams = _character_ngrams(right)
+    union = left_grams | right_grams
+    return bool(union) and len(left_grams & right_grams) / len(union) >= 0.90
 
 
 class RetrievalService:
@@ -100,6 +144,9 @@ class RetrievalService:
                 "fusion": "rrf",
                 "max_chunks_per_paper": request.max_chunks_per_paper,
                 "backfill_when_insufficient": True,
+                "exact_duplicate_scope": "same_paper",
+                "near_duplicate_prose_threshold": 0.92,
+                "near_duplicate_requires": "shared_source_or_adjacent_section",
             },
         )
 
@@ -187,10 +234,14 @@ class RetrievalService:
         lexical_rank = {item.chunk_id: rank for rank, item in enumerate(lexical, start=1)}
         vector_rank = {item.chunk_id: rank for rank, item in enumerate(vector, start=1)}
         ranked_evidence: list[tuple[str, float]] = []
+        accepted_by_source: dict[tuple[str, str], list[RetrievalCandidate]] = {}
+        accepted_by_position: dict[
+            tuple[str, str, int], list[RetrievalCandidate]
+        ] = {}
         seen_evidence: set[tuple[str, str]] = set()
         for chunk_id, score in fused:
             candidate = candidates[chunk_id]
-            normalized = " ".join(candidate.content.casefold().split())
+            normalized = _normalized_evidence(candidate.content)
             evidence_key = (
                 candidate.paper_uuid,
                 normalized if normalized else f"<chunk:{candidate.chunk_id}>",
@@ -198,6 +249,40 @@ class RetrievalService:
             if evidence_key in seen_evidence:
                 continue
             seen_evidence.add(evidence_key)
+            comparable: dict[str, RetrievalCandidate] = {}
+            for source_id in candidate.source_block_ids:
+                for accepted in accepted_by_source.get(
+                    (candidate.paper_uuid, source_id), ()
+                ):
+                    comparable[accepted.chunk_id] = accepted
+            if candidate.section_id:
+                for adjacent_index in (
+                    candidate.chunk_index - 1,
+                    candidate.chunk_index + 1,
+                ):
+                    for accepted in accepted_by_position.get(
+                        (candidate.paper_uuid, candidate.section_id, adjacent_index),
+                        (),
+                    ):
+                        comparable[accepted.chunk_id] = accepted
+            if any(
+                _is_near_duplicate(candidate, accepted)
+                for accepted in comparable.values()
+            ):
+                continue
+            for source_id in candidate.source_block_ids:
+                accepted_by_source.setdefault(
+                    (candidate.paper_uuid, source_id), []
+                ).append(candidate)
+            if candidate.section_id:
+                accepted_by_position.setdefault(
+                    (
+                        candidate.paper_uuid,
+                        candidate.section_id,
+                        candidate.chunk_index,
+                    ),
+                    [],
+                ).append(candidate)
             ranked_evidence.append((chunk_id, score))
 
         selected: list[tuple[str, float]] = []

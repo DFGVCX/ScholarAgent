@@ -222,6 +222,8 @@ $env:SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER="3"
 
 `SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER` 控制 RRF 后的首轮论文多样性，默认每篇最多占 3 个位置。若没有足够的其他论文候选，系统会按原 RRF 顺序回填同篇的其他 Chunk，尽量保持请求的 Top-K 数量；设为 `0` 可关闭限制。响应中的 `ranking_policy` 会回显实际策略。
 
+检索后处理还会抑制同论文中高度重叠的相邻 prose Chunk，但只有共享来源块，或同章节且位置相邻时才进行相似度判断。表格与算法分片不会做模糊去重，避免把重复表头/标题下的不同数据行或步骤误删；阈值和适用范围可在响应 `ranking_policy` 中审计。
+
 常用检查接口：
 
 ```text

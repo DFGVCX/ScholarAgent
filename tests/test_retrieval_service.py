@@ -232,6 +232,69 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([hit.chunk_id for hit in hits], ["a", "c"])
 
+    def test_top_k_suppresses_high_overlap_adjacent_prose(self) -> None:
+        shared = "Federated learning coordinates local model updates without sharing raw data. " * 4
+        first = replace(
+            _candidate("a", "p1", 0.9, 4),
+            content=shared + "The server aggregates updates.",
+            section_id="method",
+            source_block_ids=("paragraph-7",),
+        )
+        overlap = replace(
+            _candidate("b", "p1", 0.8, 5),
+            content=shared + "The server securely aggregates updates.",
+            section_id="method",
+            source_block_ids=("paragraph-7", "paragraph-8"),
+        )
+        distinct = replace(
+            _candidate("c", "p1", 0.7, 6),
+            content="The experiments compare accuracy under non-IID partitions.",
+            section_id="results",
+            source_block_ids=("paragraph-20",),
+        )
+
+        hits = RetrievalService._fuse([first, overlap, distinct], [], 3)
+
+        self.assertEqual([hit.chunk_id for hit in hits], ["a", "c"])
+
+    def test_near_duplicate_guard_keeps_distinct_object_fragments(self) -> None:
+        shared = "Table 2. Results\nDataset | Accuracy\n" * 5
+        first = replace(
+            _candidate("a", "p1", 0.9, 4),
+            content=shared + "MNIST | 90",
+            chunk_type="table",
+            source_block_ids=("table-2",),
+        )
+        second = replace(
+            _candidate("b", "p1", 0.8, 5),
+            content=shared + "CIFAR | 72",
+            chunk_type="table",
+            source_block_ids=("table-2",),
+        )
+
+        hits = RetrievalService._fuse([first, second], [], 2)
+
+        self.assertEqual([hit.chunk_id for hit in hits], ["a", "b"])
+
+    def test_near_duplicate_guard_keeps_nonadjacent_prose_without_shared_source(self) -> None:
+        shared = "A repeated methodological phrase appears in this paper. " * 5
+        first = replace(
+            _candidate("a", "p1", 0.9, 1),
+            content=shared + "First claim.",
+            section_id="introduction",
+            source_block_ids=("intro-1",),
+        )
+        second = replace(
+            _candidate("b", "p1", 0.8, 20),
+            content=shared + "Second claim.",
+            section_id="conclusion",
+            source_block_ids=("conclusion-1",),
+        )
+
+        hits = RetrievalService._fuse([first, second], [], 2)
+
+        self.assertEqual([hit.chunk_id for hit in hits], ["a", "b"])
+
     def test_diversity_promotes_other_papers_before_same_paper_overflow(self) -> None:
         candidates = [
             replace(
@@ -381,6 +444,9 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
                 "fusion": "rrf",
                 "max_chunks_per_paper": 3,
                 "backfill_when_insufficient": True,
+                "exact_duplicate_scope": "same_paper",
+                "near_duplicate_prose_threshold": 0.92,
+                "near_duplicate_requires": "shared_source_or_adjacent_section",
             },
         )
 
