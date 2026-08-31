@@ -259,7 +259,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [ ] 比较“仅 vector、仅 lexical、RRF hybrid、hybrid + reranker”四种生产检索策略。
 - [x] 增加中英双向查询扩展：中文、英文术语、缩写和混合查询映射到同一学术概念组；短缩写使用词边界避免误触发，响应回显 `query_expansions`。
 - [x] 支持本地候选按论文、年份区间、作者、发表渠道、章节和对象类型过滤；lexical 与 vector 使用同一组 SQL 条件，响应回显规范化后的 `filters`。
-- [ ] 为不同查询类型设置候选池大小，例如普通概念、公式、表格、图和算法查询。
+- [x] 为不同查询类型设置候选池大小：普通概念保持 80，短缩写/代码类扩大到 120，公式/表格/图片/算法扩大到 160，多对象筛选扩大到 180；调用方显式指定时不覆盖，响应回显 `query_type/candidate_limit`。
 - [x] 增加父子检索与自适应论文多样性约束：首轮限制每篇论文占位，跨论文候选不足时按原 RRF 顺序回填，避免单篇知识库返回不足 Top-K。
 - [x] 输出可审计的排名明细：`lexical_rank`、`vector_rank`、`rrf_score`、`rerank_score`（未启用时为 null）和 `final_rank`；旧 `score` 保持为 RRF 分数以兼容现有前端。
 - [x] 制定检索超时和降级策略：交互语义链路默认总预算 8 秒，可通过 `SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS` 配置；超时或 Embedding 失败时取消 semantic 并保留 lexical 结果和警告。

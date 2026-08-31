@@ -547,8 +547,46 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
                 "near_duplicate_prose_threshold": 0.92,
                 "near_duplicate_requires": "shared_source_or_adjacent_section",
                 "adjacent_context_scope": "same_paper_version_section_top_k",
+                "query_type": "concept",
+                "candidate_limit": 80,
             },
         )
+
+    async def test_formula_query_expands_default_candidate_pool_for_structured_evidence(self) -> None:
+        observed = []
+
+        class _ObservedRepository(_Repository):
+            async def lexical_candidates(self, request):
+                observed.append(("lexical", request.candidate_limit))
+                return await super().lexical_candidates(request)
+
+            async def vector_candidates(self, request, vector, embedding_model):
+                observed.append(("vector", request.candidate_limit))
+                return await super().vector_candidates(request, vector, embedding_model)
+
+        response = await RetrievalService(_ObservedRepository(), _Embedding()).search(
+            RetrievalRequest("t", "u", "公式 (7) 的含义是什么")
+        )
+
+        self.assertEqual(observed, [("lexical", 160), ("vector", 160)])
+        self.assertEqual(response.ranking_policy["query_type"], "formula")
+        self.assertEqual(response.ranking_policy["candidate_limit"], 160)
+
+    async def test_explicit_candidate_pool_is_not_overridden_by_query_classifier(self) -> None:
+        observed = []
+
+        class _ObservedRepository(_Repository):
+            async def lexical_candidates(self, request):
+                observed.append(request.candidate_limit)
+                return []
+
+        response = await RetrievalService(_ObservedRepository(), _BrokenEmbedding()).search(
+            RetrievalRequest("t", "u", "Table 2 reports what?", candidate_limit=37)
+        )
+
+        self.assertEqual(observed, [37])
+        self.assertEqual(response.ranking_policy["query_type"], "table")
+        self.assertEqual(response.ranking_policy["candidate_limit"], 37)
 
     async def test_hits_expose_chunk_index(self) -> None:
         response = await RetrievalService(_Repository(), _Embedding()).search(

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from difflib import SequenceMatcher
+import re
 from typing import Any, Protocol
 
 from app.retrieval.embedding import EmbeddingUnavailable, QwenEmbeddingClient
@@ -48,6 +50,50 @@ def reciprocal_rank_fusion(
 
 def _normalized_evidence(text: str) -> str:
     return " ".join(text.casefold().split())
+
+
+_DEFAULT_CANDIDATE_LIMIT = 80
+_STRUCTURED_QUERY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("formula", re.compile(r"\b(?:eq(?:uation)?|formula)\b|公式|方程|等式", re.IGNORECASE)),
+    ("table", re.compile(r"\btable\b|表格|表\s*[A-Z]?\d+", re.IGNORECASE)),
+    ("figure", re.compile(r"\bfig(?:ure)?\b|架构图|示意图|图\s*[A-Z]?\d+", re.IGNORECASE)),
+    ("algorithm", re.compile(r"\b(?:algorithm|pseudocode)\b|算法|伪代码", re.IGNORECASE)),
+    ("code", re.compile(r"\b(?:code|implementation|repository)\b|代码|实现仓库", re.IGNORECASE)),
+)
+
+
+def _query_type(request: RetrievalRequest) -> str:
+    selected_types = [
+        value for value in request.chunk_types if value in {"equation", "table", "figure", "algorithm", "code"}
+    ]
+    if len(selected_types) == 1:
+        return "formula" if selected_types[0] == "equation" else selected_types[0]
+    if len(selected_types) > 1:
+        return "structured_object"
+    for query_type, pattern in _STRUCTURED_QUERY_PATTERNS:
+        if pattern.search(request.query):
+            return query_type
+    compact = re.sub(r"[^A-Za-z0-9-]", "", request.query)
+    if 2 <= len(compact) <= 10 and compact.upper() == compact and re.search(r"[A-Z]", compact):
+        return "abbreviation"
+    return "concept"
+
+
+def _adapt_candidate_pool(request: RetrievalRequest) -> tuple[RetrievalRequest, str]:
+    query_type = _query_type(request)
+    if request.candidate_limit != _DEFAULT_CANDIDATE_LIMIT:
+        return request, query_type
+    target = {
+        "formula": 160,
+        "table": 160,
+        "figure": 160,
+        "algorithm": 160,
+        "code": 120,
+        "structured_object": 180,
+        "abbreviation": 120,
+        "concept": _DEFAULT_CANDIDATE_LIMIT,
+    }[query_type]
+    return replace(request, candidate_limit=max(request.limit, target)), query_type
 
 
 def _character_ngrams(text: str, width: int = 5) -> set[str]:
@@ -104,6 +150,7 @@ class RetrievalService:
         self.semantic_timeout_seconds = max(0.001, float(semantic_timeout_seconds))
 
     async def search(self, request: RetrievalRequest) -> RetrievalResponse:
+        request, query_type = _adapt_candidate_pool(request)
         lexical = await self.repository.lexical_candidates(request)
         vector: list[RetrievalCandidate] = []
         warnings: list[str] = []
@@ -149,6 +196,8 @@ class RetrievalService:
                 "near_duplicate_prose_threshold": 0.92,
                 "near_duplicate_requires": "shared_source_or_adjacent_section",
                 "adjacent_context_scope": "same_paper_version_section_top_k",
+                "query_type": query_type,
+                "candidate_limit": request.candidate_limit,
             },
             merged_contexts=tuple(self._merge_adjacent_hits(hits)),
         )
