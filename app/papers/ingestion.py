@@ -125,15 +125,23 @@ class PaperIngestionService:
         else:
             parsed = _manual_parsed_paper(paper.full_text)
 
+        bibliography = build_bibliography(
+            prepared,
+            parsed.metadata,
+            parsed.full_text,
+        )
+        def field_value(name: str) -> Any:
+            return bibliography[name]["value"]
         prepared = replace(
             prepared,
+            title=str(field_value("title") or prepared.title).strip(),
+            authors=tuple(field_value("authors") or ()),
+            published_at=field_value("published_at") or None,
+            doi=field_value("doi") or None,
+            arxiv_id=field_value("arxiv_id") or None,
             metadata={
                 **dict(prepared.metadata),
-                "bibliography": build_bibliography(
-                    prepared,
-                    parsed.metadata,
-                    parsed.full_text,
-                ),
+                "bibliography": bibliography,
             },
         )
 

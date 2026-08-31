@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 import re
 from typing import Any
 
@@ -52,6 +53,24 @@ def _split_authors(value: object) -> list[str]:
     if len(parts) == 1 and text.count(",") <= 4:
         parts = re.split(r"\s*,\s*", text)
     return list(dict.fromkeys(part for part in parts if 2 <= len(part) <= 160))
+
+
+def _title_field(paper: PaperInput, pdf: Mapping[str, Any]) -> dict[str, Any]:
+    supplied = " ".join(paper.title.split()).strip()
+    filename_stem = Path(paper.file_name or "").stem.strip()
+    is_filename_placeholder = bool(
+        filename_stem and supplied.casefold() == filename_stem.casefold()
+    )
+    candidate = " ".join(str(pdf.get("title") or "").split()).strip()
+    candidate = re.sub(r"^microsoft\s+word\s*[-–—:]\s*", "", candidate, flags=re.IGNORECASE)
+    candidate_valid = bool(
+        8 <= len(candidate) <= 500
+        and not candidate.casefold().endswith((".pdf", ".doc", ".docx"))
+        and len(re.findall(r"[A-Za-z\u4e00-\u9fff]", candidate)) >= 4
+    )
+    if is_filename_placeholder and candidate_valid:
+        return _field(candidate, "pdf_metadata.title", 0.8)
+    return _field(supplied, "ingest_input", 0.95)
 
 
 def _institutions(full_text: str, title: str, authors: list[str]) -> list[str]:
@@ -161,17 +180,19 @@ def build_bibliography(
         str(parsed_metadata.get("arxiv_id") or "")
     )
     links = _links(paper, parsed_metadata)
-    institutions = _institutions(full_text, paper.title, authors)
-    paper_type = (
-        "review"
-        if _REVIEW_RE.search(paper.title)
-        else "preprint" if arxiv_id else "research_article"
+    title = _title_field(paper, pdf)
+    title_value = str(title["value"])
+    institutions = _institutions(full_text, title_value, authors)
+    paper_type = "review" if _REVIEW_RE.search(title_value) else "preprint" if arxiv_id else ""
+    type_source = (
+        "title_pattern"
+        if paper_type == "review"
+        else "identifier" if paper_type == "preprint" else "not_found"
     )
-    type_source = "title_pattern" if paper_type == "review" else "identifier" if arxiv_id else "heuristic"
-    type_confidence = 0.9 if paper_type == "review" else 0.95 if arxiv_id else 0.4
+    type_confidence = 0.9 if paper_type == "review" else 0.95 if paper_type == "preprint" else 0.0
 
     bibliography = {
-        "title": _field(paper.title.strip(), "ingest_input", 0.95),
+        "title": title,
         "title_translation": _field("", "not_generated", 0.0),
         "authors": _field(authors, author_source, author_confidence),
         "institutions": _field(

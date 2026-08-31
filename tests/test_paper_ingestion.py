@@ -249,6 +249,59 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embedding.texts, [])
         self.assertIn("searchable_text_insufficient", repository.parsing_failure)
 
+    async def test_pdf_evidence_syncs_reliable_bibliography_to_core_paper_fields(self) -> None:
+        repository = _Repository(_record())
+        base = _parsed("ready")
+        parsed = ParsedPaper(
+            base.full_text,
+            base.pages,
+            base.sections,
+            {
+                **base.metadata,
+                "pdf_metadata": {
+                    "title": "A Reliable Federated Learning Method",
+                    "author": "Alice Smith; Bob Zhang",
+                    "creationDate": "D:20240501",
+                },
+            },
+            base.manifest,
+            base.status,
+            base.quality_score,
+        )
+
+        @asynccontextmanager
+        async def transaction(*_):
+            yield object()
+
+        service = PaperIngestionService(
+            _Embedding(),
+            parser=lambda _: parsed,
+            transaction_factory=transaction,
+            repository_factory=lambda _: repository,
+        )
+        paper = PaperInput(
+            paper_id="paper-1",
+            source="pdf",
+            title="2401.12345",
+            file_uri="2401.12345.pdf",
+            file_name="2401.12345.pdf",
+            mime_type="application/pdf",
+        )
+        with patch(
+            "app.papers.ingestion.get_settings",
+            return_value=SimpleNamespace(
+                rag_chunk_size=900,
+                rag_chunk_overlap=120,
+                rag_chunk_strategy="structure_aware_v1",
+                pdf_parse_strategy="structure_aware_v1",
+            ),
+        ):
+            await service.ingest("t", "u", paper)
+
+        self.assertEqual(repository.saved_paper.title, "A Reliable Federated Learning Method")
+        self.assertEqual(repository.saved_paper.authors, ("Alice Smith", "Bob Zhang"))
+        self.assertEqual(repository.saved_paper.published_at, "2024-05-01")
+
     async def test_manual_edit_does_not_reparse_attached_pdf(self) -> None:
         repository = _Repository(_record())
 

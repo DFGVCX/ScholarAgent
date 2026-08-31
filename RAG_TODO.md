@@ -275,6 +275,8 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] DOI 提取、归一化和唯一性约束。
 - [x] arXiv ID 提取、归一化和唯一性约束。
 - [x] GitHub/GitLab 代码或项目链接初步提取。
+- [x] 上传标题仅等于 PDF 文件名时，可用且通过保守校验的 PDF metadata 标题会成为 `pdf_metadata.title` 候选；显式输入标题和人工修正始终优先。
+- [x] 书目证据选出的标题、作者、时间、DOI 和 arXiv 会同步到核心 `papers` 字段，避免界面列表与 `metadata.bibliography` 不一致；无法可靠识别的论文类型保持 `not_found`，不默认猜成研究论文。
 
 ### 后续
 
