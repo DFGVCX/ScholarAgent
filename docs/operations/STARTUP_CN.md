@@ -456,6 +456,22 @@ Remove-Item -LiteralPath $socket -Force
 Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 ```
 
+### 10.8 Windows Python 3.14 与 async psycopg
+
+Python 3.14 在 Windows 默认创建 `ProactorEventLoop`，而 psycopg 的异步连接要求 selector-based loop。项目会在导入数据库运行时、创建 Uvicorn 或 unittest 事件循环之前切换为 `WindowsSelectorEventLoopPolicy`，因此不应再出现：
+
+```text
+Psycopg cannot use the 'ProactorEventLoop' to run in async mode
+```
+
+可单独验证：
+
+```powershell
+python -m unittest tests.test_db_event_loop
+```
+
+该兼容层只在 Windows 生效。Python 3.16 计划移除 event-loop policy API，届时需要在进程宿主改用显式 `loop_factory`；代码已将兼容逻辑隔离在 `app/db/session.py`，便于替换。
+
 不要删除 `Docker\wsl`、Docker data、`scholar_storage` 或 `scholar_postgres`。如果当前终端无法访问该 ReparsePoint，需要在有相应权限的 PowerShell 中执行清理。
 
 ## 11. 推荐开发启动流程

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import sys
+import warnings
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -12,6 +15,29 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import get_settings
+
+
+def _configure_psycopg_event_loop_policy() -> None:
+    """Use a Windows loop implementation supported by psycopg async connections.
+
+    Python 3.14 still defaults to Proactor on Windows, while psycopg requires a
+    selector-based loop. This module is imported before Uvicorn/unittest creates
+    application loops. The policy API is deprecated for Python 3.16, so the
+    compatibility shim is isolated here for later replacement with loop_factory.
+    """
+    if sys.platform != "win32":
+        return
+    selector_policy_type = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+    if selector_policy_type is None:
+        return
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        current_policy = asyncio.get_event_loop_policy()
+        if not isinstance(current_policy, selector_policy_type):
+            asyncio.set_event_loop_policy(selector_policy_type())
+
+
+_configure_psycopg_event_loop_policy()
 
 
 def _database_url() -> str:
