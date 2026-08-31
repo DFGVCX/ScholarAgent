@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
@@ -44,6 +44,91 @@ class KnowledgePaperDTO(BaseModel):
     url: str | None = Field(default=None, max_length=500)
     in_knowledge_base: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BibliographyLinksDTO(BaseModel):
+    code: list[str] = Field(default_factory=list)
+    project: list[str] = Field(default_factory=list)
+    dataset: list[str] = Field(default_factory=list)
+    supplement: list[str] = Field(default_factory=list)
+
+
+class PaperMetadataUpdateDTO(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    title_translation: str = Field(default="", max_length=1000)
+    authors: list[str] = Field(default_factory=list)
+    institutions: list[str] = Field(default_factory=list)
+    published_at: str = Field(default="", max_length=40)
+    venue: str = Field(default="", max_length=500)
+    doi: str = Field(default="", max_length=200)
+    arxiv_id: str = Field(default="", max_length=120)
+    links: BibliographyLinksDTO = Field(default_factory=BibliographyLinksDTO)
+    paper_type: str = Field(default="", max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("title is required")
+        return value
+
+
+def _normalized_metadata_value(name: str, value: Any) -> Any:
+    if name in {"authors", "institutions"}:
+        normalized: list[str] = []
+        for item in value or []:
+            text_value = str(item).strip()
+            if text_value and text_value not in normalized:
+                normalized.append(text_value)
+        return normalized
+    if name == "links":
+        raw = getattr(value, "model_dump", lambda: value)()
+        if not isinstance(raw, dict):
+            raw = {}
+        return {
+            kind: _normalized_metadata_value("authors", raw.get(kind, []))
+            for kind in ("code", "project", "dataset", "supplement")
+        }
+    return str(value or "").strip()
+
+
+def _merge_user_bibliography(
+    existing: dict[str, Any], request: PaperMetadataUpdateDTO
+) -> dict[str, dict[str, Any]]:
+    raw = getattr(request, "model_dump", request.dict)()
+    merged: dict[str, dict[str, Any]] = {}
+    for name in (
+        "title",
+        "title_translation",
+        "authors",
+        "institutions",
+        "published_at",
+        "venue",
+        "doi",
+        "arxiv_id",
+        "links",
+        "paper_type",
+    ):
+        value = _normalized_metadata_value(name, raw.get(name))
+        previous = existing.get(name)
+        if isinstance(previous, dict) and previous.get("value") == value:
+            merged[name] = dict(previous)
+        elif not value and not isinstance(previous, dict):
+            merged[name] = {
+                "value": value,
+                "source": "not_generated" if name == "title_translation" else "not_found",
+                "confidence": 0.0,
+                "user_edited": False,
+            }
+        else:
+            merged[name] = {
+                "value": value,
+                "source": "user",
+                "confidence": 1.0,
+                "user_edited": True,
+            }
+    return merged
 
 
 def _stable_paper_id(source: str, title: str) -> str:
@@ -238,6 +323,54 @@ async def save_knowledge(
     )
     stats = await rag_service.stats(user.tenant_id, user.user_id)
     return {"item": result["paper"], "rag": stats}
+
+
+@router.patch("/{paper_id}/metadata")
+async def update_paper_metadata(
+    paper_id: str,
+    request: PaperMetadataUpdateDTO,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    async with tenant_transaction(user.tenant_id, user.user_id) as session:
+        repository = PaperRepository(session)
+        current = await repository.get(user.tenant_id, user.user_id, paper_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="paper not found")
+        metadata = dict(current.metadata)
+        existing = metadata.get("bibliography") or {}
+        bibliography = _merge_user_bibliography(
+            dict(existing) if isinstance(existing, dict) else {},
+            request,
+        )
+        metadata.update(
+            {
+                "bibliography": bibliography,
+                "title_translation": bibliography["title_translation"]["value"],
+                "institutions": bibliography["institutions"]["value"],
+                "venue": bibliography["venue"]["value"],
+                "paper_type": bibliography["paper_type"]["value"],
+            }
+        )
+        updated = await repository.update_bibliography(
+            user.tenant_id,
+            user.user_id,
+            paper_id,
+            title=bibliography["title"]["value"],
+            authors=tuple(bibliography["authors"]["value"]),
+            published_at=bibliography["published_at"]["value"] or None,
+            doi=bibliography["doi"]["value"] or None,
+            arxiv_id=bibliography["arxiv_id"]["value"] or None,
+            metadata=metadata,
+        )
+    if not updated:
+        raise HTTPException(status_code=404, detail="paper not found")
+    return {
+        "saved": True,
+        "paper_id": paper_id,
+        "current_content_version": current.current_content_version,
+        "metadata": metadata,
+    }
 
 
 @router.post("/upload")

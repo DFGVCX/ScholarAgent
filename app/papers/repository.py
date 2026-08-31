@@ -330,6 +330,49 @@ class PaperRepository:
             raise RuntimeError("paper upsert returned no row")
         return self._record(row)
 
+    async def update_bibliography(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_id: str,
+        *,
+        title: str,
+        authors: Sequence[str],
+        published_at: str | None,
+        doi: str | None,
+        arxiv_id: str | None,
+        metadata: Mapping[str, Any],
+    ) -> bool:
+        """Update paper-level bibliography without replacing parsed content or vectors."""
+
+        result = await self.session.execute(
+            text(
+                """UPDATE papers SET
+                    title=:title,
+                    authors=CAST(:authors AS jsonb),
+                    published_at=:published_at,
+                    normalized_doi=:doi,
+                    normalized_arxiv_id=:arxiv_id,
+                    metadata=CAST(:metadata AS jsonb),
+                    updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_id=:paper_id
+                    AND deleted_at IS NULL
+                RETURNING paper_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_id": paper_id,
+                "title": title.strip(),
+                "authors": json.dumps(list(authors), ensure_ascii=False),
+                "published_at": published_at,
+                "doi": normalize_doi(doi),
+                "arxiv_id": normalize_arxiv_id(arxiv_id),
+                "metadata": json.dumps(dict(metadata), ensure_ascii=False),
+            },
+        )
+        return result.mappings().first() is not None
+
     async def set_knowledge_base(
         self, tenant_id: str, user_id: str, paper_id: str, enabled: bool
     ) -> bool:

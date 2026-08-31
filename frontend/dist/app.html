@@ -530,6 +530,16 @@
         .paper-editor > div { min-height: 0; overflow: auto; }
         .paper-editor textarea { min-height: 140px; }
         #editPaperFullText { min-height: 260px; }
+        .paper-metadata-editor { max-width: 1080px; margin: 0 auto; display: grid; gap: 12px; }
+        .paper-metadata-summary { border: 1px solid var(--line); border-radius: var(--radius); background: #fff; padding: 14px; }
+        .paper-metadata-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .paper-metadata-field { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; padding: 11px; display: grid; gap: 7px; }
+        .paper-metadata-field.wide { grid-column: 1 / -1; }
+        .paper-metadata-field > header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .paper-metadata-field > header span { color: var(--muted); font: 11px/1.4 var(--font-mono); }
+        .paper-metadata-field textarea { min-height: 86px; resize: vertical; }
+        .paper-metadata-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .paper-metadata-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.96); box-shadow: var(--shadow-tight); }
         .survey-workbench { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(320px, 380px) minmax(0, 1fr); gap: 20px; align-items: stretch; overflow: hidden; }
         .survey-brief { position: relative; max-height: 100%; overflow: auto; }
         .survey-brief::after {
@@ -7272,6 +7282,7 @@
                                     <button id="previewTextTab" class="plain" type="button" data-preview-mode="text">正文</button>
                                     <button id="previewEditTab" class="plain" type="button" data-preview-mode="assets">图表算法</button>
                                     <button id="previewChunksTab" class="plain" type="button" data-preview-mode="chunks">切片</button>
+                                    <button id="previewMetadataTab" class="plain" type="button" data-preview-mode="metadata">论文信息</button>
                                 </div>
                                 <div class="reader-tools">
                                     <button id="paperAnnotateToggle" class="plain" type="button">批注</button>
@@ -9627,6 +9638,130 @@
         function fullPaperText(item) {
             return [item?.full_text, item?.abstract].filter(Boolean).join('\n\n') || '暂无可预览正文。';
         }
+        const BIBLIOGRAPHY_FIELDS = [
+            ['title', '标题', 'text'],
+            ['title_translation', '标题翻译', 'text'],
+            ['authors', '作者（每行一位）', 'list'],
+            ['institutions', '机构（每行一个）', 'list'],
+            ['published_at', '发表时间', 'text'],
+            ['venue', '发表渠道', 'text'],
+            ['doi', 'DOI', 'text'],
+            ['arxiv_id', 'arXiv', 'text'],
+            ['paper_type', '论文类型', 'text'],
+        ];
+        function bibliographyField(item, name) {
+            const stored = item?.metadata?.bibliography?.[name];
+            if (stored && typeof stored === 'object' && Object.prototype.hasOwnProperty.call(stored, 'value')) return stored;
+            const fallback = {
+                title: item?.title || '',
+                title_translation: item?.metadata?.title_translation || '',
+                authors: item?.authors || [],
+                institutions: item?.metadata?.institutions || [],
+                published_at: item?.published_at || '',
+                venue: item?.metadata?.venue || item?.metadata?.publication_venue || '',
+                doi: item?.doi || '',
+                arxiv_id: item?.arxiv_id || '',
+                links: { code: [], project: [], dataset: [], supplement: [] },
+                paper_type: item?.metadata?.paper_type || '',
+            };
+            return { value: fallback[name], source: 'legacy_record', confidence: 0, user_edited: false };
+        }
+        function bibliographyConfidence(field) {
+            const confidence = Number(field.confidence);
+            return Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '0%';
+        }
+        function bibliographyReviewSummary(item) {
+            const definitions = [...BIBLIOGRAPHY_FIELDS, ['links', '代码 / 项目', 'links']];
+            const hasValue = (value) => {
+                if (Array.isArray(value)) return value.length > 0;
+                if (value && typeof value === 'object') return Object.values(value).some(hasValue);
+                return String(value || '').trim().length > 0;
+            };
+            const complete = definitions.filter(([name]) => hasValue(bibliographyField(item, name).value)).length;
+            const needsReview = definitions.filter(([name]) => {
+                const field = bibliographyField(item, name);
+                return !hasValue(field.value) || Number(field.confidence || 0) < 0.7;
+            }).map(([, label]) => label);
+            return {
+                complete,
+                total: definitions.length,
+                needsReview,
+            };
+        }
+        function renderBibliographyField(item, definition) {
+            const [name, label, kind] = definition;
+            const field = bibliographyField(item, name);
+            const source = field.source || 'not_found';
+            const value = kind === 'list'
+                ? (Array.isArray(field.value) ? field.value.join('\n') : String(field.value || ''))
+                : String(field.value || '');
+            const control = kind === 'list'
+                ? `<textarea data-bibliography-field="${name}">${escapeHtml(value)}</textarea>`
+                : `<input data-bibliography-field="${name}" value="${escapeHtml(value)}">`;
+            return `<label class="paper-metadata-field ${kind === 'list' ? 'wide' : ''}">
+                <header><b>${escapeHtml(label)}</b><span>${escapeHtml(source)} · ${bibliographyConfidence(field)}${field.user_edited ? ' · 人工' : ''}</span></header>
+                ${control}
+            </label>`;
+        }
+        function renderPaperMetadata(item) {
+            const review = bibliographyReviewSummary(item);
+            const links = bibliographyField(item, 'links');
+            const value = links.value && typeof links.value === 'object' ? links.value : {};
+            const linkEditor = `<section class="paper-metadata-field wide" data-bibliography-field="links">
+                <header><b>代码 / 项目 / 数据 / 补充材料</b><span>${escapeHtml(links.source || 'not_found')} · ${bibliographyConfidence(links)}${links.user_edited ? ' · 人工' : ''}</span></header>
+                <div class="paper-metadata-links">
+                    <label>代码仓库（每行一个）<textarea data-bibliography-link="code">${escapeHtml((value.code || []).join('\n'))}</textarea></label>
+                    <label>项目主页（每行一个）<textarea data-bibliography-link="project">${escapeHtml((value.project || []).join('\n'))}</textarea></label>
+                    <label>数据集（每行一个）<textarea data-bibliography-link="dataset">${escapeHtml((value.dataset || []).join('\n'))}</textarea></label>
+                    <label>补充材料（每行一个）<textarea data-bibliography-link="supplement">${escapeHtml((value.supplement || []).join('\n'))}</textarea></label>
+                </div>
+            </section>`;
+            return `<div class="paper-metadata-editor">
+                <section class="paper-metadata-summary"><strong>论文信息与证据</strong><p class="subtle">完整字段 ${review.complete}/${review.total} · 待修正：${escapeHtml(review.needsReview.join('、') || '无')}。每个字段显示来源与置信度；人工修正不会被重新解析覆盖。</p></section>
+                <div class="paper-metadata-grid">${BIBLIOGRAPHY_FIELDS.map((field) => renderBibliographyField(item, field)).join('')}${linkEditor}</div>
+                <div class="paper-metadata-actions"><button id="savePaperMetadataBtn" class="primary" type="button">保存论文信息</button></div>
+            </div>`;
+        }
+        function metadataControlValue(name) {
+            const control = document.querySelector(`[data-bibliography-field="${name}"]`);
+            if (!control || name === 'links') return null;
+            const definition = BIBLIOGRAPHY_FIELDS.find((field) => field[0] === name);
+            if (definition?.[2] === 'list') return control.value.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean);
+            return control.value.trim();
+        }
+        async function savePaperMetadata() {
+            const item = selectedPaper();
+            if (!item) return;
+            const links = {};
+            document.querySelectorAll('[data-bibliography-link]').forEach((control) => {
+                links[control.dataset.bibliographyLink] = control.value.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean);
+            });
+            const value = (name) => metadataControlValue(name);
+            if (!String(value('title') || '').trim()) {
+                toast('标题不能为空', 'bad');
+                return;
+            }
+            try {
+                const payload = {
+                    title: String(value('title')).trim(),
+                    authors: value('authors') || [],
+                    title_translation: value('title_translation') || '',
+                    institutions: value('institutions') || [],
+                    published_at: value('published_at') || '',
+                    venue: value('venue') || '',
+                    doi: value('doi') || '',
+                    arxiv_id: value('arxiv_id') || '',
+                    links,
+                    paper_type: value('paper_type') || '',
+                };
+                await api(`/knowledge/${encodeURIComponent(item.paper_id)}/metadata`, { method: 'PATCH', body: JSON.stringify(payload) });
+                state.selectedPaperId = item.paper_id;
+                toast('论文信息已保存', 'ok');
+                await loadKnowledge();
+            } catch (error) {
+                toast(error.message, 'bad');
+            }
+        }
         function paperTextPages(item) {
             const text = fullPaperText(item);
             const size = 2200;
@@ -9734,7 +9869,7 @@
             const item = selectedPaper();
             const viewer = $('paperViewer');
             const editor = $('paperEditor');
-            viewer.classList.toggle('structured-content', ['text', 'assets', 'chunks'].includes(state.paperViewMode));
+            viewer.classList.toggle('structured-content', ['text', 'assets', 'chunks', 'metadata'].includes(state.paperViewMode));
             if (!item) {
                 $('paperPreviewTitle').textContent = '文献预览与编辑';
                 $('paperPreviewBadge').textContent = '未选择';
@@ -9769,6 +9904,12 @@
                 return;
             }
             $('paperPageLabel').textContent = '全文';
+            if (state.paperViewMode === 'metadata') {
+                $('paperPageLabel').textContent = '论文信息';
+                viewer.innerHTML = `<div class="parsed-editor-stage">${renderPaperMetadata(item)}</div>`;
+                $('savePaperMetadataBtn')?.addEventListener('click', savePaperMetadata);
+                return;
+            }
             const structure = paperStructure(item);
             if (structure === undefined) {
                 viewer.innerHTML = '<div class="reader-empty">正在读取结构化正文...</div>';

@@ -57,6 +57,14 @@ class _Session:
         return _Result()
 
 
+def _metadata_update_execute(session):
+    async def execute(statement, params=None):
+        session.statements.append((str(statement), params or {}))
+        return _WriteResult(row={"paper_uuid": UUID("00000000-0000-0000-0000-000000000111")})
+
+    return execute
+
+
 class _StructureSession(_Session):
     async def execute(self, statement, params=None):
         sql = str(statement)
@@ -187,6 +195,36 @@ class _StatsSession(_Session):
 
 
 class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_update_bibliography_changes_only_tenant_scoped_paper_metadata(self) -> None:
+        session = _Session()
+        session.execute = _metadata_update_execute(session)  # type: ignore[method-assign]
+
+        updated = await PaperRepository(session).update_bibliography(
+            "tenant-a",
+            "user-a",
+            "paper-1",
+            title="Corrected title",
+            authors=("Alice", "Bob"),
+            published_at="2025-01-02",
+            doi="https://doi.org/10.1000/ABC.1",
+            arxiv_id="arXiv:2401.12345v2",
+            metadata={"bibliography": {"title": {"value": "Corrected title"}}},
+        )
+
+        self.assertTrue(updated)
+        sql, params = session.statements[-1]
+        self.assertIn("UPDATE papers", sql)
+        self.assertNotIn("paper_contents", sql)
+        self.assertNotIn("paper_chunks", sql)
+        self.assertNotIn("current_content_version=", sql)
+        self.assertIn("tenant_id=:tenant_id", sql)
+        self.assertIn("user_id=:user_id", sql)
+        self.assertIn("deleted_at IS NULL", sql)
+        self.assertEqual(params["tenant_id"], "tenant-a")
+        self.assertEqual(params["user_id"], "user-a")
+        self.assertEqual(params["doi"], "10.1000/abc.1")
+        self.assertEqual(params["arxiv_id"], "2401.12345")
+
     async def test_stats_report_capacity_jobs_and_ready_vector_consistency(self) -> None:
         session = _StatsSession()
 

@@ -109,7 +109,7 @@ class ModelSettingsUiTests(unittest.TestCase):
 
     def test_structured_paper_views_use_the_existing_scroll_host(self) -> None:
         self.assertIn(
-            "viewer.classList.toggle('structured-content', ['text', 'assets', 'chunks'].includes(state.paperViewMode));",
+            "viewer.classList.toggle('structured-content', ['text', 'assets', 'chunks', 'metadata'].includes(state.paperViewMode));",
             self.html,
         )
         self.assertIn(
@@ -126,6 +126,34 @@ class ModelSettingsUiTests(unittest.TestCase):
         )
         self.assertIn('data-preview-mode="chunks">切片</button>', self.html)
         self.assertIn("window.ScholarChunkView.render(structure, state.paperChunkFilter)", self.html)
+
+    def test_paper_workbench_exposes_auditable_editable_bibliography(self) -> None:
+        self.assertIn('data-preview-mode="metadata">论文信息</button>', self.html)
+        self.assertIn("function renderPaperMetadata", self.html)
+        self.assertIn("function bibliographyReviewSummary", self.html)
+        self.assertIn("完整字段", self.html)
+        self.assertIn("待修正", self.html)
+        self.assertIn("function savePaperMetadata", self.html)
+        for field in (
+            "title",
+            "title_translation",
+            "authors",
+            "institutions",
+            "published_at",
+            "venue",
+            "doi",
+            "arxiv_id",
+            "paper_type",
+        ):
+            self.assertIn(f"['{field}',", self.html)
+        self.assertIn('data-bibliography-field="links"', self.html)
+        self.assertIn("field.source || 'not_found'", self.html)
+        self.assertIn("field.confidence", self.html)
+        self.assertIn("field.user_edited", self.html)
+        self.assertIn("savePaperMetadataBtn", self.html)
+        self.assertIn("`/knowledge/${encodeURIComponent(item.paper_id)}/metadata`", self.html)
+        self.assertIn("method: 'PATCH'", self.html)
+        self.assertNotIn("updated_from: 'web_metadata_editor'", self.html)
 
 
 if __name__ == "__main__":
