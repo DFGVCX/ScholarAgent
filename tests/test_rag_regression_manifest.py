@@ -14,6 +14,7 @@ class RagRegressionManifestTest(unittest.TestCase):
             "tests.test_retrieval_service",
             "tests.test_retrieval_evaluation",
             "tests.test_rag_stats",
+            "tests.test_settings_routes",
         }
 
         self.assertTrue(required.issubset(set(RAG_TEST_TARGETS)))

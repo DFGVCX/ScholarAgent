@@ -31,12 +31,22 @@ class RagStatsTest(unittest.IsolatedAsyncioTestCase):
         repository.stats.return_value = counts
         with patch("app.services.rag_service.tenant_transaction", transaction), patch(
             "app.services.rag_service.PaperRepository", return_value=repository
-        ):
+        ), patch(
+            "app.services.rag_service.get_settings"
+        ) as settings:
+            settings.return_value.rag_embedding_model = "Qwen3-Embedding-4B"
+            settings.return_value.rag_chunk_size = 800
+            settings.return_value.rag_chunk_overlap = 80
+            settings.return_value.rag_top_k = 8
+            settings.return_value.rag_candidate_limit = 80
+            settings.return_value.rag_max_chunks_per_paper = 3
+            settings.return_value.rag_semantic_timeout_seconds = 8
             result = await rag_service.stats("tenant", "user")
 
         self.assertEqual(result["vector_count"], 8)
         self.assertEqual(result["consistency_status"], "degraded")
         self.assertEqual(result["consistency_error_count"], 6)
+        self.assertEqual(result["embedding_model"], "Qwen3-Embedding-4B")
         repository.stats.assert_awaited_once()
 
 

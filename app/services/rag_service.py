@@ -259,7 +259,7 @@ class RagService:
             "index_backend": "pgvector",
             "retrieval_mode": "hybrid_rrf",
             "embedding_provider": "qwen",
-            "embedding_model": QwenEmbeddingClient.MODEL,
+            "embedding_model": settings.rag_embedding_model,
             "embedding_dimensions": QwenEmbeddingClient.DIMENSIONS,
             "chunk_size": settings.rag_chunk_size,
             "chunk_overlap": settings.rag_chunk_overlap,

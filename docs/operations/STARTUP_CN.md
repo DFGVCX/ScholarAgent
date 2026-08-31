@@ -220,6 +220,19 @@ $env:SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER="3"
 
 `SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS` 是单次交互检索中“查询 Embedding + pgvector 候选”的总时间预算。超时会取消语义链路，保留已经完成的 PostgreSQL lexical 结果，并在响应 `warnings` 中写明降级原因；它不影响后台论文入库的 Embedding 批处理超时。
 
+### 6.1 Embedding 模型切换验收
+
+模型切换必须按以下顺序完成，不能只看到“保存成功”就结束：
+
+1. 在模型设置页填写候选 Base URL、Key 和模型名，点击“测试 Embedding”。探测只请求候选模型，不保存配置；必须返回 1024 维。
+2. 点击“保存运行配置”。保存接口会再次探测候选，然后保存配置，并把旧模型或旧服务地址对应的向量标记为 `stale`。响应的 `embedding.active_model` 必须是新模型；存在旧向量时 `reindex_required=true`。
+3. 点击“重新生成向量”。`POST /settings/embedding/reindex` 返回已创建和已存在的任务数，Worker 随后按新模型逐篇重建。
+4. 轮询 `GET /settings/runtime`。有语料时最终应满足 `ready > 0` 且 `stale=0 / failed=0 / pending=0`。
+5. 检查 `GET /knowledge/rag/stats`：`embedding_model` 必须等于新模型，`ready_noncurrent_chunks`、`ready_missing_vectors`、`ready_wrong_model` 均为 0，`consistency_status=ok`。
+6. 用一条已知能命中的问题调用 `/knowledge/rag/search`。验收响应应为 `retrieval_mode=hybrid`、没有语义降级 warning，并至少有一个命中带非空 `vector_rank`。原始完整 Chunk 与引用定位必须仍可用。
+
+如果第 4 步长时间停在 `pending`，先检查 Worker；如果出现 `failed`，先保留失败原因，不要重复切模型掩盖问题。当前固定回归会验证探测、stale、任务入队、重建写回、模型过滤和 lexical 降级；真实 PostgreSQL/Worker/模型 API 的全过程仍需在 Docker E2E 中执行。
+
 `SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER` 控制 RRF 后的首轮论文多样性，默认每篇最多占 3 个位置。若没有足够的其他论文候选，系统会按原 RRF 顺序回填同篇的其他 Chunk，尽量保持请求的 Top-K 数量；设为 `0` 可关闭限制。响应中的 `ranking_policy` 会回显实际策略。
 
 检索后处理还会抑制同论文中高度重叠的相邻 prose Chunk，但只有共享来源块，或同章节且位置相邻时才进行相似度判断。表格与算法分片不会做模糊去重，避免把重复表头/标题下的不同数据行或步骤误删；阈值和适用范围可在响应 `ranking_policy` 中审计。
