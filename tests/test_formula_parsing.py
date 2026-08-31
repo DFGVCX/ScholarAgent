@@ -74,6 +74,39 @@ second = sqrt(n), (1)
 
         self.assertIn("O(1)", candidate.latex)
 
+    def test_recovers_relu_piecewise_function_as_latex_cases(self) -> None:
+        candidate = recover_formula(
+            raw_text="ReLU(x) = x. i f x > 0 0. i f x ≤0 (10)",
+            fallback_text="",
+            label="10",
+            page_number=8,
+            bbox=(1.0, 2.0, 3.0, 4.0),
+        )
+
+        self.assertIn(r"\begin{cases}", candidate.latex)
+        self.assertIn(r"x, & \text{if } x > 0", candidate.latex)
+        self.assertIn(r"0, & \text{if } x \le 0", candidate.latex)
+        self.assertIn(r"\end{cases}", candidate.latex)
+        self.assertEqual(candidate.latex.count("{"), candidate.latex.count("}"))
+
+    def test_recovers_probability_piecewise_formula_when_lhs_is_last(self) -> None:
+        candidate = recover_formula(
+            raw_text=(
+                "Two servers generate entries with the following distribution: "
+                "( +1 with probability 1/2 −1 with probability 1/2 , (4) Pij ="
+            ),
+            fallback_text="",
+            label="4",
+            page_number=5,
+            bbox=(1.0, 2.0, 3.0, 4.0),
+        )
+
+        self.assertTrue(candidate.latex.startswith(r"P_{ij} = \begin{cases}"))
+        self.assertIn(r"+1, & \text{with probability } \frac{1}{2}", candidate.latex)
+        self.assertIn(r"-1, & \text{with probability } \frac{1}{2}", candidate.latex)
+        self.assertNotIn("Two servers", candidate.latex)
+        self.assertEqual(candidate.latex.count("{"), candidate.latex.count("}"))
+
     def test_recovers_weighted_sum_as_renderable_markdown(self) -> None:
         candidate = recover_formula(
             raw_text="wi = \x03n j=1 ζ j i w j i, (2)",

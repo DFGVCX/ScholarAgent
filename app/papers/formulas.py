@@ -178,6 +178,74 @@ def _objective_latex(value: str) -> str | None:
     )
 
 
+def _piecewise_identifier(value: str) -> str:
+    clean = re.sub(r"\s+", "", value)
+    if re.fullmatch(r"[A-Z][a-z]{2,}", clean):
+        return f"{clean[0]}_{{{clean[1:]}}}"
+    return clean
+
+
+def _piecewise_latex(value: str, label: str) -> str | None:
+    """Recover two-branch cases only when both branches are explicit."""
+    clean = sanitize_formula_text(value).replace("−", "-")
+    clean = re.sub(
+        rf"(?<![A-Za-z0-9_])\({re.escape(str(label))}\)",
+        " ",
+        clean,
+    )
+    clean = re.sub(r"\bi\s+f\b", "if", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\s+", " ", clean).strip(" ,")
+
+    probability = list(
+        re.finditer(
+            r"(?P<value>[+\-]?\s*\d+(?:\.\d+)?)\s+with\s+probability\s+"
+            r"(?P<numerator>\d+)\s*/\s*(?P<denominator>\d+)",
+            clean,
+            flags=re.IGNORECASE,
+        )
+    )
+    lhs_at_end = re.search(r"\b(?P<lhs>[A-Za-z][A-Za-z0-9_]*)\s*=\s*$", clean)
+    if len(probability) == 2 and lhs_at_end:
+        branches = [
+            (
+                re.sub(r"\s+", "", match.group("value")),
+                match.group("numerator"),
+                match.group("denominator"),
+            )
+            for match in probability
+        ]
+        lhs = _piecewise_identifier(lhs_at_end.group("lhs"))
+        first, second = branches
+        return (
+            f"{lhs} = \\begin{{cases}}\n"
+            f"{first[0]}, & \\text{{with probability }} \\frac{{{first[1]}}}{{{first[2]}}} \\\\\n"
+            f"{second[0]}, & \\text{{with probability }} \\frac{{{second[1]}}}{{{second[2]}}}\n"
+            r"\end{cases}"
+        )
+
+    conditional = re.search(
+        r"(?P<lhs>[A-Za-z][A-Za-z0-9_]*\s*\([^)]*\))\s*=\s*"
+        r"(?P<first>[A-Za-z0-9_+\-.]+)\s+if\s+(?P<first_condition>.+?)\s+"
+        r"(?P<second>[+\-]?\d+(?:\.\d+)?)\.?\s+if\s+(?P<second_condition>.+)$",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    if conditional:
+        groups = conditional.groupdict()
+        lhs = re.sub(r"\s+", "", groups["lhs"])
+        first = groups["first"].rstrip(".")
+        second = groups["second"].rstrip(".")
+        first_condition = _conservative_latex(groups["first_condition"].strip(" .,"))
+        second_condition = _conservative_latex(groups["second_condition"].strip(" .,"))
+        return (
+            f"{lhs} = \\begin{{cases}}\n"
+            f"{first}, & \\text{{if }} {first_condition} \\\\\n"
+            f"{second}, & \\text{{if }} {second_condition}\n"
+            r"\end{cases}"
+        )
+    return None
+
+
 def _conservative_latex(value: str) -> str:
     clean = re.sub(r"\s+", " ", value).strip()
     clean = re.sub(
@@ -215,6 +283,8 @@ def recover_formula(
 ) -> FormulaCandidate:
     raw = sanitize_formula_text(raw_text)
     fallback = sanitize_formula_text(fallback_text)
+    raw_piecewise = _piecewise_latex(raw, label)
+    fallback_piecewise = _piecewise_latex(fallback, label)
     raw_without_label = _strip_label(raw, label)
     fallback_without_label = _strip_label(fallback, label)
     use_fallback = bool(fallback_without_label) and (
@@ -222,12 +292,15 @@ def recover_formula(
         >= _formula_information_score(raw_without_label)
     )
     without_label = fallback_without_label if use_fallback else raw_without_label
-    latex = _weighted_sum_latex(without_label) or _objective_latex(without_label)
+    piecewise = fallback_piecewise if use_fallback and fallback_piecewise else raw_piecewise
+    latex = piecewise or _weighted_sum_latex(without_label) or _objective_latex(without_label)
     specialized = latex is not None
     if latex is None:
         latex = _conservative_latex(without_label)
-    source = "pypdf_page_text" if use_fallback else "pymupdf"
-    confidence = "high" if use_fallback and specialized else "medium"
+    source = "pypdf_page_text" if use_fallback and fallback_piecewise else "pymupdf"
+    if piecewise is None:
+        source = "pypdf_page_text" if use_fallback else "pymupdf"
+    confidence = "high" if specialized else "medium"
     markdown = f"$$\n{latex}\n\\tag{{{label}}}\n$$"
     return FormulaCandidate(
         label=str(label),
