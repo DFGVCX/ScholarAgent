@@ -63,7 +63,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 
 - [ ] 增加数据库备份、恢复和迁移回滚的实际演练文档。
 - [ ] 增加面向大规模 Chunk 数量的 HNSW 参数和查询延迟压测。
-- [ ] 建立数据库容量指标，包括论文数、Chunk 数、向量数、索引大小和失败任务数。
+- [x] 建立数据库容量指标：论文、当前 Chunk、ready 向量、失败/待处理任务、Chunk 表字节和索引字节，并通过 `/knowledge/rag/stats` 返回。
 
 参考：
 
@@ -93,7 +93,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [ ] 为内容版本替换、Worker 重试和并发上传增加真实 PostgreSQL 集成测试。
 - [ ] 明确文件资产的生命周期：论文删除、内容换版、孤立截图和临时文件清理。
 - [ ] 在版本级资产清单基础上确定旧内容版本保留期限，并实现事务提交后的孤立 PNG 清理执行器；当前只计算候选，不自动删除。
-- [ ] 增加数据库约束审计，确认任何 ready Chunk 不会引用非当前或失败内容版本。
+- [ ] Docker/PostgreSQL 恢复后执行数据库一致性验收，确认 `ready_noncurrent_chunks/ready_missing_vectors/ready_wrong_model` 全为 0；统计与 degraded 状态已实现，真实库数值仍待验收。
 
 ## 5. 阶段三：千问 Embedding 与向量生命周期
 
@@ -501,6 +501,7 @@ PostgreSQL/pgvector 基础
 - 当前 Docker Desktop 4.69.0 在损坏的 `%LOCALAPPDATA%\Docker\run\dockerInference` ReparsePoint 上稳定复现错误 1920 并崩溃；当前工具不能删除该对象，恢复步骤已写入中文启动说明。
 - Windows Python 3.14 的 async psycopg 已从 Proactor 切到 Selector event loop；专项测试通过。原先两个知识库集成用例不再抛 `InterfaceError`，但在 Docker daemon 不可用时会继续等待 PostgreSQL，不能把这部分误报为 E2E 通过。
 - 已建立无外部服务依赖的固定 RAG 回归入口与 CI；本地首次清单审计排除了会真实写库的 `test_paper_acquisition`，最终 164 个解析、切片、公式、多模态、仓储、Embedding、检索和评测测试通过。
+- `/knowledge/rag/stats` 已增加容量与 ready 向量一致性指标；发现非当前版本 ready Chunk、ready 但无向量或模型不一致时返回 `consistency_status=degraded`，真实数据库归零验收等待 Docker 恢复。
 - Docker daemon 恢复后，先执行模型准备命令，再完成 backend/worker 全量构建和真实 PDF 主路径验收；这两项仍保持未完成。
 - 已对 7 篇、82 页真实文本 PDF 跑 `multimodal_aware_v3` 回退解析 + `scholar_hierarchical_v4` 切片审计；所有原子 Chunk 非空且无超 800 token 项，详细记录见 `docs/operations/RAG_CHUNK_AUDIT_2026-08-31.md`。
 - 审计发现并修复同页重复公式编号造成的元数据串写/重复 Chunk；另记录 4 个作者、机构或 arXiv 标识短 preamble Chunk，待首页元数据结构化后安全排除，不使用长度阈值直接误删。

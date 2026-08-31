@@ -240,7 +240,19 @@ class RagService:
     async def stats(self, tenant_id: str, user_id: str) -> dict[str, Any]:
         settings = get_settings()
         async with tenant_transaction(tenant_id, user_id) as session:
-            counts = await PaperRepository(session).stats(tenant_id, user_id)
+            counts = await PaperRepository(session).stats(
+                tenant_id,
+                user_id,
+                active_model=settings.rag_embedding_model,
+            )
+        consistency_errors = sum(
+            counts.get(key, 0)
+            for key in (
+                "ready_noncurrent_chunks",
+                "ready_missing_vectors",
+                "ready_wrong_model",
+            )
+        )
         return {
             "backend": "pgvector",
             **counts,
@@ -255,6 +267,8 @@ class RagService:
             "candidate_limit": settings.rag_candidate_limit,
             "max_chunks_per_paper": settings.rag_max_chunks_per_paper,
             "semantic_timeout_seconds": settings.rag_semantic_timeout_seconds,
+            "consistency_status": "ok" if consistency_errors == 0 else "degraded",
+            "consistency_error_count": consistency_errors,
         }
 
 

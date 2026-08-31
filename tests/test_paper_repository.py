@@ -163,7 +163,53 @@ class _WriteSession(_Session):
         return _WriteResult()
 
 
+class _StatsSession(_Session):
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.statements.append((sql, params or {}))
+        return _Result(
+            [
+                {
+                    "paper_count": 7,
+                    "chunk_count": 396,
+                    "vector_count": 319,
+                    "failed_papers": 1,
+                    "failed_jobs": 2,
+                    "pending_jobs": 3,
+                    "ready_noncurrent_chunks": 4,
+                    "ready_missing_vectors": 5,
+                    "ready_wrong_model": 6,
+                    "chunk_table_bytes": 1024,
+                    "chunk_index_bytes": 512,
+                }
+            ]
+        )
+
+
 class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_stats_report_capacity_jobs_and_ready_vector_consistency(self) -> None:
+        session = _StatsSession()
+
+        stats = await PaperRepository(session).stats(
+            "tenant-a", "user-a", active_model="qwen-active"
+        )
+
+        self.assertEqual(stats["paper_count"], 7)
+        self.assertEqual(stats["vector_count"], 319)
+        self.assertEqual(stats["ready_noncurrent_chunks"], 4)
+        self.assertEqual(stats["ready_missing_vectors"], 5)
+        self.assertEqual(stats["ready_wrong_model"], 6)
+        self.assertEqual(stats["chunk_index_bytes"], 512)
+        sql, params = session.statements[0]
+        self.assertIn("COUNT(DISTINCT p.paper_uuid)", sql)
+        self.assertIn("pg_total_relation_size", sql)
+        self.assertIn("pg_indexes_size", sql)
+        self.assertIn("paper_ingestion_jobs", sql)
+        self.assertIn("c.content_version<>p.current_content_version", sql)
+        self.assertIn("c.embedding IS NULL", sql)
+        self.assertIn("c.embedding_model IS DISTINCT FROM :active_model", sql)
+        self.assertEqual(params["active_model"], "qwen-active")
+
     async def test_get_structure_exposes_current_chunk_strategy(self) -> None:
         structure = await PaperRepository(_StructureSession()).get_structure(
             "tenant-a", "user-a", "paper-1"

@@ -231,6 +231,14 @@ GET http://127.0.0.1:8000/knowledge/rag/stats
 GET http://127.0.0.1:8000/knowledge/rag/search?query=citation&limit=5
 ```
 
+`rag/stats` 除论文和 Chunk 数外，还返回 `vector_count`、`failed_jobs`、`pending_jobs`、`chunk_table_bytes`、`chunk_index_bytes`。以下三个 ready 向量一致性指标应长期为 0：
+
+- `ready_noncurrent_chunks`：仍标记 ready、但已经不属于论文当前内容版本；
+- `ready_missing_vectors`：标记 ready、实际向量为空；
+- `ready_wrong_model`：标记 ready、但模型不是当前配置模型。
+
+任一指标非 0 时，`consistency_status` 为 `degraded`，`consistency_error_count` 返回异常总数。
+
 本地 lexical 与 pgvector 候选支持相同的结构化过滤参数；多值参数可重复传入：
 
 ```text

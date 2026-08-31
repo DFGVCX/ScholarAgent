@@ -867,23 +867,75 @@ class PaperRepository:
             },
         )
 
-    async def stats(self, tenant_id: str, user_id: str) -> dict[str, int]:
+    async def stats(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        active_model: str = "",
+    ) -> dict[str, int]:
         result = await self.session.execute(
             text(
                 """SELECT
                     COUNT(DISTINCT p.paper_uuid) FILTER (WHERE p.deleted_at IS NULL) AS paper_count,
-                    COUNT(c.chunk_uuid) FILTER (
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
                         WHERE p.deleted_at IS NULL AND c.content_version=p.current_content_version
                     ) AS chunk_count,
-                    COUNT(*) FILTER (WHERE p.ingestion_status='failed' AND p.deleted_at IS NULL) AS failed_papers
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL
+                            AND c.content_version=p.current_content_version
+                            AND c.embedding_status='ready' AND c.embedding IS NOT NULL
+                    ) AS vector_count,
+                    COUNT(DISTINCT p.paper_uuid) FILTER (
+                        WHERE p.ingestion_status='failed' AND p.deleted_at IS NULL
+                    ) AS failed_papers,
+                    (SELECT COUNT(*) FROM paper_ingestion_jobs j
+                        WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                            AND j.status='failed') AS failed_jobs,
+                    (SELECT COUNT(*) FROM paper_ingestion_jobs j
+                        WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                            AND j.status IN ('pending','retry','running')) AS pending_jobs,
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL AND c.embedding_status='ready'
+                            AND c.content_version<>p.current_content_version
+                    ) AS ready_noncurrent_chunks,
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL AND c.embedding_status='ready'
+                            AND c.content_version=p.current_content_version
+                            AND c.embedding IS NULL
+                    ) AS ready_missing_vectors,
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL AND c.embedding_status='ready'
+                            AND c.content_version=p.current_content_version
+                            AND c.embedding_model IS DISTINCT FROM :active_model
+                    ) AS ready_wrong_model,
+                    pg_total_relation_size('paper_chunks'::regclass) AS chunk_table_bytes,
+                    pg_indexes_size('paper_chunks'::regclass) AS chunk_index_bytes
                 FROM papers p LEFT JOIN paper_chunks c ON c.paper_uuid=p.paper_uuid
                     AND c.tenant_id=p.tenant_id AND c.user_id=p.user_id
                 WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id"""
             ),
-            {"tenant_id": tenant_id, "user_id": user_id},
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "active_model": active_model,
+            },
         )
         row = result.mappings().first() or {}
-        return {key: int(row.get(key) or 0) for key in ("paper_count", "chunk_count", "failed_papers")}
+        keys = (
+            "paper_count",
+            "chunk_count",
+            "vector_count",
+            "failed_papers",
+            "failed_jobs",
+            "pending_jobs",
+            "ready_noncurrent_chunks",
+            "ready_missing_vectors",
+            "ready_wrong_model",
+            "chunk_table_bytes",
+            "chunk_index_bytes",
+        )
+        return {key: int(row.get(key) or 0) for key in keys}
 
     @staticmethod
     def _record(row: Mapping[str, Any]) -> PaperRecord:

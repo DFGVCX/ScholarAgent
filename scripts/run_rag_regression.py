@@ -31,6 +31,7 @@ RAG_TEST_TARGETS: tuple[str, ...] = (
     "tests.test_retrieval_service",
     "tests.test_retrieval_strategy",
     "tests.test_retrieval_evaluation",
+    "tests.test_rag_stats",
     "tests.test_hybrid_retrieval",
     "tests.test_postgres_config",
     "tests.test_postgres_health",
