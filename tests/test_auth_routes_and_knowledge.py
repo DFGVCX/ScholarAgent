@@ -45,6 +45,7 @@ class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
                 venue="NeurIPS",
                 section=["method"],
                 chunk_type=["equation"],
+                retrieval_mode="vector",
                 x_api_key="demo-key",
             )
 
@@ -61,6 +62,7 @@ class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
             venue="NeurIPS",
             section_ids=("method",),
             chunk_types=("equation",),
+            retrieval_mode="vector",
         )
 
     async def test_parent_context_uses_authenticated_tenant_and_user(self):

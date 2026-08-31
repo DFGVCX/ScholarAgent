@@ -73,6 +73,12 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("const warnings = data.warnings || [];", self.html)
         self.assertIn("向量检索暂不可用，当前结果来自关键词与中英文学术术语兜底", self.html)
 
+    def test_rag_console_can_select_retrieval_mode_per_query(self) -> None:
+        self.assertIn('id="profileRagRetrievalMode"', self.html)
+        for mode in ("lexical", "vector", "hybrid"):
+            self.assertIn(f'<option value="{mode}"', self.html)
+        self.assertIn("retrieval_mode=${encodeURIComponent(retrievalMode)}", self.html)
+
     def test_runtime_config_cannot_save_before_successful_load(self) -> None:
         self.assertIn(
             'id="saveRuntimeConfigBtn" class="primary" type="button" disabled',

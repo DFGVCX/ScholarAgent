@@ -152,28 +152,39 @@ class RetrievalService:
 
     async def search(self, request: RetrievalRequest) -> RetrievalResponse:
         request, query_type = _adapt_candidate_pool(request)
-        lexical = await self.repository.lexical_candidates(request)
+        requested_mode = request.retrieval_mode
+        use_lexical = requested_mode in {"lexical", "hybrid"}
+        use_vector = bool(request.query) and requested_mode in {"vector", "hybrid"}
+        lexical = (
+            await self.repository.lexical_candidates(request) if use_lexical else []
+        )
         vector: list[RetrievalCandidate] = []
         embedding_debug: dict[str, Any] = {"status": "not_requested"}
         warnings: list[str] = []
-        mode = "metadata" if not request.query else "lexical"
-        if request.query:
+        mode = "metadata" if not request.query else requested_mode
+        if use_vector:
             try:
                 vector, embedding_debug = await asyncio.wait_for(
                     self._semantic_candidates(request),
                     timeout=self.semantic_timeout_seconds,
                 )
-                mode = "hybrid"
             except TimeoutError:
                 embedding_debug = {
                     "status": "timeout",
                     "model": self.embedding.model,
                     "timeout_seconds": self.semantic_timeout_seconds,
                 }
+                suffix = (
+                    "lexical results were preserved"
+                    if requested_mode == "hybrid"
+                    else "no lexical fallback was requested"
+                )
                 warnings.append(
                     "semantic retrieval timed out after "
-                    f"{self.semantic_timeout_seconds:g}s; lexical results were preserved"
+                    f"{self.semantic_timeout_seconds:g}s; {suffix}"
                 )
+                if requested_mode == "hybrid":
+                    mode = "lexical"
             except EmbeddingUnavailable as exc:
                 embedding_debug = {
                     "status": "unavailable",
@@ -181,6 +192,8 @@ class RetrievalService:
                     "reason": str(exc),
                 }
                 warnings.append(f"semantic retrieval unavailable: {exc}")
+                if requested_mode == "hybrid":
+                    mode = "lexical"
 
         hits = self._fuse(
             lexical,
@@ -201,7 +214,8 @@ class RetrievalService:
             filters=request.filters_dict(),
             query_expansions=academic_query_aliases(request.query),
             ranking_policy={
-                "fusion": "rrf",
+                "fusion": "rrf" if requested_mode == "hybrid" else "single_source",
+                "requested_mode": requested_mode,
                 "max_chunks_per_paper": request.max_chunks_per_paper,
                 "backfill_when_insufficient": True,
                 "exact_duplicate_scope": "same_paper",

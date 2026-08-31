@@ -170,8 +170,15 @@ class RagService:
         venue: str = "",
         section_ids: tuple[str, ...] = (),
         chunk_types: tuple[str, ...] = (),
+        retrieval_mode: str | None = None,
     ) -> dict[str, Any]:
         settings = get_settings()
+        configured_mode = {
+            "hybrid_rrf": "hybrid",
+            "hybrid": "hybrid",
+            "lexical": "lexical",
+            "vector": "vector",
+        }.get(settings.rag_retrieval_mode, settings.rag_retrieval_mode)
         embedding = QwenEmbeddingClient.from_settings()
         try:
             async with tenant_transaction(tenant_id, user_id) as session:
@@ -195,6 +202,7 @@ class RagService:
                         section_ids=section_ids,
                         chunk_types=chunk_types,
                         max_chunks_per_paper=settings.rag_max_chunks_per_paper,
+                        retrieval_mode=retrieval_mode or configured_mode,
                     )
                 )
         finally:

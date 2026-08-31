@@ -96,6 +96,8 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
             RetrievalRequest("tenant", "user", "query", year_from=2025, year_to=2024)
         with self.assertRaisesRegex(ValueError, "chunk type"):
             RetrievalRequest("tenant", "user", "query", chunk_types=("unknown",))
+        with self.assertRaisesRegex(ValueError, "retrieval mode"):
+            RetrievalRequest("tenant", "user", "query", retrieval_mode="rerank")
 
     async def test_parent_context_returns_complete_section(self) -> None:
         parent = ParentSectionContext(
@@ -426,6 +428,65 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(debug["candidate_pools"]["lexical"]["top"][0]["chunk_id"], "a")
         self.assertEqual(debug["ranking"][0]["final_rank"], 1)
 
+    async def test_lexical_mode_skips_embedding_and_vector_candidates(self) -> None:
+        class _LexicalOnlyRepository(_Repository):
+            async def vector_candidates(self, request, vector, embedding_model):
+                raise AssertionError("vector retrieval must not run in lexical mode")
+
+        response = await RetrievalService(
+            _LexicalOnlyRepository(), _BrokenEmbedding()
+        ).search(RetrievalRequest("t", "u", "retrieval", retrieval_mode="lexical"))
+
+        self.assertEqual(response.mode, "lexical")
+        self.assertEqual([hit.chunk_id for hit in response.local_hits], ["a", "b"])
+        self.assertEqual(response.debug["query_embedding"]["status"], "not_requested")
+        self.assertEqual(response.debug["candidate_pools"]["vector"]["count"], 0)
+        self.assertEqual(response.ranking_policy["requested_mode"], "lexical")
+
+    async def test_vector_mode_skips_lexical_candidates(self) -> None:
+        class _VectorOnlyRepository(_Repository):
+            async def lexical_candidates(self, request):
+                raise AssertionError("lexical retrieval must not run in vector mode")
+
+        response = await RetrievalService(
+            _VectorOnlyRepository(), _Embedding()
+        ).search(RetrievalRequest("t", "u", "retrieval", retrieval_mode="vector"))
+
+        self.assertEqual(response.mode, "vector")
+        self.assertEqual([hit.chunk_id for hit in response.local_hits], ["b", "c"])
+        self.assertTrue(all(hit.lexical_rank is None for hit in response.local_hits))
+        self.assertEqual(response.debug["candidate_pools"]["lexical"]["count"], 0)
+        self.assertEqual(response.ranking_policy["requested_mode"], "vector")
+
+    async def test_vector_mode_failure_does_not_silently_run_lexical(self) -> None:
+        class _VectorOnlyRepository(_Repository):
+            async def lexical_candidates(self, request):
+                raise AssertionError("lexical fallback is reserved for hybrid mode")
+
+        response = await RetrievalService(
+            _VectorOnlyRepository(), _BrokenEmbedding()
+        ).search(RetrievalRequest("t", "u", "retrieval", retrieval_mode="vector"))
+
+        self.assertEqual(response.mode, "vector")
+        self.assertEqual(response.local_hits, ())
+        self.assertIn("semantic retrieval unavailable", response.warnings[0])
+
+    async def test_empty_vector_query_does_not_cross_into_lexical_candidates(self) -> None:
+        class _EmptyVectorRepository(_Repository):
+            async def lexical_candidates(self, request):
+                raise AssertionError("empty vector query must remain source-isolated")
+
+            async def vector_candidates(self, request, vector, embedding_model):
+                raise AssertionError("empty query must not be embedded")
+
+        response = await RetrievalService(
+            _EmptyVectorRepository(), _BrokenEmbedding()
+        ).search(RetrievalRequest("t", "u", "  ", retrieval_mode="vector"))
+
+        self.assertEqual(response.mode, "metadata")
+        self.assertEqual(response.local_hits, ())
+        self.assertEqual(response.debug["query_embedding"]["status"], "not_requested")
+
     async def test_search_exposes_adjacent_hits_as_document_order_context(self) -> None:
         second = replace(
             _candidate("second", "p1", 0.9, chunk_index=5),
@@ -557,6 +618,7 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
                 "adjacent_context_scope": "same_paper_version_section_top_k",
                 "query_type": "concept",
                 "candidate_limit": 80,
+                "requested_mode": "hybrid",
             },
         )
 

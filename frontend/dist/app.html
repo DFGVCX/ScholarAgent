@@ -7637,7 +7637,10 @@
                                         <div><strong>RAG 检索验证</strong><span>查询当前租户知识库索引，确认切分和召回效果。</span></div>
                                         <button id="profileRagSearchBtn" class="plain" type="button">检索</button>
                                     </div>
-                                    <input id="profileRagQuery" placeholder="输入关键词，例如 LLM healthcare reliability">
+                                    <div class="inline-grid">
+                                        <div><label for="profileRagQuery">查询</label><input id="profileRagQuery" placeholder="输入关键词，例如 LLM healthcare reliability"></div>
+                                        <div><label for="profileRagRetrievalMode">召回策略</label><select id="profileRagRetrievalMode"><option value="hybrid" selected>Hybrid（RRF）</option><option value="lexical">Lexical（关键词）</option><option value="vector">Vector（向量）</option></select></div>
+                                    </div>
                                     <div id="profileRagResult" class="ops-result ops-result-large">等待检索。</div>
                                 </div>
                             </div>
@@ -8507,15 +8510,18 @@
         }
         async function searchProfileRag() {
             const query = $('profileRagQuery')?.value.trim() || '';
+            const retrievalMode = $('profileRagRetrievalMode')?.value || 'hybrid';
             $('profileRagSearchBtn').disabled = true;
             $('profileRagResult').textContent = '正在检索...';
             try {
-                const data = await api(`/knowledge/rag/search?query=${encodeURIComponent(query)}&limit=6`);
+                const data = await api(`/knowledge/rag/search?query=${encodeURIComponent(query)}&limit=6&retrieval_mode=${encodeURIComponent(retrievalMode)}`);
                 const items = data.items || [];
                 const warnings = data.warnings || [];
                 const summary = `<div class="subtle" style="margin-bottom:8px;">${escapeHtml(data.backend || '-')} / ${escapeHtml(data.retrieval_mode || '-')} · Top ${items.length} chunks</div>`;
                 const fallbackNotice = warnings.length
-                    ? '<div class="alert" style="margin-bottom:10px;">向量检索暂不可用，当前结果来自关键词与中英文学术术语兜底。请在模型配置中重新测试 Embedding。</div>'
+                    ? (retrievalMode === 'vector'
+                        ? '<div class="alert" style="margin-bottom:10px;">向量检索暂不可用；本次是 Vector 隔离调试，未执行关键词回退。请在模型配置中重新测试 Embedding。</div>'
+                        : '<div class="alert" style="margin-bottom:10px;">向量检索暂不可用，当前结果来自关键词与中英文学术术语兜底。请在模型配置中重新测试 Embedding。</div>')
                     : '';
                 const results = items.length
                     ? `<table class="rag-verify-table"><thead><tr><th>Chunk</th><th>命中片段</th><th>来源论文</th><th>融合分</th><th>关键词排名</th><th>向量排名</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Chunk #${Number(item.chunk_index ?? 0)}</strong><div class="row-meta">${escapeHtml(item.chunk_id || '-')}</div></td><td><div class="rag-verify-snippet">${escapeHtml(item.snippet || '')}</div></td><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id || '-')}</div><div class="row-meta">${ragChunkProvenance(item)}</div></td><td>${Number(item.score || 0).toFixed(6)}</td><td>${item.lexical_rank ?? '-'}</td><td>${item.vector_rank ?? '-'}</td></tr>`).join('')}</tbody></table>`

@@ -250,6 +250,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 实现 pgvector cosine semantic 检索。
 - [x] 使用 RRF 融合 lexical 与 vector 排名。
 - [x] Embedding 不可用时降级到 lexical 检索。
+- [x] 统一检索请求支持逐查询显式选择 `lexical`、`vector` 或 `hybrid`：单路模式严格隔离候选源，只有 hybrid 在向量不可用时回退 lexical，并在响应中回显 requested/effective mode。
 - [x] 为常见中文查询增加词面别名/英文术语兜底。
 - [x] 本地已入库内容与外部候选分开；外部候选在解析入库前不可引用。
 - [x] Agent、写作流程、API 和 MCP 统一消费检索服务。
@@ -328,6 +329,7 @@ arXiv
 ### 后续
 
 - [x] 增加单次查询调试抽屉：展示 query embedding 状态、模型、维度、L2 范数和前 8 维，lexical/vector 候选数量与 Top-20 ID/原始分，以及最终 lexical/vector/RRF/rerank/final 排名；同时展示查询扩展、过滤器、排名策略和合并上下文。
+- [x] RAG 检索验证支持每次查询选择 Hybrid（RRF）、Lexical 或 Vector，便于隔离判断“词面没召回”还是“向量没召回”；Vector 失败时明确不执行关键词回退。
 - [ ] 增加策略切换，允许在相同查询下并排比较 vector、lexical、hybrid 和 rerank。
 - [x] 增加 Chunk 父子关系、相邻 Chunk 和连续上下文预览；结构接口返回父章节、前后稳定 Chunk ID 与原子块解释上下文，切片视图在不替换完整原文的前提下按需展开前一/当前/后一 Chunk。
 - [ ] 增加低置信度公式、表格、图片和算法的人工修正入口。

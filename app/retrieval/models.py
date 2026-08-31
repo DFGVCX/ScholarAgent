@@ -21,6 +21,7 @@ class RetrievalRequest:
     section_ids: tuple[str, ...] = ()
     chunk_types: tuple[str, ...] = ()
     max_chunks_per_paper: int = 3
+    retrieval_mode: str = "hybrid"
 
     def __post_init__(self) -> None:
         if not self.tenant_id or not self.user_id:
@@ -38,6 +39,10 @@ class RetrievalRequest:
         object.__setattr__(self, "chunk_types", chunk_types)
         object.__setattr__(self, "author", self.author.strip())
         object.__setattr__(self, "venue", self.venue.strip())
+        retrieval_mode = str(self.retrieval_mode or "hybrid").strip().lower()
+        if retrieval_mode not in {"lexical", "vector", "hybrid"}:
+            raise ValueError(f"unsupported retrieval mode: {retrieval_mode}")
+        object.__setattr__(self, "retrieval_mode", retrieval_mode)
         object.__setattr__(
             self,
             "max_chunks_per_paper",

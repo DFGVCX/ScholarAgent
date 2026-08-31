@@ -686,6 +686,7 @@ async def search_rag(
     venue: str = Query(default="", max_length=200),
     section: list[str] | None = Query(default=None),
     chunk_type: list[str] | None = Query(default=None),
+    retrieval_mode: str | None = None,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
     user = _current_user(x_api_key)
@@ -702,6 +703,7 @@ async def search_rag(
             venue=venue,
             section_ids=tuple(section or ()),
             chunk_types=tuple(chunk_type or ()),
+            retrieval_mode=retrieval_mode,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
