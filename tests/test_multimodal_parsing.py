@@ -10,6 +10,7 @@ import fitz
 from app.papers.parsing import (
     MULTIMODAL_PARSER_NAME,
     ParsedBlock,
+    _matching_equation_record,
     parse_pdf_multimodal,
 )
 from app.papers.visuals import (
@@ -83,6 +84,24 @@ def _write_stacked_figures_pdf(path: Path) -> Path:
 
 
 class MultimodalPdfParsingTest(unittest.TestCase):
+    def test_matches_repeated_equation_labels_by_source_bbox(self) -> None:
+        records = [
+            {"label": "1", "bbox": [10.0, 20.0, 100.0, 40.0]},
+            {"label": "1", "bbox": [10.0, 220.0, 100.0, 240.0]},
+        ]
+        later = ParsedBlock(
+            1,
+            "equation",
+            "second equation",
+            (10.0, 220.0, 100.0, 240.0),
+            5,
+            metadata=dict(records[1]),
+        )
+
+        matched = _matching_equation_record(records, later)
+
+        self.assertIs(matched, records[1])
+
     def test_classifies_visual_caption_labels(self) -> None:
         self.assertEqual(caption_kind("Figure 2. System overview"), "figure")
         self.assertEqual(caption_kind("Table 3: Main results"), "table")

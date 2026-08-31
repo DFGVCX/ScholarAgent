@@ -388,6 +388,45 @@ def _formula_aware_blocks(
     )
 
 
+def _matching_equation_record(
+    records: Sequence[dict[str, Any]],
+    block: ParsedBlock,
+) -> dict[str, Any] | None:
+    """Match an equation manifest record without collapsing repeated labels.
+
+    Equation numbers are not guaranteed to be unique on a page (appendices,
+    extraction errors, and multi-column layouts can repeat them), while their
+    source bounding boxes identify the actual occurrence.
+    """
+    for record in records:
+        if record is block.metadata:
+            return record
+
+    metadata = dict(block.metadata or {})
+    label = str(metadata.get("label") or "")
+    candidates = [record for record in records if str(record.get("label") or "") == label]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    target_bbox = metadata.get("bbox") or block.bbox
+    try:
+        target = tuple(float(value) for value in target_bbox)
+    except (TypeError, ValueError):
+        return None
+    if len(target) != 4:
+        return None
+    for record in candidates:
+        try:
+            candidate = tuple(float(value) for value in record.get("bbox") or ())
+        except (TypeError, ValueError):
+            continue
+        if len(candidate) == 4 and all(
+            abs(left - right) <= 0.01 for left, right in zip(candidate, target)
+        ):
+            return record
+    return None
+
+
 def _heading_kind(block: ParsedBlock, median_font: float) -> str | None:
     value = _normalize_space(block.text)
     if not value or len(value) > 140:
@@ -596,9 +635,6 @@ def _parse_layout_pdf(
                 from app.papers.visuals import extract_visual_candidates, render_source_crop
 
                 source_page = document[raw_page.page_number - 1]
-                equation_records = {
-                    str(record.get("label", "")): record for record in page_equations
-                }
                 equation_blocks: list[ParsedBlock] = []
                 for equation_block in body_blocks:
                     if equation_block.block_type != "equation":
@@ -622,8 +658,9 @@ def _parse_layout_pdf(
                                     "source_bbox": list(crop_bbox),
                                 }
                             )
-                            if label in equation_records:
-                                equation_records[label].update(metadata)
+                            record = _matching_equation_record(page_equations, equation_block)
+                            if record is not None:
+                                record.update(metadata)
                         except Exception:
                             metadata["asset_name"] = ""
                     equation_blocks.append(replace(equation_block, metadata=metadata))
