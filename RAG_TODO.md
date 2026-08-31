@@ -91,8 +91,8 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 ### 后续
 
 - [ ] 为内容版本替换、Worker 重试和并发上传增加真实 PostgreSQL 集成测试。
-- [ ] 明确文件资产的生命周期：论文删除、内容换版、孤立截图和临时文件清理。
-- [ ] 在版本级资产清单基础上确定旧内容版本保留期限，并实现事务提交后的孤立 PNG 清理执行器；当前只计算候选，不自动删除。
+- [x] 明确文件资产的生命周期：源 PDF 在软删除和换版时保留；当前解析 PNG 由 manifest 管理；浏览器临时文件不属于论文资产清理器。完整边界见 `docs/operations/PAPER_ASSET_LIFECYCLE.md`。
+- [x] 旧内容版本派生 PNG 当前保留数为 0；新内容版本事务成功提交后，清理器仅删除当前 manifest 未引用的安全 `page_XXX_*.png` 直接子文件，跳过源 PDF、非生成文件、嵌套路径和符号链接，失败不回滚论文或阻塞 Embedding。
 - [ ] Docker/PostgreSQL 恢复后执行数据库一致性验收，确认 `ready_noncurrent_chunks/ready_missing_vectors/ready_wrong_model` 全为 0；统计与 degraded 状态已实现，真实库数值仍待验收。
 
 ## 5. 阶段三：千问 Embedding 与向量生命周期

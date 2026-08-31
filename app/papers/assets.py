@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import Any
 
 
 _GENERATED_PNG_RE = re.compile(r"^page_\d{3}_[A-Za-z0-9_.-]+\.png$", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class AssetCleanupResult:
+    deleted: tuple[str, ...]
+    failed: tuple[str, ...]
 
 
 def _safe_name(value: object) -> str:
@@ -108,3 +115,40 @@ def unreferenced_generated_assets(
         and _GENERATED_PNG_RE.fullmatch(name)
         and name not in referenced
     )
+
+
+def cleanup_unreferenced_generated_assets(
+    asset_root: Path,
+    manifests: Iterable[Mapping[str, Any]],
+) -> AssetCleanupResult:
+    """Delete only safe generated PNGs not referenced by the supplied manifests.
+
+    Callers must invoke this after the database transaction that made the
+    supplied manifest current. Source PDFs, nested paths, symlinks, and
+    non-generated files are deliberately outside this executor's authority.
+    """
+
+    root = asset_root.resolve()
+    if not root.is_dir():
+        return AssetCleanupResult((), ())
+    try:
+        existing_names = [
+            path.name
+            for path in root.iterdir()
+            if path.is_file() and not path.is_symlink()
+        ]
+    except OSError:
+        return AssetCleanupResult((), (str(root),))
+
+    deleted: list[str] = []
+    failed: list[str] = []
+    for name in unreferenced_generated_assets(existing_names, manifests):
+        target = root / name
+        try:
+            if target.is_symlink() or not target.is_file() or target.resolve().parent != root:
+                continue
+            target.unlink()
+            deleted.append(name)
+        except OSError:
+            failed.append(name)
+    return AssetCleanupResult(tuple(deleted), tuple(failed))

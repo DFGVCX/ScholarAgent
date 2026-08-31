@@ -1,9 +1,36 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 class PaperAssetInventoryTest(unittest.TestCase):
+    def test_cleanup_deletes_only_unreferenced_generated_direct_child_pngs(self) -> None:
+        from app.papers.assets import cleanup_unreferenced_generated_assets
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            referenced = root / "page_001_figure_1.png"
+            orphan = root / "page_001_figure_old.png"
+            note = root / "notes.txt"
+            nested = root / "nested"
+            nested.mkdir()
+            nested_image = nested / "page_002_figure_2.png"
+            for path in (referenced, orphan, note, nested_image):
+                path.write_bytes(b"asset")
+
+            result = cleanup_unreferenced_generated_assets(
+                root,
+                [{"asset_inventory": [{"name": referenced.name, "type": "figure"}]}],
+            )
+
+            self.assertEqual(result.deleted, (orphan.name,))
+            self.assertEqual(result.failed, ())
+            self.assertTrue(referenced.exists())
+            self.assertTrue(note.exists())
+            self.assertTrue(nested_image.exists())
+
     def test_legacy_manifest_is_flattened_and_deduplicated(self) -> None:
         from app.papers.assets import inventory_from_manifest
 

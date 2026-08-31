@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from app.config import get_settings
 from app.db.session import tenant_transaction
+from app.papers.assets import cleanup_unreferenced_generated_assets
 from app.papers.chunking import chunk_hierarchical, chunk_multimodal, chunk_sections, chunk_text
 from app.papers.metadata import build_bibliography
 from app.papers.models import PaperInput, PaperRecord
@@ -52,11 +53,13 @@ class PaperIngestionService:
         parser: Callable[[Path], ParsedPaper] | None = None,
         transaction_factory: Callable[..., Any] = tenant_transaction,
         repository_factory: Callable[..., PaperRepository] = PaperRepository,
+        asset_cleanup: Callable[..., Any] = cleanup_unreferenced_generated_assets,
     ) -> None:
         self.embedding = embedding
         self.parser = parser
         self.transaction_factory = transaction_factory
         self.repository_factory = repository_factory
+        self.asset_cleanup = asset_cleanup
 
     def _embedding(self) -> QwenEmbeddingClient:
         if self.embedding is not None:
@@ -200,6 +203,19 @@ class PaperIngestionService:
                 parser_strategy=parser_name,
                 chunk_strategy=settings.rag_chunk_strategy,
             )
+
+        if is_pdf and paper.file_uri and not manual_edit:
+            asset_root = Path(paper.file_uri).parent / f"{Path(paper.file_uri).stem}_assets"
+            try:
+                await asyncio.to_thread(
+                    self.asset_cleanup,
+                    asset_root,
+                    [parsed.to_manifest()],
+                )
+            except Exception:
+                # Cleanup is post-commit maintenance. A filesystem problem must
+                # not roll back an already committed paper or block embedding.
+                pass
 
         try:
             embedding_client = self._embedding()

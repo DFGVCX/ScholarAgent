@@ -137,16 +137,25 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
         repository = _Repository(_record())
         embedding = _Embedding()
         parsed = _parsed("ready")
+        cleanup_calls = []
+        lifecycle_events = []
 
         @asynccontextmanager
         async def transaction(*_):
+            lifecycle_events.append("transaction_begin")
             yield object()
+            lifecycle_events.append("transaction_commit")
+
+        def cleanup(root, manifests):
+            lifecycle_events.append("asset_cleanup")
+            cleanup_calls.append((root, list(manifests)))
 
         service = PaperIngestionService(
             embedding,
             parser=lambda _: parsed,
             transaction_factory=transaction,
             repository_factory=lambda _: repository,
+            asset_cleanup=cleanup,
         )
         paper = PaperInput(
             paper_id="paper-1",
@@ -174,6 +183,12 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repository.saved_chunks[0].section_id, "method")
         self.assertTrue(embedding.texts[0].startswith("Paper: Paper\nSection: 2 Method\n\n"))
         self.assertEqual(repository.replace_kwargs["parser_name"], "structure_aware_v1")
+        self.assertEqual(cleanup_calls[0][0].name, "paper_assets")
+        self.assertEqual(cleanup_calls[0][1][0]["parser"]["name"], "structure_aware_v1")
+        self.assertLess(
+            lifecycle_events.index("transaction_commit"),
+            lifecycle_events.index("asset_cleanup"),
+        )
         self.assertEqual(
             set(repository.saved_paper.metadata["bibliography"]),
             {
