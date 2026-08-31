@@ -269,7 +269,9 @@ def _ordered_body_blocks(page: _RawPage, repeated: set[str]) -> tuple[ParsedBloc
     return tuple(replace(block, reading_order=index) for index, block in enumerate(ordered))
 
 
-_NUMBERED_EQUATION_RE = re.compile(r"\((?P<label>\d{1,3})\)\s*[,.;:]?\s*$")
+_NUMBERED_EQUATION_RE = re.compile(
+    r"(?<![A-Za-z0-9_])\((?P<label>\d{1,3})\)\s*[,.;:]?\s*$"
+)
 
 
 def _pypdf_page_texts(path: Path) -> tuple[str, ...]:
@@ -318,6 +320,7 @@ def _formula_aware_blocks(
     replacements: dict[int, tuple[ParsedBlock, dict[str, Any]]] = {}
     consumed: set[int] = set()
     equations: list[dict[str, Any]] = []
+    label_occurrences: Counter[str] = Counter()
     for index, block in enumerate(blocks):
         match = _NUMBERED_EQUATION_RE.search(block.text)
         if not match or index in consumed:
@@ -344,7 +347,12 @@ def _formula_aware_blocks(
             part.text for part in sorted(group, key=lambda item: (item.bbox[1], item.bbox[0]))
         )
         label = match.group("label")
-        fallback = extract_numbered_formula(fallback_page_text, label)
+        fallback = extract_numbered_formula(
+            fallback_page_text,
+            label,
+            occurrence=label_occurrences[label],
+        )
+        label_occurrences[label] += 1
         bbox = (
             min(part.bbox[0] for part in group),
             min(part.bbox[1] for part in group),

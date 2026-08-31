@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from app.papers.parsing import ParsedBlock, _formula_aware_blocks
 from app.papers.formulas import (
     FormulaCandidate,
     contains_invalid_controls,
@@ -11,6 +12,21 @@ from app.papers.formulas import (
 
 
 class FormulaParsingTest(unittest.TestCase):
+    def test_big_o_complexity_is_not_misclassified_as_equation_number(self) -> None:
+        block = ParsedBlock(
+            1,
+            "body",
+            "runtime = O(1)",
+            (20.0, 30.0, 260.0, 45.0),
+            0,
+            10.0,
+        )
+
+        parsed_blocks, equations = _formula_aware_blocks((block,), block.text)
+
+        self.assertEqual(parsed_blocks, (block,))
+        self.assertEqual(equations, [])
+
     def test_detects_non_whitespace_c0_controls(self) -> None:
         self.assertTrue(contains_invalid_controls("E(x,y)\x02DL(x,w,y)"))
         self.assertFalse(contains_invalid_controls("line one\nline two\tvalue"))
@@ -30,6 +46,33 @@ i = |D j |
         extracted = extract_numbered_formula(page_text, "2")
 
         self.assertEqual(extracted, "wi =\n∑ n\nj=1 ζj\ni w j\ni , (2)")
+
+    def test_extracts_requested_occurrence_when_equation_label_repeats(self) -> None:
+        page_text = """
+first = n + 1, (1)
+The paragraph between equations is not formula text.
+second = sqrt(n), (1)
+"""
+
+        first = extract_numbered_formula(page_text, "1", occurrence=0)
+        second = extract_numbered_formula(page_text, "1", occurrence=1)
+
+        self.assertEqual(first, "first = n + 1, (1)")
+        self.assertEqual(second, "second = sqrt(n), (1)")
+
+    def test_pypdf_extractor_ignores_big_o_suffix(self) -> None:
+        self.assertEqual(extract_numbered_formula("runtime = O(1)", "1"), "")
+
+    def test_recovery_keeps_big_o_term_before_real_equation_label(self) -> None:
+        candidate = recover_formula(
+            raw_text="cost = O(1), (1)",
+            fallback_text="",
+            label="1",
+            page_number=1,
+            bbox=(1.0, 2.0, 3.0, 4.0),
+        )
+
+        self.assertIn("O(1)", candidate.latex)
 
     def test_recovers_weighted_sum_as_renderable_markdown(self) -> None:
         candidate = recover_formula(

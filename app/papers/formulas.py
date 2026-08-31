@@ -6,7 +6,9 @@ from typing import Any
 
 
 _INVALID_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
-_EQUATION_LABEL_RE = re.compile(r"\((?P<label>\d{1,3})\)\s*[,.;:]?\s*$")
+_EQUATION_LABEL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])\((?P<label>\d{1,3})\)\s*[,.;:]?\s*$"
+)
 _GREEK_LATEX = {
     "α": r"\alpha",
     "β": r"\beta",
@@ -94,12 +96,19 @@ def _looks_like_formula_line(line: str) -> bool:
     )
 
 
-def extract_numbered_formula(page_text: str, label: str) -> str:
-    """Return the compact pypdf line group ending in the requested equation label."""
+def extract_numbered_formula(page_text: str, label: str, *, occurrence: int = 0) -> str:
+    """Return one compact pypdf line group ending in the requested label."""
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in (page_text or "").splitlines()]
-    marker = re.compile(rf"\({re.escape(str(label))}\)\s*[,.;:]?\s*$")
+    marker = re.compile(
+        rf"(?<![A-Za-z0-9_])\({re.escape(str(label))}\)\s*[,.;:]?\s*$"
+    )
+    requested = max(0, int(occurrence))
+    matched = 0
     for end, line in enumerate(lines):
         if not marker.search(line):
+            continue
+        if matched != requested:
+            matched += 1
             continue
         start = end
         for index in range(end - 1, max(-1, end - 9), -1):
@@ -110,15 +119,19 @@ def extract_numbered_formula(page_text: str, label: str) -> str:
         selected = [line for line in lines[start : end + 1] if line]
         if selected:
             return "\n".join(selected)
+        matched += 1
     return ""
 
 
 def _strip_label(value: str, label: str) -> str:
-    return re.sub(
-        rf"\s*\({re.escape(str(label))}\)[\s\S]*$",
-        "",
-        value.strip(),
-    ).rstrip(" ,")
+    clean = value.strip()
+    marker = re.compile(
+        rf"(?<![A-Za-z0-9_])\({re.escape(str(label))}\)"
+    )
+    matches = list(marker.finditer(clean))
+    if not matches:
+        return clean.rstrip(" ,")
+    return clean[: matches[-1].start()].rstrip(" ,")
 
 
 def _greek(value: str) -> str:
