@@ -215,9 +215,12 @@ $env:SCHOLAR_RAG_EMBEDDING_API_KEY="你的embedding密钥"
 $env:SCHOLAR_RAG_EMBEDDING_MODEL="qwen3.7-text-embedding"
 $env:SCHOLAR_RAG_EMBEDDING_DIMENSIONS="1024"
 $env:SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS="8"
+$env:SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER="3"
 ```
 
 `SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS` 是单次交互检索中“查询 Embedding + pgvector 候选”的总时间预算。超时会取消语义链路，保留已经完成的 PostgreSQL lexical 结果，并在响应 `warnings` 中写明降级原因；它不影响后台论文入库的 Embedding 批处理超时。
+
+`SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER` 控制 RRF 后的首轮论文多样性，默认每篇最多占 3 个位置。若没有足够的其他论文候选，系统会按原 RRF 顺序回填同篇的其他 Chunk，尽量保持请求的 Top-K 数量；设为 `0` 可关闭限制。响应中的 `ranking_policy` 会回显实际策略。
 
 常用检查接口：
 

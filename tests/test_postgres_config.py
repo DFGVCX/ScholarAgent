@@ -26,6 +26,7 @@ class PostgreSQLConfigTest(unittest.TestCase):
         self.assertEqual(settings.pdf_parse_strategy, "multimodal_aware_v3")
         self.assertEqual(settings.rag_chunk_strategy, "multimodal_aware_v3")
         self.assertEqual(settings.rag_semantic_timeout_seconds, 8.0)
+        self.assertEqual(settings.rag_max_chunks_per_paper, 3)
 
     def test_semantic_timeout_is_configurable_and_positive(self) -> None:
         env = {
@@ -38,6 +39,18 @@ class PostgreSQLConfigTest(unittest.TestCase):
             settings = get_settings()
 
         self.assertEqual(settings.rag_semantic_timeout_seconds, 2.5)
+
+    def test_retrieval_diversity_cap_is_configurable(self) -> None:
+        env = {
+            "SCHOLAR_DATABASE_URL": "postgresql+psycopg://u:p@db/scholar",
+            "SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER": "5",
+        }
+        with patch.dict(os.environ, env, clear=False), patch(
+            "app.config.read_runtime_config", return_value={}
+        ):
+            settings = get_settings()
+
+        self.assertEqual(settings.rag_max_chunks_per_paper, 5)
 
     def test_previous_parser_strategies_remain_selectable(self) -> None:
         env = {

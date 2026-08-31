@@ -191,6 +191,7 @@ class RagService:
                     venue=venue,
                     section_ids=section_ids,
                     chunk_types=chunk_types,
+                    max_chunks_per_paper=settings.rag_max_chunks_per_paper,
                 )
             )
         return response.to_legacy_dict()
@@ -252,6 +253,7 @@ class RagService:
             "chunk_overlap": settings.rag_chunk_overlap,
             "top_k": settings.rag_top_k,
             "candidate_limit": settings.rag_candidate_limit,
+            "max_chunks_per_paper": settings.rag_max_chunks_per_paper,
             "semantic_timeout_seconds": settings.rag_semantic_timeout_seconds,
         }
 

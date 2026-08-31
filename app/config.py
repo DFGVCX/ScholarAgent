@@ -39,6 +39,7 @@ class Settings:
     pdf_parse_strategy: str = "multimodal_aware_v3"
     rag_top_k: int = 8
     rag_candidate_limit: int = 800
+    rag_max_chunks_per_paper: int = 3
     rag_bm25_k1: float = 1.5
     rag_bm25_b: float = 0.75
     rag_recency_half_life_days: float = 365.0
@@ -158,6 +159,9 @@ def get_settings() -> Settings:
         pdf_parse_strategy=pdf_parse_strategy,
         rag_top_k=max(1, _setting_int(overrides, "SCHOLAR_RAG_TOP_K", 8)),
         rag_candidate_limit=max(20, _setting_int(overrides, "SCHOLAR_RAG_CANDIDATE_LIMIT", 800)),
+        rag_max_chunks_per_paper=max(
+            0, min(_setting_int(overrides, "SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER", 3), 50)
+        ),
         rag_bm25_k1=max(0.1, _setting_float(overrides, "SCHOLAR_RAG_BM25_K1", 1.5)),
         rag_bm25_b=min(1.0, max(0.0, _setting_float(overrides, "SCHOLAR_RAG_BM25_B", 0.75))),
         rag_recency_half_life_days=max(1.0, _setting_float(overrides, "SCHOLAR_RAG_RECENCY_HALF_LIFE_DAYS", 365.0)),

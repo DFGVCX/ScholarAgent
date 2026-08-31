@@ -78,7 +78,12 @@ class RetrievalService:
             except EmbeddingUnavailable as exc:
                 warnings.append(f"semantic retrieval unavailable: {exc}")
 
-        hits = self._fuse(lexical, vector, request.limit)
+        hits = self._fuse(
+            lexical,
+            vector,
+            request.limit,
+            max_chunks_per_paper=request.max_chunks_per_paper,
+        )
         external: tuple[ExternalCandidate, ...] = ()
         if request.include_external and self.external_search and request.query:
             raw_external = await self.external_search(request.query, request.limit)
@@ -91,6 +96,11 @@ class RetrievalService:
             warnings=tuple(warnings),
             filters=request.filters_dict(),
             query_expansions=academic_query_aliases(request.query),
+            ranking_policy={
+                "fusion": "rrf",
+                "max_chunks_per_paper": request.max_chunks_per_paper,
+                "backfill_when_insufficient": True,
+            },
         )
 
     async def _semantic_candidates(
@@ -166,6 +176,8 @@ class RetrievalService:
         lexical: Sequence[RetrievalCandidate],
         vector: Sequence[RetrievalCandidate],
         limit: int,
+        *,
+        max_chunks_per_paper: int = 3,
     ) -> list[LocalHit]:
         rankings = [[item.chunk_id for item in lexical]]
         if vector:
@@ -174,7 +186,7 @@ class RetrievalService:
         candidates = {item.chunk_id: item for item in (*lexical, *vector)}
         lexical_rank = {item.chunk_id: rank for rank, item in enumerate(lexical, start=1)}
         vector_rank = {item.chunk_id: rank for rank, item in enumerate(vector, start=1)}
-        hits: list[LocalHit] = []
+        ranked_evidence: list[tuple[str, float]] = []
         seen_evidence: set[tuple[str, str]] = set()
         for chunk_id, score in fused:
             candidate = candidates[chunk_id]
@@ -186,6 +198,28 @@ class RetrievalService:
             if evidence_key in seen_evidence:
                 continue
             seen_evidence.add(evidence_key)
+            ranked_evidence.append((chunk_id, score))
+
+        selected: list[tuple[str, float]] = []
+        deferred: list[tuple[str, float]] = []
+        paper_counts: dict[str, int] = {}
+        cap = max(0, int(max_chunks_per_paper))
+        for item in ranked_evidence:
+            candidate = candidates[item[0]]
+            count = paper_counts.get(candidate.paper_uuid, 0)
+            if cap and count >= cap:
+                deferred.append(item)
+                continue
+            selected.append(item)
+            paper_counts[candidate.paper_uuid] = count + 1
+            if len(selected) >= limit:
+                break
+        if len(selected) < limit:
+            selected.extend(deferred[: limit - len(selected)])
+
+        hits: list[LocalHit] = []
+        for final_rank, (chunk_id, score) in enumerate(selected, start=1):
+            candidate = candidates[chunk_id]
             hits.append(
                 LocalHit(
                     chunk_id=candidate.chunk_id,
@@ -203,7 +237,7 @@ class RetrievalService:
                     lexical_rank=lexical_rank.get(chunk_id),
                     vector_rank=vector_rank.get(chunk_id),
                     rrf_score=score,
-                    final_rank=len(hits) + 1,
+                    final_rank=final_rank,
                     rerank_score=None,
                     section_id=candidate.section_id,
                     section_path=candidate.section_path,
@@ -219,8 +253,6 @@ class RetrievalService:
                     next_chunk_id=candidate.next_chunk_id,
                 )
             )
-            if len(hits) >= limit:
-                break
         return hits
 
     @staticmethod

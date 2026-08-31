@@ -20,6 +20,7 @@ class RetrievalRequest:
     venue: str = ""
     section_ids: tuple[str, ...] = ()
     chunk_types: tuple[str, ...] = ()
+    max_chunks_per_paper: int = 3
 
     def __post_init__(self) -> None:
         if not self.tenant_id or not self.user_id:
@@ -37,6 +38,11 @@ class RetrievalRequest:
         object.__setattr__(self, "chunk_types", chunk_types)
         object.__setattr__(self, "author", self.author.strip())
         object.__setattr__(self, "venue", self.venue.strip())
+        object.__setattr__(
+            self,
+            "max_chunks_per_paper",
+            max(0, min(int(self.max_chunks_per_paper), 50)),
+        )
         if self.year_from is not None:
             object.__setattr__(self, "year_from", int(self.year_from))
         if self.year_to is not None:
@@ -257,6 +263,7 @@ class RetrievalResponse:
     backend: str = "postgresql+pgvector"
     filters: dict[str, Any] | None = None
     query_expansions: tuple[str, ...] = ()
+    ranking_policy: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -268,6 +275,7 @@ class RetrievalResponse:
             "warnings": list(self.warnings),
             "filters": dict(self.filters or {}),
             "query_expansions": list(self.query_expansions),
+            "ranking_policy": dict(self.ranking_policy or {}),
         }
 
     def to_legacy_dict(self) -> dict[str, Any]:

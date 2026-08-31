@@ -259,7 +259,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 增加中英双向查询扩展：中文、英文术语、缩写和混合查询映射到同一学术概念组；短缩写使用词边界避免误触发，响应回显 `query_expansions`。
 - [x] 支持本地候选按论文、年份区间、作者、发表渠道、章节和对象类型过滤；lexical 与 vector 使用同一组 SQL 条件，响应回显规范化后的 `filters`。
 - [ ] 为不同查询类型设置候选池大小，例如普通概念、公式、表格、图和算法查询。
-- [ ] 增加父子检索与多样性约束，避免 Top-K 被同一论文的高度相似 Chunk 占满。
+- [x] 增加父子检索与自适应论文多样性约束：首轮限制每篇论文占位，跨论文候选不足时按原 RRF 顺序回填，避免单篇知识库返回不足 Top-K。
 - [x] 输出可审计的排名明细：`lexical_rank`、`vector_rank`、`rrf_score`、`rerank_score`（未启用时为 null）和 `final_rank`；旧 `score` 保持为 RRF 分数以兼容现有前端。
 - [x] 制定检索超时和降级策略：交互语义链路默认总预算 8 秒，可通过 `SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS` 配置；超时或 Embedding 失败时取消 semantic 并保留 lexical 结果和警告。
 
@@ -513,6 +513,7 @@ PostgreSQL/pgvector 基础
 - 交互检索已增加独立于批量入库的语义总超时；查询 Embedding 或 pgvector 候选超过预算时取消语义链路并返回 lexical 结果，避免千问重试把页面阻塞到客户端超时。
 - 统一检索已支持 `paper_id/year_from/year_to/author/venue/section/chunk_type` 结构化过滤；过滤发生在 lexical/pgvector 候选生成阶段而非 Top-K 后处理，响应会回显实际过滤条件供调试。
 - lexical 查询扩展已从单向中文别名升级为中英术语/缩写双向概念组；覆盖 FL、RAG、DP、FHE、SMPC、non-IID、LLM、GNN 等常见科研术语，短缩写按完整 token 匹配，响应回显 `query_expansions`。
+- RRF 后增加自适应论文多样性：默认首轮每篇最多 3 个 Chunk，并在跨论文候选不足时回填被延后的同篇证据；响应 `ranking_policy` 回显策略，可用 `SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER` 调整，设为 0 可关闭。
 - 已解除论文解析包与数据库初始化的导入时耦合，离线 PDF 批处理不再产生 PostgreSQL 连接超时。
 - 已将 Docling 2.123.0 的必需模型目录固定为轻量检查清单，检查过程不再导入 Docling/Torch；缺模型的 4 页真实论文显式回退总耗时由 17.154 秒降至 2.826 秒。
 - 已增加按模型目录复用 Docling 转换器的进程内缓存，待 Docker 恢复并补齐模型后验证连续解析多篇论文时只初始化一次模型。

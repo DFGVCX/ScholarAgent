@@ -232,6 +232,43 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([hit.chunk_id for hit in hits], ["a", "c"])
 
+    def test_diversity_promotes_other_papers_before_same_paper_overflow(self) -> None:
+        candidates = [
+            replace(
+                _candidate(f"p1-{index}", "p1", 1.0 - index / 10, index),
+                content=f"p1 evidence {index}",
+            )
+            for index in range(5)
+        ]
+        candidates.append(
+            replace(_candidate("p2-0", "p2", 0.1), content="p2 evidence")
+        )
+
+        hits = RetrievalService._fuse(
+            candidates, [], 4, max_chunks_per_paper=2
+        )
+
+        self.assertEqual(
+            [hit.chunk_id for hit in hits], ["p1-0", "p1-1", "p2-0", "p1-2"]
+        )
+        self.assertEqual([hit.final_rank for hit in hits], [1, 2, 3, 4])
+
+    def test_diversity_backfills_when_only_one_paper_is_available(self) -> None:
+        candidates = [
+            replace(
+                _candidate(f"p1-{index}", "p1", 1.0 - index / 10, index),
+                content=f"unique evidence {index}",
+            )
+            for index in range(4)
+        ]
+
+        hits = RetrievalService._fuse(
+            candidates, [], 4, max_chunks_per_paper=2
+        )
+
+        self.assertEqual(len(hits), 4)
+        self.assertEqual([hit.chunk_id for hit in hits], ["p1-0", "p1-1", "p1-2", "p1-3"])
+
     def test_identical_text_from_different_papers_remains_citeable(self) -> None:
         first = replace(_candidate("a", "p1", 0.9), content="Shared evidence")
         second = replace(_candidate("b", "p2", 0.8), content="Shared evidence")
@@ -337,6 +374,14 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             response.to_dict()["query_expansions"], ["federated learning", "FL"]
+        )
+        self.assertEqual(
+            response.to_dict()["ranking_policy"],
+            {
+                "fusion": "rrf",
+                "max_chunks_per_paper": 3,
+                "backfill_when_insufficient": True,
+            },
         )
 
     async def test_hits_expose_chunk_index(self) -> None:
