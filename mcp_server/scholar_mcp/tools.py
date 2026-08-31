@@ -235,6 +235,7 @@ async def search_papers(
     retrieval_warnings: list[str] = []
     ranking_policy: dict[str, Any] = {}
     query_expansions: list[str] = []
+    retrieval_debug: dict[str, Any] = {}
     if source in {"all", "local"}:
         if query.strip():
             retrieval = await rag_service.search(tenant_id, user_id, query, limit)
@@ -243,6 +244,7 @@ async def search_papers(
             retrieval_warnings = list(retrieval.get("warnings") or [])
             ranking_policy = dict(retrieval.get("ranking_policy") or {})
             query_expansions = list(retrieval.get("query_expansions") or [])
+            retrieval_debug = dict(retrieval.get("debug") or {})
             for hit in retrieval.get("local_hits") or retrieval.get("items") or []:
                 document = await knowledge_store.get(tenant_id, user_id, str(hit["paper_id"]))
                 local_hits.append({**(document or {}), **hit, "can_cite": True})
@@ -293,6 +295,7 @@ async def search_papers(
         "warnings": retrieval_warnings,
         "ranking_policy": ranking_policy,
         "query_expansions": query_expansions,
+        "debug": retrieval_debug,
         "has_more": False,
         "next_cursor": None,
         "external_error": external_error,

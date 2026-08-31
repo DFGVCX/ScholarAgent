@@ -326,7 +326,7 @@ arXiv
 
 ### 后续
 
-- [ ] 增加单次查询调试抽屉，展示 query embedding、候选池和各阶段排名变化。
+- [x] 增加单次查询调试抽屉：展示 query embedding 状态、模型、维度、L2 范数和前 8 维，lexical/vector 候选数量与 Top-20 ID/原始分，以及最终 lexical/vector/RRF/rerank/final 排名；同时展示查询扩展、过滤器、排名策略和合并上下文。
 - [ ] 增加策略切换，允许在相同查询下并排比较 vector、lexical、hybrid 和 rerank。
 - [x] 增加 Chunk 父子关系、相邻 Chunk 和连续上下文预览；结构接口返回父章节、前后稳定 Chunk ID 与原子块解释上下文，切片视图在不替换完整原文的前提下按需展开前一/当前/后一 Chunk。
 - [ ] 增加低置信度公式、表格、图片和算法的人工修正入口。

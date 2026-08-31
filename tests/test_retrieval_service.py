@@ -417,6 +417,14 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(hit.can_cite for hit in response.local_hits))
         self.assertEqual(response.external_candidates, ())
         self.assertEqual(repository.embedding_model, "Qwen3-Embedding-4B")
+        debug = response.to_dict()["debug"]
+        self.assertEqual(debug["query_embedding"]["status"], "ready")
+        self.assertEqual(debug["query_embedding"]["model"], "Qwen3-Embedding-4B")
+        self.assertEqual(debug["query_embedding"]["dimensions"], 1024)
+        self.assertEqual(debug["candidate_pools"]["lexical"]["count"], 2)
+        self.assertEqual(debug["candidate_pools"]["vector"]["count"], 2)
+        self.assertEqual(debug["candidate_pools"]["lexical"]["top"][0]["chunk_id"], "a")
+        self.assertEqual(debug["ranking"][0]["final_rank"], 1)
 
     async def test_search_exposes_adjacent_hits_as_document_order_context(self) -> None:
         second = replace(
@@ -602,6 +610,8 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.mode, "lexical")
         self.assertEqual(len(response.local_hits), 2)
         self.assertTrue(response.warnings)
+        self.assertEqual(response.debug["query_embedding"]["status"], "unavailable")
+        self.assertEqual(response.debug["candidate_pools"]["vector"]["count"], 0)
 
     async def test_semantic_timeout_keeps_lexical_results(self) -> None:
         service = RetrievalService(

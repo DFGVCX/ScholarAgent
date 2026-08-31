@@ -44,6 +44,10 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("item.lexical_rank ?? '-'", self.html)
         self.assertIn("item.vector_rank ?? '-'", self.html)
         self.assertIn("escapeHtml(item.snippet || '')", self.html)
+        self.assertIn("function renderRagDebug", self.html)
+        self.assertIn("查询向量", self.html)
+        self.assertIn("候选池", self.html)
+        self.assertIn("排名阶段", self.html)
 
     def test_rag_console_renders_complete_chunk_text(self) -> None:
         self.assertIn(

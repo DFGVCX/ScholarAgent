@@ -8475,6 +8475,25 @@
                 : `第 ${pageStart} 页`;
             return `${type} · ${section} · ${pages}`;
         }
+        function renderRagDebug(data) {
+            const debug = data.debug || {};
+            const embedding = debug.query_embedding || { status: 'not_requested' };
+            const pools = debug.candidate_pools || {};
+            const ranking = debug.ranking || [];
+            const compact = {
+                query_expansions: data.query_expansions || [],
+                filters: data.filters || {},
+                ranking_policy: data.ranking_policy || {},
+                merged_contexts: data.merged_contexts || [],
+            };
+            return `<details class="paper-chunk-context" style="margin:10px 0;">
+                <summary>单次查询调试</summary>
+                <section><b>查询向量</b><pre>${escapeHtml(JSON.stringify(embedding, null, 2))}</pre></section>
+                <section><b>候选池</b><pre>${escapeHtml(JSON.stringify(pools, null, 2))}</pre></section>
+                <section><b>排名阶段</b><pre>${escapeHtml(JSON.stringify(ranking, null, 2))}</pre></section>
+                <section><b>扩展、过滤与合并上下文</b><pre>${escapeHtml(JSON.stringify(compact, null, 2))}</pre></section>
+            </details>`;
+        }
         async function searchProfileRag() {
             const query = $('profileRagQuery')?.value.trim() || '';
             $('profileRagSearchBtn').disabled = true;
@@ -8490,7 +8509,7 @@
                 const results = items.length
                     ? `<table class="rag-verify-table"><thead><tr><th>Chunk</th><th>命中片段</th><th>来源论文</th><th>融合分</th><th>关键词排名</th><th>向量排名</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Chunk #${Number(item.chunk_index ?? 0)}</strong><div class="row-meta">${escapeHtml(item.chunk_id || '-')}</div></td><td><div class="rag-verify-snippet">${escapeHtml(item.snippet || '')}</div></td><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id || '-')}</div><div class="row-meta">${ragChunkProvenance(item)}</div></td><td>${Number(item.score || 0).toFixed(6)}</td><td>${item.lexical_rank ?? '-'}</td><td>${item.vector_rank ?? '-'}</td></tr>`).join('')}</tbody></table>`
                     : '<div class="subtle">查询成功，没有返回 chunk。</div>';
-                $('profileRagResult').innerHTML = summary + fallbackNotice + results;
+                $('profileRagResult').innerHTML = summary + fallbackNotice + renderRagDebug(data) + results;
             } catch (error) {
                 $('profileRagResult').textContent = `检索失败：${error.message}`;
                 toast(error.message, 'bad');

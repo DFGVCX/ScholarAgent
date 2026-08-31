@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 from difflib import SequenceMatcher
+import math
 import re
 from typing import Any, Protocol
 
@@ -153,21 +154,32 @@ class RetrievalService:
         request, query_type = _adapt_candidate_pool(request)
         lexical = await self.repository.lexical_candidates(request)
         vector: list[RetrievalCandidate] = []
+        embedding_debug: dict[str, Any] = {"status": "not_requested"}
         warnings: list[str] = []
         mode = "metadata" if not request.query else "lexical"
         if request.query:
             try:
-                vector = await asyncio.wait_for(
+                vector, embedding_debug = await asyncio.wait_for(
                     self._semantic_candidates(request),
                     timeout=self.semantic_timeout_seconds,
                 )
                 mode = "hybrid"
             except TimeoutError:
+                embedding_debug = {
+                    "status": "timeout",
+                    "model": self.embedding.model,
+                    "timeout_seconds": self.semantic_timeout_seconds,
+                }
                 warnings.append(
                     "semantic retrieval timed out after "
                     f"{self.semantic_timeout_seconds:g}s; lexical results were preserved"
                 )
             except EmbeddingUnavailable as exc:
+                embedding_debug = {
+                    "status": "unavailable",
+                    "model": self.embedding.model,
+                    "reason": str(exc),
+                }
                 warnings.append(f"semantic retrieval unavailable: {exc}")
 
         hits = self._fuse(
@@ -200,15 +212,57 @@ class RetrievalService:
                 "candidate_limit": request.candidate_limit,
             },
             merged_contexts=tuple(self._merge_adjacent_hits(hits)),
+            debug={
+                "query_embedding": embedding_debug,
+                "candidate_pools": {
+                    "lexical": self._candidate_pool_debug(lexical),
+                    "vector": self._candidate_pool_debug(vector),
+                },
+                "ranking": [
+                    {
+                        "chunk_id": hit.chunk_id,
+                        "lexical_rank": hit.lexical_rank,
+                        "vector_rank": hit.vector_rank,
+                        "rrf_score": hit.rrf_score,
+                        "rerank_score": hit.rerank_score,
+                        "final_rank": hit.final_rank,
+                    }
+                    for hit in hits
+                ],
+            },
         )
 
     async def _semantic_candidates(
         self, request: RetrievalRequest
-    ) -> list[RetrievalCandidate]:
+    ) -> tuple[list[RetrievalCandidate], dict[str, Any]]:
         embeddings = await self.embedding.embed([request.query])
-        return await self.repository.vector_candidates(
-            request, embeddings[0], self.embedding.model
+        vector = embeddings[0]
+        candidates = await self.repository.vector_candidates(
+            request, vector, self.embedding.model
         )
+        return candidates, {
+            "status": "ready",
+            "model": self.embedding.model,
+            "dimensions": len(vector),
+            "l2_norm": round(math.sqrt(sum(float(value) ** 2 for value in vector)), 6),
+            "head": [round(float(value), 6) for value in vector[:8]],
+        }
+
+    @staticmethod
+    def _candidate_pool_debug(
+        candidates: Sequence[RetrievalCandidate],
+    ) -> dict[str, Any]:
+        return {
+            "count": len(candidates),
+            "top": [
+                {
+                    "chunk_id": candidate.chunk_id,
+                    "rank": rank,
+                    "source_score": candidate.score,
+                }
+                for rank, candidate in enumerate(candidates[:20], start=1)
+            ],
+        }
 
     async def expand_context(self, request: ContextWindowRequest) -> ContextWindowResponse:
         chunks = await self.repository.context_window(request)

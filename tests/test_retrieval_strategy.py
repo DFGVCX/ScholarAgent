@@ -103,6 +103,7 @@ class RetrievalScopeTests(unittest.IsolatedAsyncioTestCase):
                 "items": hits,
                 "merged_contexts": contexts,
                 "retrieval_mode": "hybrid",
+                "debug": {"candidate_pools": {"lexical": {"count": 2}}},
             }
         )
         with patch(
@@ -121,6 +122,7 @@ class RetrievalScopeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["merged_contexts"], contexts)
         self.assertEqual(result["retrieval_mode"], "hybrid")
+        self.assertEqual(result["debug"]["candidate_pools"]["lexical"]["count"], 2)
 
     async def test_hybrid_scope_combines_local_and_external_results(self) -> None:
         local_item = {
