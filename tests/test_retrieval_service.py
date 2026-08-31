@@ -427,6 +427,20 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(debug["candidate_pools"]["vector"]["count"], 2)
         self.assertEqual(debug["candidate_pools"]["lexical"]["top"][0]["chunk_id"], "a")
         self.assertEqual(debug["ranking"][0]["final_rank"], 1)
+        timings = debug["timings_ms"]
+        for key in (
+            "lexical_sql_ms",
+            "query_embedding_ms",
+            "vector_sql_ms",
+            "semantic_total_ms",
+            "fusion_context_ms",
+            "external_search_ms",
+            "total_ms",
+        ):
+            self.assertIn(key, timings)
+        self.assertGreaterEqual(timings["total_ms"], timings["lexical_sql_ms"])
+        self.assertGreaterEqual(timings["total_ms"], timings["semantic_total_ms"])
+        self.assertIsNone(timings["external_search_ms"])
 
     async def test_lexical_mode_skips_embedding_and_vector_candidates(self) -> None:
         class _LexicalOnlyRepository(_Repository):
@@ -442,6 +456,7 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.debug["query_embedding"]["status"], "not_requested")
         self.assertEqual(response.debug["candidate_pools"]["vector"]["count"], 0)
         self.assertEqual(response.ranking_policy["requested_mode"], "lexical")
+        self.assertIsNone(response.debug["timings_ms"]["semantic_total_ms"])
 
     async def test_vector_mode_skips_lexical_candidates(self) -> None:
         class _VectorOnlyRepository(_Repository):
@@ -457,6 +472,7 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(hit.lexical_rank is None for hit in response.local_hits))
         self.assertEqual(response.debug["candidate_pools"]["lexical"]["count"], 0)
         self.assertEqual(response.ranking_policy["requested_mode"], "vector")
+        self.assertIsNone(response.debug["timings_ms"]["lexical_sql_ms"])
 
     async def test_vector_mode_failure_does_not_silently_run_lexical(self) -> None:
         class _VectorOnlyRepository(_Repository):
@@ -674,6 +690,7 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response.warnings)
         self.assertEqual(response.debug["query_embedding"]["status"], "unavailable")
         self.assertEqual(response.debug["candidate_pools"]["vector"]["count"], 0)
+        self.assertIsNotNone(response.debug["timings_ms"]["semantic_total_ms"])
 
     async def test_semantic_timeout_keeps_lexical_results(self) -> None:
         service = RetrievalService(
@@ -685,6 +702,9 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.mode, "lexical")
         self.assertEqual([hit.chunk_id for hit in response.local_hits], ["a", "b"])
         self.assertTrue(any("timed out" in warning for warning in response.warnings))
+        self.assertIsNotNone(response.debug["timings_ms"]["semantic_total_ms"])
+        self.assertIsNone(response.debug["timings_ms"]["query_embedding_ms"])
+        self.assertIsNone(response.debug["timings_ms"]["vector_sql_ms"])
 
 
 if __name__ == "__main__":

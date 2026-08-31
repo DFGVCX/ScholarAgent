@@ -61,6 +61,8 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("查询向量", self.html)
         self.assertIn("候选池", self.html)
         self.assertIn("排名阶段", self.html)
+        self.assertIn("阶段耗时", self.html)
+        self.assertIn("data.debug?.timings_ms || {}", self.html)
 
     def test_rag_console_renders_complete_chunk_text(self) -> None:
         self.assertIn(

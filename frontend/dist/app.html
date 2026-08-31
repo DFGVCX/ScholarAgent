@@ -8494,6 +8494,7 @@
             const embedding = debug.query_embedding || { status: 'not_requested' };
             const pools = debug.candidate_pools || {};
             const ranking = debug.ranking || [];
+            const timings = data.debug?.timings_ms || {};
             const compact = {
                 query_expansions: data.query_expansions || [],
                 filters: data.filters || {},
@@ -8503,6 +8504,7 @@
             return `<details class="paper-chunk-context" style="margin:10px 0;">
                 <summary>单次查询调试</summary>
                 <section><b>查询向量</b><pre>${escapeHtml(JSON.stringify(embedding, null, 2))}</pre></section>
+                <section><b>阶段耗时（ms）</b><pre>${escapeHtml(JSON.stringify(timings, null, 2))}</pre></section>
                 <section><b>候选池</b><pre>${escapeHtml(JSON.stringify(pools, null, 2))}</pre></section>
                 <section><b>排名阶段</b><pre>${escapeHtml(JSON.stringify(ranking, null, 2))}</pre></section>
                 <section><b>扩展、过滤与合并上下文</b><pre>${escapeHtml(JSON.stringify(compact, null, 2))}</pre></section>

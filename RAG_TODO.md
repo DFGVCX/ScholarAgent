@@ -265,6 +265,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 增加父子检索与自适应论文多样性约束：首轮限制每篇论文占位，跨论文候选不足时按原 RRF 顺序回填，避免单篇知识库返回不足 Top-K。
 - [x] 输出可审计的排名明细：`lexical_rank`、`vector_rank`、`rrf_score`、`rerank_score`（未启用时为 null）和 `final_rank`；旧 `score` 保持为 RRF 分数以兼容现有前端。
 - [x] 制定检索超时和降级策略：交互语义链路默认总预算 8 秒，可通过 `SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS` 配置；超时或 Embedding 失败时取消 semantic 并保留 lexical 结果和警告。
+- [x] 单次检索调试返回分阶段单调时钟耗时：lexical SQL、Query Embedding、vector SQL、semantic 总计、融合/上下文、外部搜索和端到端总耗时；未执行阶段明确为 null，超时仍保留 semantic 总耗时。
 
 ## 9. 阶段七：论文元数据
 

@@ -6,6 +6,7 @@ from dataclasses import replace
 from difflib import SequenceMatcher
 import math
 import re
+import time
 from typing import Any, Protocol
 
 from app.retrieval.embedding import EmbeddingUnavailable, QwenEmbeddingClient
@@ -151,20 +152,34 @@ class RetrievalService:
         self.semantic_timeout_seconds = max(0.001, float(semantic_timeout_seconds))
 
     async def search(self, request: RetrievalRequest) -> RetrievalResponse:
+        total_started = time.perf_counter()
         request, query_type = _adapt_candidate_pool(request)
         requested_mode = request.retrieval_mode
         use_lexical = requested_mode in {"lexical", "hybrid"}
         use_vector = bool(request.query) and requested_mode in {"vector", "hybrid"}
-        lexical = (
-            await self.repository.lexical_candidates(request) if use_lexical else []
-        )
+        lexical_sql_ms: float | None = None
+        if use_lexical:
+            lexical_started = time.perf_counter()
+            lexical = await self.repository.lexical_candidates(request)
+            lexical_sql_ms = self._elapsed_ms(lexical_started)
+        else:
+            lexical = []
         vector: list[RetrievalCandidate] = []
         embedding_debug: dict[str, Any] = {"status": "not_requested"}
+        query_embedding_ms: float | None = None
+        vector_sql_ms: float | None = None
+        semantic_total_ms: float | None = None
         warnings: list[str] = []
         mode = "metadata" if not request.query else requested_mode
         if use_vector:
+            semantic_started = time.perf_counter()
             try:
-                vector, embedding_debug = await asyncio.wait_for(
+                (
+                    vector,
+                    embedding_debug,
+                    query_embedding_ms,
+                    vector_sql_ms,
+                ) = await asyncio.wait_for(
                     self._semantic_candidates(request),
                     timeout=self.semantic_timeout_seconds,
                 )
@@ -194,17 +209,26 @@ class RetrievalService:
                 warnings.append(f"semantic retrieval unavailable: {exc}")
                 if requested_mode == "hybrid":
                     mode = "lexical"
+            finally:
+                semantic_total_ms = self._elapsed_ms(semantic_started)
 
+        postprocess_started = time.perf_counter()
         hits = self._fuse(
             lexical,
             vector,
             request.limit,
             max_chunks_per_paper=request.max_chunks_per_paper,
         )
+        merged_contexts = tuple(self._merge_adjacent_hits(hits))
+        fusion_context_ms = self._elapsed_ms(postprocess_started)
         external: tuple[ExternalCandidate, ...] = ()
+        external_search_ms: float | None = None
         if request.include_external and self.external_search and request.query:
+            external_started = time.perf_counter()
             raw_external = await self.external_search(request.query, request.limit)
             external = tuple(self._external(item) for item in raw_external)
+            external_search_ms = self._elapsed_ms(external_started)
+        total_ms = self._elapsed_ms(total_started)
         return RetrievalResponse(
             query=request.query,
             mode=mode,
@@ -225,9 +249,18 @@ class RetrievalService:
                 "query_type": query_type,
                 "candidate_limit": request.candidate_limit,
             },
-            merged_contexts=tuple(self._merge_adjacent_hits(hits)),
+            merged_contexts=merged_contexts,
             debug={
                 "query_embedding": embedding_debug,
+                "timings_ms": {
+                    "lexical_sql_ms": lexical_sql_ms,
+                    "query_embedding_ms": query_embedding_ms,
+                    "vector_sql_ms": vector_sql_ms,
+                    "semantic_total_ms": semantic_total_ms,
+                    "fusion_context_ms": fusion_context_ms,
+                    "external_search_ms": external_search_ms,
+                    "total_ms": total_ms,
+                },
                 "candidate_pools": {
                     "lexical": self._candidate_pool_debug(lexical),
                     "vector": self._candidate_pool_debug(vector),
@@ -248,19 +281,32 @@ class RetrievalService:
 
     async def _semantic_candidates(
         self, request: RetrievalRequest
-    ) -> tuple[list[RetrievalCandidate], dict[str, Any]]:
+    ) -> tuple[list[RetrievalCandidate], dict[str, Any], float, float]:
+        embedding_started = time.perf_counter()
         embeddings = await self.embedding.embed([request.query])
+        query_embedding_ms = self._elapsed_ms(embedding_started)
         vector = embeddings[0]
+        vector_sql_started = time.perf_counter()
         candidates = await self.repository.vector_candidates(
             request, vector, self.embedding.model
         )
-        return candidates, {
-            "status": "ready",
-            "model": self.embedding.model,
-            "dimensions": len(vector),
-            "l2_norm": round(math.sqrt(sum(float(value) ** 2 for value in vector)), 6),
-            "head": [round(float(value), 6) for value in vector[:8]],
-        }
+        vector_sql_ms = self._elapsed_ms(vector_sql_started)
+        return (
+            candidates,
+            {
+                "status": "ready",
+                "model": self.embedding.model,
+                "dimensions": len(vector),
+                "l2_norm": round(math.sqrt(sum(float(value) ** 2 for value in vector)), 6),
+                "head": [round(float(value), 6) for value in vector[:8]],
+            },
+            query_embedding_ms,
+            vector_sql_ms,
+        )
+
+    @staticmethod
+    def _elapsed_ms(started: float) -> float:
+        return round(max(0.0, (time.perf_counter() - started) * 1000.0), 3)
 
     @staticmethod
     def _candidate_pool_debug(
