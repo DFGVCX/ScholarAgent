@@ -111,9 +111,12 @@ class PaperRepository:
         chunk_result = await self.session.execute(
             text(
                 """SELECT pc.chunk_uuid, pc.chunk_index, pc.chunk_type,
-                    pc.section_id, pc.section_path, pc.page_start, pc.page_end,
+                    pc.section_id, pc.section_path, pc.parent_section_id,
+                    pc.page_start, pc.page_end,
                     pc.content, pc.embedding_content, pc.token_count,
-                    pc.source_block_ids, pc.chunk_metadata,
+                    pc.source_block_ids, pc.chunk_metadata, pc.context_before, pc.context_after,
+                    LAG(pc.chunk_uuid) OVER (ORDER BY pc.chunk_index) AS previous_chunk_id,
+                    LEAD(pc.chunk_uuid) OVER (ORDER BY pc.chunk_index) AS next_chunk_id,
                     pc.embedding_status, pc.embedding_model
                 FROM paper_chunks pc
                 WHERE pc.tenant_id=:tenant_id AND pc.user_id=:user_id
@@ -165,6 +168,7 @@ class PaperRepository:
                     "type": str(chunk.get("chunk_type") or "prose"),
                     "section_id": str(chunk.get("section_id") or ""),
                     "section_path": str(chunk.get("section_path") or ""),
+                    "parent_section_id": str(chunk.get("parent_section_id") or ""),
                     "page_start": int(chunk["page_start"]) if chunk.get("page_start") is not None else None,
                     "page_end": int(chunk["page_end"]) if chunk.get("page_end") is not None else None,
                     "content": content,
@@ -173,6 +177,18 @@ class PaperRepository:
                     "token_count": int(chunk.get("token_count") or 0),
                     "source_block_ids": list(json_value(chunk.get("source_block_ids"), [])),
                     "metadata": dict(json_value(chunk.get("chunk_metadata"), {})),
+                    "context_before": str(chunk.get("context_before") or ""),
+                    "context_after": str(chunk.get("context_after") or ""),
+                    "previous_chunk_id": (
+                        str(chunk["previous_chunk_id"])
+                        if chunk.get("previous_chunk_id") is not None
+                        else None
+                    ),
+                    "next_chunk_id": (
+                        str(chunk["next_chunk_id"])
+                        if chunk.get("next_chunk_id") is not None
+                        else None
+                    ),
                     "embedding_status": str(chunk.get("embedding_status") or "pending"),
                     "embedding_model": str(chunk.get("embedding_model") or ""),
                 }

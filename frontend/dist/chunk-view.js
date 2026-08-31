@@ -42,7 +42,38 @@
             </div>`;
     }
 
-    function renderCard(chunk) {
+    function adjacentChunk(chunks, chunk, direction) {
+        const linkedId = direction < 0 ? chunk.previous_chunk_id : chunk.next_chunk_id;
+        if (linkedId) {
+            const linked = chunks.find((candidate) => String(candidate.id || '') === String(linkedId));
+            if (linked) return linked;
+        }
+        const index = chunks.indexOf(chunk);
+        return chunks[index + direction] || null;
+    }
+
+    function renderContext(chunk, chunks) {
+        const previous = adjacentChunk(chunks, chunk, -1);
+        const next = adjacentChunk(chunks, chunk, 1);
+        const continuous = [previous, chunk, next]
+            .filter(Boolean)
+            .map((item) => `Chunk #${Number(item.index || 0)}\n${String(item.content || '')}`)
+            .join('\n\n---\n\n');
+        const atomicContext = [
+            chunk.context_before ? `前置解释\n${chunk.context_before}` : '',
+            chunk.context_after ? `后续解释\n${chunk.context_after}` : '',
+        ].filter(Boolean).join('\n\n');
+        return `
+            <details class="paper-chunk-context">
+                <summary>父子/相邻上下文</summary>
+                <div><strong>父章节 ${escapeHtml(chunk.parent_section_id || chunk.section_id || '未标注')}</strong></div>
+                <div class="paper-chunk-neighbors">相邻 Chunk：${escapeHtml(previous?.id || '无')} ← 当前 → ${escapeHtml(next?.id || '无')}</div>
+                ${atomicContext ? `<section><b>原子块解释上下文</b><pre>${escapeHtml(atomicContext)}</pre></section>` : ''}
+                <section><b>连续上下文预览</b><pre>${escapeHtml(continuous)}</pre></section>
+            </details>`;
+    }
+
+    function renderCard(chunk, chunks) {
         const content = String(chunk.content ?? '');
         const blockCount = Array.isArray(chunk.source_block_ids) ? chunk.source_block_ids.length : 0;
         const status = chunk.embedding_status || 'pending';
@@ -69,6 +100,7 @@
                     <span>来源块 ${blockCount}</span>
                     <span title="${escapeHtml(chunk.id || '')}">${escapeHtml(chunk.id || '-')}</span>
                 </footer>
+                ${renderContext(chunk, chunks)}
             </article>`;
     }
 
@@ -84,7 +116,7 @@
                 <div><span>策略</span><code>${escapeHtml(chunker.strategy || '未标注')}</code><span>版本 ${escapeHtml(chunker.version || '-')}</span></div>
             </div>`;
         const cards = visible.length
-            ? `<div class="paper-chunk-list">${visible.map(renderCard).join('')}</div>`
+            ? `<div class="paper-chunk-list">${visible.map((chunk) => renderCard(chunk, chunks)).join('')}</div>`
             : '<div class="paper-chunk-list"><div class="alert">当前类型没有切片。</div></div>';
         return `<div class="paper-chunk-view">${summary}${renderFilters(chunks, activeFilter)}${cards}</div>`;
     }

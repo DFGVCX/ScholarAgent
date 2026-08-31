@@ -21,6 +21,7 @@ const structure = {
       index: 0,
       type: 'prose',
       section_path: 'II. Method > Setup',
+      parent_section_id: 'method',
       page_start: 2,
       page_end: 3,
       content: 'Complete source <script>alert(1)</script>\nTAIL_MARKER_MUST_REMAIN_VISIBLE',
@@ -29,6 +30,10 @@ const structure = {
       source_block_ids: ['page-2-block-1', 'page-3-block-1'],
       embedding_status: 'ready',
       embedding_model: 'qwen3.7-text-embedding',
+      context_before: 'Definition before the atomic object.',
+      context_after: 'Explanation after the atomic object.',
+      previous_chunk_id: null,
+      next_chunk_id: 'chunk-equation',
     },
     {
       id: 'chunk-equation',
@@ -43,6 +48,9 @@ const structure = {
       source_block_ids: ['page-3-equation-1'],
       embedding_status: 'ready',
       embedding_model: 'qwen3.7-text-embedding',
+      parent_section_id: 'method',
+      previous_chunk_id: 'chunk-prose',
+      next_chunk_id: null,
     },
   ],
 };
@@ -63,7 +71,7 @@ test('renders every chunk with complete escaped source text and provenance', () 
   assert.match(html, /来源块 2/);
 });
 
-test('filters the rendered cards by chunk type without changing chunk text', () => {
+test('filters primary cards by type while retaining adjacent context preview', () => {
   const chunkView = loadChunkView();
   assert.ok(chunkView, 'chunk-view renderer must be available to the paper workbench');
 
@@ -71,5 +79,19 @@ test('filters the rendered cards by chunk type without changing chunk text', () 
 
   assert.equal((html.match(/data-chunk-index=/g) || []).length, 1);
   assert.match(html, /\$\$F\(x\)=x\^2\$\$/);
-  assert.doesNotMatch(html, /TAIL_MARKER_MUST_REMAIN_VISIBLE/);
+  assert.match(html, /TAIL_MARKER_MUST_REMAIN_VISIBLE/);
+});
+
+test('renders auditable parent and adjacent chunk context without replacing source text', () => {
+  const chunkView = loadChunkView();
+  assert.ok(chunkView);
+
+  const html = chunkView.render(structure, 'all');
+
+  assert.match(html, /父章节 method/);
+  assert.match(html, /相邻 Chunk/);
+  assert.match(html, /连续上下文预览/);
+  assert.match(html, /Definition before the atomic object/);
+  assert.match(html, /Explanation after the atomic object/);
+  assert.match(html, /chunk-equation/);
 });

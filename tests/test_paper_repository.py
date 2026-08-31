@@ -129,6 +129,7 @@ class _StructureSession(_Session):
                         "chunk_type": "prose",
                         "section_id": "method",
                         "section_path": "2 Method > 2.1 Setup",
+                        "parent_section_id": "method",
                         "page_start": 1,
                         "page_end": 2,
                         "content": "Complete first chunk.\nIt keeps every character.",
@@ -136,6 +137,10 @@ class _StructureSession(_Session):
                         "token_count": 9,
                         "source_block_ids": ["page-1-block-2", "page-2-block-1"],
                         "chunk_metadata": {"strategy": "scholar_hierarchical_v4"},
+                        "context_before": "Previous definition.",
+                        "context_after": "Following explanation.",
+                        "previous_chunk_id": None,
+                        "next_chunk_id": UUID("00000000-0000-0000-0000-000000000302"),
                         "embedding_status": "ready",
                         "embedding_model": "qwen3.7-text-embedding",
                     },
@@ -145,6 +150,7 @@ class _StructureSession(_Session):
                         "chunk_type": "equation",
                         "section_id": "method",
                         "section_path": "2 Method > Equation 1",
+                        "parent_section_id": "method",
                         "page_start": 2,
                         "page_end": 2,
                         "content": "$$F(x)=x^2$$",
@@ -152,6 +158,10 @@ class _StructureSession(_Session):
                         "token_count": 6,
                         "source_block_ids": ["page-2-equation-1"],
                         "chunk_metadata": {"strategy": "scholar_hierarchical_v4"},
+                        "context_before": "Equation introduction.",
+                        "context_after": "Equation interpretation.",
+                        "previous_chunk_id": UUID("00000000-0000-0000-0000-000000000301"),
+                        "next_chunk_id": None,
                         "embedding_status": "ready",
                         "embedding_model": "qwen3.7-text-embedding",
                     },
@@ -280,9 +290,17 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
             "Complete first chunk.\nIt keeps every character.",
         )
         self.assertEqual(structure["chunks"][1]["type"], "equation")
+        self.assertEqual(structure["chunks"][0]["parent_section_id"], "method")
+        self.assertEqual(structure["chunks"][0]["context_before"], "Previous definition.")
+        self.assertEqual(
+            structure["chunks"][0]["next_chunk_id"],
+            "00000000-0000-0000-0000-000000000302",
+        )
         self.assertEqual(structure["chunks"][0]["source_block_ids"], ["page-1-block-2", "page-2-block-1"])
         chunk_sql = next(sql for sql, _ in session.statements if "FROM paper_chunks pc" in sql)
         self.assertIn("ORDER BY pc.chunk_index", chunk_sql)
+        self.assertIn("LAG(pc.chunk_uuid)", chunk_sql)
+        self.assertIn("LEAD(pc.chunk_uuid)", chunk_sql)
         self.assertTrue(all(params["tenant_id"] == "tenant-a" for _, params in session.statements))
         self.assertTrue(all(params["user_id"] == "user-a" for _, params in session.statements))
         self.assertIn("current_content_version", session.statements[0][0])

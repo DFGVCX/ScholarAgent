@@ -10,6 +10,9 @@ on:
       - "alembic/**"
       - "scripts/run_rag_regression.py"
       - "tests/**"
+      - "frontend/dist/**"
+      - "frontend/tests/**"
+      - "frontend/package.json"
       - ".github/workflows/rag-regression.yml"
   pull_request:
     paths:
@@ -20,6 +23,9 @@ on:
       - "alembic/**"
       - "scripts/run_rag_regression.py"
       - "tests/**"
+      - "frontend/dist/**"
+      - "frontend/tests/**"
+      - "frontend/package.json"
       - ".github/workflows/rag-regression.yml"
 
 jobs:
@@ -32,9 +38,14 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - name: Install runtime dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements-base.txt
       - name: Run deterministic RAG regression
         run: python scripts/run_rag_regression.py
+      - name: Run deterministic paper workbench tests
+        run: npm test --prefix frontend
       - name: Validate Compose configuration
         run: docker compose config --quiet
