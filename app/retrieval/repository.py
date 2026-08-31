@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Mapping, Sequence
 
 from sqlalchemy import text
@@ -15,35 +14,7 @@ from app.retrieval.models import (
     RetrievalCandidate,
     RetrievalRequest,
 )
-
-
-_CHINESE_ACADEMIC_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("联邦学习", ("federated learning",)),
-    ("机器学习", ("machine learning",)),
-    ("深度学习", ("deep learning",)),
-    ("区块链", ("blockchain",)),
-    ("全同态加密", ("fully homomorphic encryption",)),
-    ("同态加密", ("homomorphic encryption",)),
-    ("差分隐私", ("differential privacy",)),
-    ("隐私保护", ("privacy-preserving", "privacy preserving")),
-    ("投毒攻击", ("poisoning attack",)),
-    ("拜占庭鲁棒", ("byzantine-robust", "byzantine robust")),
-    ("恶意客户端", ("malicious client",)),
-    ("聚合规则", ("aggregation rule",)),
-    ("余弦相似度", ("cosine similarity",)),
-    ("根数据集", ("root dataset",)),
-    ("安全多方计算", ("secure multi-party computation",)),
-    ("模型更新", ("model update",)),
-)
-
-
-def _lexical_aliases(query: str) -> tuple[str, ...]:
-    compact = re.sub(r"\s+", "", query).lower()
-    aliases: list[str] = []
-    for chinese, english_terms in _CHINESE_ACADEMIC_ALIASES:
-        if chinese in compact:
-            aliases.extend(english_terms)
-    return tuple(dict.fromkeys(aliases))
+from app.retrieval.query_expansion import academic_query_aliases
 
 
 def _structured_filters(request: RetrievalRequest) -> tuple[str, dict[str, Any]]:
@@ -168,7 +139,7 @@ class PostgresRetrievalRepository:
         return [self._context_chunk(row) for row in result.mappings().all()]
 
     async def lexical_candidates(self, request: RetrievalRequest) -> list[RetrievalCandidate]:
-        aliases = _lexical_aliases(request.query)
+        aliases = academic_query_aliases(request.query)
         filter_sql, filter_params = _structured_filters(request)
         alias_score_sql = "".join(
             f" + CASE WHEN p.title ILIKE :alias_pattern_{index} THEN 1.5 "

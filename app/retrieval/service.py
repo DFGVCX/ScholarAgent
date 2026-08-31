@@ -17,6 +17,7 @@ from app.retrieval.models import (
     RetrievalRequest,
     RetrievalResponse,
 )
+from app.retrieval.query_expansion import academic_query_aliases
 
 
 class RetrievalRepository(Protocol):
@@ -89,6 +90,7 @@ class RetrievalService:
             external_candidates=external,
             warnings=tuple(warnings),
             filters=request.filters_dict(),
+            query_expansions=academic_query_aliases(request.query),
         )
 
     async def _semantic_candidates(

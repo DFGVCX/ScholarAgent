@@ -234,6 +234,8 @@ GET http://127.0.0.1:8000/knowledge/rag/search?query=robust+aggregation&year_fro
 
 可用参数为 `paper_id`、`year_from`、`year_to`、`author`、`venue`、`section` 和 `chunk_type`。对象类型支持 `prose/equation/table/figure/algorithm/code`。响应中的 `filters` 是服务实际采用的规范化条件。
 
+lexical 检索会把常见学术概念做中英术语和缩写的双向扩展，例如 `联邦学习 ↔ federated learning ↔ FL`、`差分隐私 ↔ differential privacy ↔ DP`。短英文缩写按完整单词匹配，不会在 `workflow` 等普通单词内部误触发。响应中的 `query_expansions` 会列出本次实际加入的词面查询，Embedding 不可用时也能调试中文兜底召回。
+
 检索结果中的 `previous_chunk_id` / `next_chunk_id` 可用于按需展开完整上下文。接口只返回当前用户知识库、当前论文内容版本中的 Chunk，并且只按完整 Chunk 控制 token 预算，不截断原文：
 
 ```text

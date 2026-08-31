@@ -256,7 +256,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 
 - [ ] 接入千问 reranker 或可替换的交叉编码 reranker。
 - [ ] 比较“仅 vector、仅 lexical、RRF hybrid、hybrid + reranker”四种生产检索策略。
-- [ ] 增加中文查询扩展：原中文、英文术语、缩写和混合查询。
+- [x] 增加中英双向查询扩展：中文、英文术语、缩写和混合查询映射到同一学术概念组；短缩写使用词边界避免误触发，响应回显 `query_expansions`。
 - [x] 支持本地候选按论文、年份区间、作者、发表渠道、章节和对象类型过滤；lexical 与 vector 使用同一组 SQL 条件，响应回显规范化后的 `filters`。
 - [ ] 为不同查询类型设置候选池大小，例如普通概念、公式、表格、图和算法查询。
 - [ ] 增加父子检索与多样性约束，避免 Top-K 被同一论文的高度相似 Chunk 占满。
@@ -433,7 +433,7 @@ arXiv
 
 - [ ] 接入 reranker。
 - [ ] 实现父子 Chunk、相邻合并和重复结果去重。
-- [ ] 增加中文/英文术语查询扩展。
+- [x] 增加中文/英文术语与缩写的双向查询扩展，并为无 Embedding/超时降级建立 lexical 回归测试。
 - [ ] 重点观察 Recall@1、MRR、NDCG@3 和下游上下文 Token。
 
 ### P2：补全论文信息和专项评测
@@ -512,6 +512,7 @@ PostgreSQL/pgvector 基础
 - 检索 hit 已明确输出 lexical/vector 排名、RRF 分数、rerank 分数占位与最终顺序；未接 reranker 前 `rerank_score=null`，不伪造模型分数。
 - 交互检索已增加独立于批量入库的语义总超时；查询 Embedding 或 pgvector 候选超过预算时取消语义链路并返回 lexical 结果，避免千问重试把页面阻塞到客户端超时。
 - 统一检索已支持 `paper_id/year_from/year_to/author/venue/section/chunk_type` 结构化过滤；过滤发生在 lexical/pgvector 候选生成阶段而非 Top-K 后处理，响应会回显实际过滤条件供调试。
+- lexical 查询扩展已从单向中文别名升级为中英术语/缩写双向概念组；覆盖 FL、RAG、DP、FHE、SMPC、non-IID、LLM、GNN 等常见科研术语，短缩写按完整 token 匹配，响应回显 `query_expansions`。
 - 已解除论文解析包与数据库初始化的导入时耦合，离线 PDF 批处理不再产生 PostgreSQL 连接超时。
 - 已将 Docling 2.123.0 的必需模型目录固定为轻量检查清单，检查过程不再导入 Docling/Torch；缺模型的 4 页真实论文显式回退总耗时由 17.154 秒降至 2.826 秒。
 - 已增加按模型目录复用 Docling 转换器的进程内缓存，待 Docker 恢复并补齐模型后验证连续解析多篇论文时只初始化一次模型。

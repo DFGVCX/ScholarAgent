@@ -256,6 +256,7 @@ class RetrievalResponse:
     warnings: tuple[str, ...] = ()
     backend: str = "postgresql+pgvector"
     filters: dict[str, Any] | None = None
+    query_expansions: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -266,6 +267,7 @@ class RetrievalResponse:
             "external_candidates": [item.to_dict() for item in self.external_candidates],
             "warnings": list(self.warnings),
             "filters": dict(self.filters or {}),
+            "query_expansions": list(self.query_expansions),
         }
 
     def to_legacy_dict(self) -> dict[str, Any]:

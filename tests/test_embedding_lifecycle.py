@@ -185,6 +185,33 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         sql, params = session.calls[0]
         self.assertIn("c.content ILIKE :alias_pattern_0", sql)
         self.assertEqual(params["alias_pattern_0"], "%federated learning%")
+        self.assertIn("%FL%", params.values())
+
+    async def test_english_and_abbreviation_queries_expand_bidirectionally(self) -> None:
+        for query, expected in (
+            ("federated learning privacy", {"%联邦学习%", "%FL%"}),
+            ("FL with DP", {"%联邦学习%", "%federated learning%", "%差分隐私%"}),
+        ):
+            session = _Session([_Result()])
+            repository = PostgresRetrievalRepository(session)
+
+            await repository.lexical_candidates(RetrievalRequest("tenant", "user", query))
+
+            _, params = session.calls[0]
+            aliases = {value for key, value in params.items() if key.startswith("alias_pattern_")}
+            self.assertTrue(expected.issubset(aliases))
+
+    async def test_short_abbreviation_does_not_match_inside_english_word(self) -> None:
+        session = _Session([_Result()])
+        repository = PostgresRetrievalRepository(session)
+
+        await repository.lexical_candidates(
+            RetrievalRequest("tenant", "user", "workflow optimization")
+        )
+
+        _, params = session.calls[0]
+        aliases = [key for key in params if key.startswith("alias_pattern_")]
+        self.assertEqual(aliases, [])
 
     async def test_vector_query_filters_by_ready_status_and_active_model(self) -> None:
         session = _Session([_Result(), _Result()])

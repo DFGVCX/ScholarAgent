@@ -330,6 +330,15 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_response_echoes_applied_query_expansions(self) -> None:
+        response = await RetrievalService(_Repository(), _BrokenEmbedding()).search(
+            RetrievalRequest("t", "u", "联邦学习是什么")
+        )
+
+        self.assertEqual(
+            response.to_dict()["query_expansions"], ["federated learning", "FL"]
+        )
+
     async def test_hits_expose_chunk_index(self) -> None:
         response = await RetrievalService(_Repository(), _Embedding()).search(
             RetrievalRequest("t", "u", "retrieval", limit=1)
