@@ -385,7 +385,7 @@ arXiv
 
 - [x] 为 Agent 提供稳定的父级上下文展开接口；嵌套小节优先返回父章节，否则返回当前章节，且只读当前 content version。
 - [x] 为 Agent 提供按 token budget 选择完整相邻 Chunk 的能力；中心 Chunk 始终完整保留，任何存储 Chunk 都不会被截断。
-- [ ] 为回答中的每条引用提供 paper/chunk/page 可追溯标识。
+- [x] 为每个可引用检索 hit 提供 `citation` locator：稳定 key、paper ID、content version、Chunk UUID、页码范围、章节 ID/路径；回答层是否采用该引用仍属于 Agent 责任。
 - [ ] 增加 Agent 调用场景的检索回放：保存查询、策略、候选和最终上下文。
 - [ ] 建立“RAG 已正确返回证据，但 Agent 未采用”与“RAG 未返回证据”的错误归因。
 
@@ -518,6 +518,7 @@ PostgreSQL/pgvector 基础
 - lexical 查询扩展已从单向中文别名升级为中英术语/缩写双向概念组；覆盖 FL、RAG、DP、FHE、SMPC、non-IID、LLM、GNN 等常见科研术语，短缩写按完整 token 匹配，响应回显 `query_expansions`。
 - RRF 后增加自适应论文多样性：默认首轮每篇最多 3 个 Chunk，并在跨论文候选不足时回填被延后的同篇证据；响应 `ranking_policy` 回显策略，可用 `SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER` 调整，设为 0 可关闭。
 - 检索后处理增加保守的相邻高重叠 prose 抑制；候选只与共享 source block 或同章节相邻位置比较，避免候选池增大时做全量二次比较，也明确不对重复表头/算法标题做模糊去重。
+- lexical/vector 命中现在携带当前 `content_version` 并生成结构化 `citation` locator；引用 key 形如 `{paper_id}@v{content_version}#{chunk_uuid}`，论文换版后不会把旧 Chunk 静默解释成新版本证据。
 - 已解除论文解析包与数据库初始化的导入时耦合，离线 PDF 批处理不再产生 PostgreSQL 连接超时。
 - 已将 Docling 2.123.0 的必需模型目录固定为轻量检查清单，检查过程不再导入 Docling/Torch；缺模型的 4 页真实论文显式回退总耗时由 17.154 秒降至 2.826 秒。
 - 已增加按模型目录复用 Docling 转换器的进程内缓存，待 Docker 恢复并补齐模型后验证连续解析多篇论文时只初始化一次模型。

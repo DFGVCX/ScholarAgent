@@ -168,6 +168,7 @@ class PostgresRetrievalRepository:
         result = await self.session.execute(
             text(
                 f"""SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
+                    c.content_version AS content_version,
                     c.chunk_index AS chunk_index, c.section_id, c.section_path,
                     c.page_start, c.page_end, c.chunk_type, c.parent_section_id,
                     c.source_block_ids, c.chunk_metadata, c.context_before, c.context_after,
@@ -219,6 +220,7 @@ class PostgresRetrievalRepository:
         result = await self.session.execute(
             text(
                 f"""SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
+                    c.content_version AS content_version,
                     c.chunk_index AS chunk_index, c.section_id, c.section_path,
                     c.page_start, c.page_end, c.chunk_type, c.parent_section_id,
                     c.source_block_ids, c.chunk_metadata, c.context_before, c.context_after,
@@ -292,6 +294,7 @@ class PostgresRetrievalRepository:
                 str(row["previous_chunk_id"]) if row.get("previous_chunk_id") else None
             ),
             next_chunk_id=str(row["next_chunk_id"]) if row.get("next_chunk_id") else None,
+            content_version=int(row.get("content_version") or 0),
         )
 
     @staticmethod

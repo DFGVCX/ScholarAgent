@@ -336,6 +336,7 @@ class RetrievalService:
                     context_after=candidate.context_after,
                     previous_chunk_id=candidate.previous_chunk_id,
                     next_chunk_id=candidate.next_chunk_id,
+                    content_version=candidate.content_version,
                 )
             )
         return hits

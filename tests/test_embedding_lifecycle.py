@@ -118,7 +118,7 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("candidate.section_id=c.parent_section_id", sql)
         self.assertIn("candidate.section_id=c.section_id", sql)
         self.assertIn("p.paper_id", sql)
-        self.assertIn("c.content_version", sql)
+        self.assertIn("p.paper_id, c.content_version", sql)
         self.assertEqual(params["chunk_id"], parent.center_chunk_id)
 
     async def test_context_window_is_tenant_scoped_and_uses_current_version(self) -> None:
@@ -173,6 +173,7 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("AS next_chunk_id", sql)
         self.assertIn("c.context_before", sql)
         self.assertIn("c.context_after", sql)
+        self.assertIn("c.content_version AS content_version", sql)
 
     async def test_chinese_lexical_query_expands_academic_terms(self) -> None:
         session = _Session([_Result()])

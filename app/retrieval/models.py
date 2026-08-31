@@ -189,6 +189,7 @@ class RetrievalCandidate:
     context_after: str = ""
     previous_chunk_id: str | None = None
     next_chunk_id: str | None = None
+    content_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -223,6 +224,7 @@ class LocalHit:
     context_after: str = ""
     previous_chunk_id: str | None = None
     next_chunk_id: str | None = None
+    content_version: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -230,6 +232,16 @@ class LocalHit:
         value["source_block_ids"] = list(self.source_block_ids)
         metadata = self.chunk_metadata or {}
         value["provenance"] = metadata.get("provenance", metadata)
+        value["citation"] = {
+            "key": f"{self.paper_id}@v{self.content_version}#{self.chunk_id}",
+            "paper_id": self.paper_id,
+            "content_version": self.content_version,
+            "chunk_id": self.chunk_id,
+            "page_start": self.page_start,
+            "page_end": self.page_end,
+            "section_id": self.section_id,
+            "section_path": self.section_path,
+        }
         if isinstance(self.published_at, datetime):
             value["published_at"] = self.published_at.isoformat()
         return value

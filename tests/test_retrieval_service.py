@@ -355,6 +355,7 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
             context_after="Here x denotes the model.",
             previous_chunk_id="previous-chunk",
             next_chunk_id="next-chunk",
+            content_version=4,
         )
 
         hit = RetrievalService._fuse([candidate], [], 1)[0]
@@ -374,6 +375,19 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["context_after"], "Here x denotes the model.")
         self.assertEqual(payload["previous_chunk_id"], "previous-chunk")
         self.assertEqual(payload["next_chunk_id"], "next-chunk")
+        self.assertEqual(
+            payload["citation"],
+            {
+                "key": "p1@v4#method-chunk",
+                "paper_id": "p1",
+                "content_version": 4,
+                "chunk_id": "method-chunk",
+                "page_start": 4,
+                "page_end": 5,
+                "section_id": "method",
+                "section_path": "3 Method",
+            },
+        )
 
     def test_rrf_merges_by_id_without_recency(self) -> None:
         merged = reciprocal_rank_fusion([["a", "b"], ["b", "c"]], k=60)
