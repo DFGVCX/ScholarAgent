@@ -3,6 +3,8 @@ from app.retrieval.models import (
     ContextChunk,
     ContextWindowRequest,
     ContextWindowResponse,
+    ParentContextRequest,
+    ParentSectionContext,
     RetrievalRequest,
     RetrievalResponse,
 )
@@ -12,6 +14,8 @@ __all__ = [
     "ContextChunk",
     "ContextWindowRequest",
     "ContextWindowResponse",
+    "ParentContextRequest",
+    "ParentSectionContext",
     "QwenEmbeddingClient",
     "RetrievalRequest",
     "RetrievalResponse",

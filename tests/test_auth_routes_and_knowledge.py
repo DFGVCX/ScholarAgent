@@ -15,6 +15,7 @@ from app.routes.knowledge import (
     KnowledgePaperDTO,
     delete_knowledge,
     expand_rag_context,
+    get_rag_parent_context,
     get_file_annotations,
     get_knowledge_file,
     list_knowledge,
@@ -28,6 +29,21 @@ from app.services.rag_service import rag_service
 
 
 class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_parent_context_uses_authenticated_tenant_and_user(self):
+        chunk_id = uuid4()
+        expected = {
+            "center_chunk_id": str(chunk_id),
+            "section_id": "method",
+            "content": "Complete method section.",
+        }
+        with patch.object(
+            rag_service, "parent_context", new=AsyncMock(return_value=expected)
+        ) as parent:
+            response = await get_rag_parent_context(chunk_id, x_api_key="demo-key")
+
+        self.assertEqual(response, expected)
+        parent.assert_awaited_once_with("tenant_demo", "user_demo", str(chunk_id))
+
     async def test_context_expansion_uses_authenticated_tenant_and_user(self):
         chunk_id = uuid4()
         expected = {

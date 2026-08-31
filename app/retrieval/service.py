@@ -10,6 +10,8 @@ from app.retrieval.models import (
     ContextWindowResponse,
     ExternalCandidate,
     LocalHit,
+    ParentContextRequest,
+    ParentSectionContext,
     RetrievalCandidate,
     RetrievalRequest,
     RetrievalResponse,
@@ -17,6 +19,10 @@ from app.retrieval.models import (
 
 
 class RetrievalRepository(Protocol):
+    async def parent_context(
+        self, request: ParentContextRequest
+    ) -> ParentSectionContext | None: ...
+
     async def context_window(self, request: ContextWindowRequest) -> list[ContextChunk]: ...
 
     async def lexical_candidates(self, request: RetrievalRequest) -> list[RetrievalCandidate]: ...
@@ -80,6 +86,12 @@ class RetrievalService:
         if not any(chunk.chunk_id == request.chunk_id for chunk in chunks):
             raise LookupError("chunk not found in the current knowledge-base version")
         return self._budget_context(request, chunks)
+
+    async def parent_context(self, request: ParentContextRequest) -> ParentSectionContext:
+        parent = await self.repository.parent_context(request)
+        if parent is None:
+            raise LookupError("parent section not found in the current knowledge-base version")
+        return parent
 
     @staticmethod
     def _budget_context(

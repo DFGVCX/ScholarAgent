@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.retrieval.models import (
     ContextChunk,
     ContextWindowRequest,
+    ParentContextRequest,
+    ParentSectionContext,
     RetrievalCandidate,
     RetrievalRequest,
 )
@@ -48,6 +50,48 @@ class PostgresRetrievalRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def parent_context(
+        self, request: ParentContextRequest
+    ) -> ParentSectionContext | None:
+        result = await self.session.execute(
+            text(
+                """SELECT c.chunk_uuid::text AS center_chunk_id,
+                    p.paper_id, c.content_version,
+                    s.section_id, s.title, s.kind, c.section_path,
+                    s.page_start, s.page_end, s.content, s.char_count
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                JOIN LATERAL (
+                    SELECT candidate.section_id, candidate.title, candidate.kind,
+                        candidate.page_start, candidate.page_end,
+                        candidate.content, candidate.char_count
+                    FROM paper_sections candidate
+                    WHERE candidate.tenant_id=c.tenant_id
+                        AND candidate.user_id=c.user_id
+                        AND candidate.content_uuid=c.content_uuid
+                        AND (candidate.section_id=c.parent_section_id
+                            OR candidate.section_id=c.section_id)
+                    ORDER BY CASE
+                        WHEN c.parent_section_id IS NOT NULL
+                            AND candidate.section_id=c.parent_section_id THEN 0
+                        ELSE 1 END
+                    LIMIT 1
+                ) s ON true
+                WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id
+                    AND p.deleted_at IS NULL AND p.in_knowledge_base=true
+                    AND c.content_version=p.current_content_version
+                    AND c.chunk_uuid=CAST(:chunk_id AS uuid)"""
+            ),
+            {
+                "tenant_id": request.tenant_id,
+                "user_id": request.user_id,
+                "chunk_id": request.chunk_id,
+            },
+        )
+        row = result.mappings().first()
+        return self._parent_context(row) if row else None
+
     async def context_window(self, request: ContextWindowRequest) -> list[ContextChunk]:
         result = await self.session.execute(
             text(
@@ -62,6 +106,7 @@ class PostgresRetrievalRepository:
                         AND c.chunk_uuid=CAST(:chunk_id AS uuid)
                 )
                 SELECT c.chunk_uuid::text AS chunk_id, c.chunk_index,
+                    p.paper_id, c.content_version,
                     c.content, c.token_count, c.section_id, c.section_path,
                     c.page_start, c.page_end, c.chunk_type, c.parent_section_id,
                     c.source_block_ids, c.chunk_metadata
@@ -251,4 +296,25 @@ class PostgresRetrievalRepository:
             parent_section_id=row.get("parent_section_id"),
             source_block_ids=tuple(row.get("source_block_ids") or ()),
             chunk_metadata=dict(row.get("chunk_metadata") or {}),
+            paper_id=str(row.get("paper_id") or ""),
+            content_version=int(row.get("content_version") or 0),
+        )
+
+    @staticmethod
+    def _parent_context(row: Mapping[str, Any]) -> ParentSectionContext:
+        content = str(row.get("content") or "")
+        character_count = int(row.get("char_count") or len(content))
+        return ParentSectionContext(
+            center_chunk_id=str(row["center_chunk_id"]),
+            section_id=str(row.get("section_id") or ""),
+            title=str(row.get("title") or ""),
+            kind=str(row.get("kind") or ""),
+            section_path=str(row.get("section_path") or row.get("title") or ""),
+            page_start=int(row.get("page_start") or 1),
+            page_end=int(row.get("page_end") or row.get("page_start") or 1),
+            content=content,
+            character_count=character_count,
+            estimated_tokens=max(1, (character_count + 3) // 4),
+            paper_id=str(row.get("paper_id") or ""),
+            content_version=int(row.get("content_version") or 0),
         )

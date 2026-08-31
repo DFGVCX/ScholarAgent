@@ -574,6 +574,20 @@ async def expand_rag_context(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/rag/chunks/{chunk_id}/parent")
+async def get_rag_parent_context(
+    chunk_id: UUID,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    try:
+        return await rag_service.parent_context(
+            user.tenant_id, user.user_id, str(chunk_id)
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/rag/stats")
 async def rag_stats(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> dict[str, Any]:
     user = _current_user(x_api_key)

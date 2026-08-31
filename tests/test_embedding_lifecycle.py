@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.papers.repository import PaperRepository
-from app.retrieval.models import ContextWindowRequest, RetrievalRequest
+from app.retrieval.models import ContextWindowRequest, ParentContextRequest, RetrievalRequest
 from app.retrieval.repository import PostgresRetrievalRepository
 
 
@@ -37,11 +37,73 @@ class _Session:
 
 
 class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
-    async def test_context_window_is_tenant_scoped_and_uses_current_version(self) -> None:
-        session = _Session([_Result()])
+    async def test_parent_context_prefers_parent_section_in_current_version(self) -> None:
+        session = _Session(
+            [
+                _Result(
+                    [
+                        {
+                            "center_chunk_id": "00000000-0000-0000-0000-000000000301",
+                            "paper_id": "paper-1",
+                            "content_version": 4,
+                            "section_id": "method",
+                            "title": "2 Method",
+                            "kind": "method",
+                            "section_path": "2 Method > 2.1 Setup",
+                            "page_start": 2,
+                            "page_end": 4,
+                            "content": "Complete parent section.",
+                            "char_count": 24,
+                        }
+                    ]
+                )
+            ]
+        )
         repository = PostgresRetrievalRepository(session)
 
-        await repository.context_window(
+        parent = await repository.parent_context(
+            ParentContextRequest(
+                "tenant", "user", "00000000-0000-0000-0000-000000000301"
+            )
+        )
+
+        self.assertIsNotNone(parent)
+        assert parent is not None
+        self.assertEqual(parent.section_id, "method")
+        self.assertEqual(parent.content, "Complete parent section.")
+        self.assertEqual(parent.paper_id, "paper-1")
+        self.assertEqual(parent.content_version, 4)
+        sql, params = session.calls[0]
+        self.assertIn("p.tenant_id=:tenant_id", sql)
+        self.assertIn("p.user_id=:user_id", sql)
+        self.assertIn("c.content_version=p.current_content_version", sql)
+        self.assertIn("p.in_knowledge_base=true", sql)
+        self.assertIn("candidate.section_id=c.parent_section_id", sql)
+        self.assertIn("candidate.section_id=c.section_id", sql)
+        self.assertIn("p.paper_id", sql)
+        self.assertIn("c.content_version", sql)
+        self.assertEqual(params["chunk_id"], parent.center_chunk_id)
+
+    async def test_context_window_is_tenant_scoped_and_uses_current_version(self) -> None:
+        session = _Session(
+            [
+                _Result(
+                    [
+                        {
+                            "chunk_id": "00000000-0000-0000-0000-000000000301",
+                            "chunk_index": 2,
+                            "paper_id": "paper-1",
+                            "content_version": 4,
+                            "content": "Complete chunk.",
+                            "token_count": 4,
+                        }
+                    ]
+                )
+            ]
+        )
+        repository = PostgresRetrievalRepository(session)
+
+        chunks = await repository.context_window(
             ContextWindowRequest(
                 "tenant", "user", "00000000-0000-0000-0000-000000000301",
                 before=2, after=3, token_budget=1024,
@@ -55,8 +117,12 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("p.in_knowledge_base=true", sql)
         self.assertIn("c.chunk_uuid=CAST(:chunk_id AS uuid)", sql)
         self.assertIn("ORDER BY c.chunk_index", sql)
+        self.assertIn("p.paper_id", sql)
+        self.assertIn("c.content_version", sql)
         self.assertEqual(params["before"], 2)
         self.assertEqual(params["after"], 3)
+        self.assertEqual(chunks[0].paper_id, "paper-1")
+        self.assertEqual(chunks[0].content_version, 4)
 
     async def test_lexical_query_selects_chunk_index(self) -> None:
         session = _Session([_Result()])

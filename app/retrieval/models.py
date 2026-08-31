@@ -40,6 +40,36 @@ class ContextWindowRequest:
 
 
 @dataclass(frozen=True)
+class ParentContextRequest:
+    tenant_id: str
+    user_id: str
+    chunk_id: str
+
+    def __post_init__(self) -> None:
+        if not self.tenant_id or not self.user_id or not self.chunk_id:
+            raise ValueError("tenant_id, user_id and chunk_id are required")
+
+
+@dataclass(frozen=True)
+class ParentSectionContext:
+    center_chunk_id: str
+    section_id: str
+    title: str
+    kind: str
+    section_path: str
+    page_start: int
+    page_end: int
+    content: str
+    character_count: int
+    estimated_tokens: int
+    paper_id: str = ""
+    content_version: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class ContextChunk:
     chunk_id: str
     chunk_index: int
@@ -54,6 +84,8 @@ class ContextChunk:
     source_block_ids: tuple[str, ...] = ()
     chunk_metadata: dict[str, Any] | None = None
     truncated: bool = False
+    paper_id: str = ""
+    content_version: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)

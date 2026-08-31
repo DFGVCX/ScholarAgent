@@ -7,6 +7,8 @@ from app.retrieval.embedding import EmbeddingUnavailable
 from app.retrieval.models import (
     ContextChunk,
     ContextWindowRequest,
+    ParentContextRequest,
+    ParentSectionContext,
     RetrievalCandidate,
     RetrievalRequest,
 )
@@ -60,6 +62,34 @@ class _BrokenEmbedding:
 
 
 class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_parent_context_returns_complete_section(self) -> None:
+        parent = ParentSectionContext(
+            center_chunk_id="center",
+            section_id="method",
+            title="2 Method",
+            kind="method",
+            section_path="2 Method > 2.1 Setup",
+            page_start=2,
+            page_end=4,
+            content="full parent section" * 50,
+            character_count=950,
+            estimated_tokens=238,
+            paper_id="paper-1",
+            content_version=4,
+        )
+
+        class _ParentRepository(_Repository):
+            async def parent_context(self, request):
+                return parent
+
+        result = await RetrievalService(_ParentRepository(), _Embedding()).parent_context(
+            ParentContextRequest("tenant", "user", "center")
+        )
+
+        self.assertEqual(result.content, parent.content)
+        self.assertEqual(result.to_dict()["center_chunk_id"], "center")
+        self.assertEqual(result.to_dict()["paper_id"], "paper-1")
+
     def test_context_window_keeps_whole_chunks_within_budget(self) -> None:
         chunks = [
             ContextChunk("before-2", 0, "older", 3, "method"),

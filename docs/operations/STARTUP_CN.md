@@ -227,9 +227,12 @@ GET http://127.0.0.1:8000/knowledge/rag/search?query=citation&limit=5
 
 ```text
 GET http://127.0.0.1:8000/knowledge/rag/chunks/{chunk_id}/context?before=2&after=2&token_budget=2048
+GET http://127.0.0.1:8000/knowledge/rag/chunks/{chunk_id}/parent
 ```
 
 当中心 Chunk 自身超过预算时，响应仍保留中心完整原文，并返回 `budget_exceeded=true`；`truncated=true` 表示部分请求的相邻 Chunk 因预算未被选入。
+
+`parent` 接口用于父子检索：嵌套小节命中时优先返回父章节，否则返回当前章节。它返回完整章节原文与章节/页码 provenance，不会自动附加到每次 Top-K 检索结果。
 
 调用时需要携带：
 
