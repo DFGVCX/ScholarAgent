@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -38,6 +39,11 @@ _DROP_LABELS = {
     "reference",
     "form",
 }
+
+
+def _configured_artifacts_path() -> Path | None:
+    value = os.getenv("DOCLING_ARTIFACTS_PATH", "").strip()
+    return Path(value) if value else None
 
 
 def _label(value: Any) -> str:
@@ -96,7 +102,12 @@ def _build_converter() -> Any:
     except ImportError as exc:  # pragma: no cover - exercised by fallback contract
         raise RuntimeError("Docling is not installed") from exc
 
-    options = PdfPipelineOptions()
+    artifacts_path = _configured_artifacts_path()
+    options = (
+        PdfPipelineOptions(artifacts_path=artifacts_path)
+        if artifacts_path
+        else PdfPipelineOptions()
+    )
     options.do_ocr = False
     if hasattr(options, "do_table_structure"):
         options.do_table_structure = True

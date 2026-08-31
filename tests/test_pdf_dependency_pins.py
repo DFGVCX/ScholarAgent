@@ -23,7 +23,29 @@ class PdfDependencyPinsTest(unittest.TestCase):
         for service_name in ("backend", "worker"):
             service = compose["services"][service_name]
             self.assertIn("HF_HOME=/app/storage/models/huggingface", service["environment"])
+            self.assertIn("DOCLING_ARTIFACTS_PATH=/app/storage/models/docling", service["environment"])
             self.assertIn("scholar_storage:/app/storage", service["volumes"])
+
+    def test_docling_models_can_be_prefetched_into_the_shared_volume(self) -> None:
+        compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+
+        service = compose["services"]["docling_models"]
+        self.assertEqual(service["profiles"], ["setup"])
+        self.assertEqual(service["build"]["dockerfile"], "deploy/Dockerfile.backend")
+        self.assertIn("scholar_storage:/app/storage", service["volumes"])
+        self.assertIn("DOCLING_ARTIFACTS_PATH=/app/storage/models/docling", service["environment"])
+        self.assertEqual(
+            service["command"],
+            [
+                "docling-tools",
+                "models",
+                "download",
+                "--output-dir=/app/storage/models/docling",
+                "layout",
+                "tableformer",
+                "code_formula",
+            ],
+        )
 
 
 if __name__ == "__main__":

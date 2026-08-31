@@ -37,6 +37,7 @@ services:
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
       - SCHOLAR_UPLOAD_DIR=/app/storage/uploads
       - HF_HOME=/app/storage/models/huggingface
+      - DOCLING_ARTIFACTS_PATH=/app/storage/models/docling
     volumes:
       - scholar_storage:/app/storage
     networks:
@@ -103,6 +104,7 @@ services:
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
       - SCHOLAR_UPLOAD_DIR=/app/storage/uploads
       - HF_HOME=/app/storage/models/huggingface
+      - DOCLING_ARTIFACTS_PATH=/app/storage/models/docling
       - SCHOLAR_MCP_URL=http://mcp_server:8001/mcp/
       - SCHOLAR_MCP_TOKEN=${SCHOLAR_MCP_TOKEN:-}
     volumes:
@@ -118,6 +120,25 @@ services:
         condition: service_healthy
       mcp_server:
         condition: service_healthy
+
+  docling_models:
+    profiles: ["setup"]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    command:
+      - docling-tools
+      - models
+      - download
+      - --output-dir=/app/storage/models/docling
+      - layout
+      - tableformer
+      - code_formula
+    environment:
+      - HF_HOME=/app/storage/models/huggingface
+      - DOCLING_ARTIFACTS_PATH=/app/storage/models/docling
+    volumes:
+      - scholar_storage:/app/storage
 
   mcp_server:
     restart: unless-stopped

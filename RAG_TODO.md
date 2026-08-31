@@ -161,6 +161,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 表格、公式、图片、算法及版面来源信息统一转换为稳定块模型。
 - [x] Docling 固定为 `2.123.0`，模型缓存挂载到 Docker 持久化卷。
 - [x] Docker 依赖固定为 CPU 版 PyTorch，避免 Docling 构建错误下载整套 CUDA 依赖。
+- [x] backend/worker 显式使用共享 `DOCLING_ARTIFACTS_PATH`，并提供 `docling_models` 一次性预取服务下载 layout、TableFormer 和 code/formula 模型（不包含 OCR）。
 - [x] 浏览器 Worker 与 MCP 镜像不安装 Docling 重依赖，避免拖慢 Playwright 构建。
 - [x] 使用真实 4 页联邦学习论文验证缺模型时的回退链路，最终成功生成 25 个 v4 Chunk。
 - [x] 使用真实 13 页 IEEE 联邦学习论文完成 v4 切片回退验收：实际解析器为 `multimodal_aware_v3`，切片器为 `scholar_hierarchical_v4`，生成 77 个 Chunk。

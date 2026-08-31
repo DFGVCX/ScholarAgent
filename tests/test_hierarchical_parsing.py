@@ -2,11 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 import importlib.util
+import os
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import app.papers.parsing as parsing
+
+
+class DoclingConfigurationTest(unittest.TestCase):
+    def test_configured_artifacts_path_reads_environment(self) -> None:
+        from app.papers.docling_adapter import _configured_artifacts_path
+
+        with patch.dict(os.environ, {"DOCLING_ARTIFACTS_PATH": "/models/docling"}):
+            self.assertEqual(_configured_artifacts_path(), Path("/models/docling"))
+
+        with patch.dict(os.environ, {"DOCLING_ARTIFACTS_PATH": "   "}):
+            self.assertIsNone(_configured_artifacts_path())
 
 
 class _DoclingItem:

@@ -48,11 +48,12 @@ ScholarAgent/
 推荐直接使用 Docker Compose：
 
 ```powershell
+docker compose --profile setup run --rm --build docling_models
 docker compose up --build -d
 docker compose ps
 ```
 
-打开 `http://127.0.0.1:3000/`。首次显式选择 `scholar_hierarchical_v4` 时，Docling 会下载本地版面模型；缓存保存在 `scholar_storage` 卷中。模型暂不可用时会自动回退到 v3，不会丢失论文。数据库升级会由 `migrate` 服务自动执行到 Alembic `20260828_0005`。
+第一条命令会把 v4 所需的 layout、TableFormer 和 code/formula 模型预取到 `scholar_storage` 卷；成功执行一次后不用重复下载。打开 `http://127.0.0.1:3000/`，在运行配置中显式选择 `scholar_hierarchical_v4`。模型暂不可用时会自动回退到 v3，不会丢失论文；解析结果会记录 requested/actual parser，便于确认是否真的走了 Docling。数据库升级会由 `migrate` 服务自动执行到 Alembic `20260828_0005`。
 
 以下是不用 Compose、逐个启动服务的开发方式：
 

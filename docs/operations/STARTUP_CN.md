@@ -260,6 +260,16 @@ $env:SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS="8"
 
 ### 8.1 启动完整网站
 
+如果要使用 `scholar_hierarchical_v4`，先执行一次 Docling 模型准备命令：
+
+```powershell
+docker compose --profile setup run --rm --build docling_models
+```
+
+它只下载当前文本型论文流程需要的 layout、TableFormer 和 code/formula 模型，不下载 OCR 模型。模型保存在 `scholar_storage` 卷的 `/app/storage/models/docling`，backend 和 worker 会显式从这个目录加载，后续重启不需要重复下载。
+
+模型准备完成后启动网站：
+
 ```powershell
 docker compose up -d --build
 ```
@@ -280,7 +290,7 @@ docker compose ps
 docker compose logs -f backend frontend worker
 ```
 
-Compose 会先运行 migration，再启动后端、worker、MCP、browser worker 和前端。网页运行配置会被服务动态读取；修改 `.env` 后则需要执行 `docker compose up -d --force-recreate`。
+Compose 会先运行 migration，再启动后端、worker、MCP、browser worker 和前端。`docling_models` 属于 `setup` profile，不会在普通启动时重复执行。网页运行配置会被服务动态读取；修改 `.env` 后则需要执行 `docker compose up -d --force-recreate`。
 
 ## 9. 常用验证命令
 
