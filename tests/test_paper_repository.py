@@ -199,6 +199,16 @@ class _StatsSession(_Session):
                     "ready_wrong_model": 6,
                     "chunk_table_bytes": 1024,
                     "chunk_index_bytes": 512,
+                    "embedding_call_count": 12,
+                    "embedding_success_count": 9,
+                    "embedding_failed_count": 3,
+                    "embedding_request_count": 15,
+                    "embedding_successful_request_count": 11,
+                    "embedding_failed_request_count": 4,
+                    "embedding_cancelled_request_count": 1,
+                    "embedding_reported_tokens": 12345,
+                    "embedding_usage_reported_requests": 11,
+                    "embedding_successful_usage_reported_requests": 9,
                 }
             ]
         )
@@ -248,6 +258,8 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["ready_missing_vectors"], 5)
         self.assertEqual(stats["ready_wrong_model"], 6)
         self.assertEqual(stats["chunk_index_bytes"], 512)
+        self.assertEqual(stats["embedding_call_count"], 12)
+        self.assertEqual(stats["embedding_reported_tokens"], 12345)
         sql, params = session.statements[0]
         self.assertIn("COUNT(DISTINCT p.paper_uuid)", sql)
         self.assertIn("pg_total_relation_size", sql)
@@ -256,7 +268,36 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("c.content_version<>p.current_content_version", sql)
         self.assertIn("c.embedding IS NULL", sql)
         self.assertIn("c.embedding_model IS DISTINCT FROM :active_model", sql)
+        self.assertIn("embedding_usage_events", sql)
         self.assertEqual(params["active_model"], "qwen-active")
+
+    async def test_embedding_usage_event_is_written_with_tenant_scope(self) -> None:
+        session = _Session()
+
+        await PaperRepository(session).record_embedding_usage(
+            "tenant-a",
+            "user-a",
+            operation="retrieval",
+            model="qwen3.7-text-embedding",
+            status="succeeded",
+            input_count=1,
+            request_count=2,
+            successful_request_count=1,
+            failed_request_count=1,
+            cancelled_request_count=0,
+            reported_tokens=8,
+            usage_reported_requests=1,
+            successful_usage_reported_requests=1,
+            duration_ms=25,
+            error_type=None,
+        )
+
+        sql, params = session.statements[-1]
+        self.assertIn("INSERT INTO embedding_usage_events", sql)
+        self.assertEqual(params["tenant_id"], "tenant-a")
+        self.assertEqual(params["user_id"], "user-a")
+        self.assertEqual(params["operation"], "retrieval")
+        self.assertNotIn("error_message", params)
 
     async def test_get_structure_exposes_current_chunk_strategy(self) -> None:
         structure = await PaperRepository(_StructureSession()).get_structure(

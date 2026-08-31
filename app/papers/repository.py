@@ -926,6 +926,90 @@ class PaperRepository:
             },
         )
 
+    async def record_embedding_usage(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        operation: str,
+        model: str,
+        status: str,
+        input_count: int,
+        request_count: int,
+        successful_request_count: int,
+        failed_request_count: int,
+        cancelled_request_count: int,
+        reported_tokens: int,
+        usage_reported_requests: int,
+        successful_usage_reported_requests: int,
+        duration_ms: int,
+        error_type: str | None,
+    ) -> None:
+        if operation not in {"probe", "ingestion", "reindex", "retrieval", "evaluation"}:
+            raise ValueError("unsupported embedding usage operation")
+        if status not in {"succeeded", "failed", "cancelled"}:
+            raise ValueError("unsupported embedding usage status")
+        counters = {
+            "input_count": int(input_count),
+            "request_count": int(request_count),
+            "successful_request_count": int(successful_request_count),
+            "failed_request_count": int(failed_request_count),
+            "cancelled_request_count": int(cancelled_request_count),
+            "reported_tokens": int(reported_tokens),
+            "usage_reported_requests": int(usage_reported_requests),
+            "successful_usage_reported_requests": int(
+                successful_usage_reported_requests
+            ),
+            "duration_ms": int(duration_ms),
+        }
+        if any(value < 0 for value in counters.values()):
+            raise ValueError("embedding usage counters must be non-negative")
+        if (
+            counters["successful_request_count"] + counters["failed_request_count"]
+            != counters["request_count"]
+        ):
+            raise ValueError("embedding request outcomes must equal request_count")
+        if counters["cancelled_request_count"] > counters["failed_request_count"]:
+            raise ValueError("cancelled requests must be a subset of failed requests")
+        if counters["usage_reported_requests"] > counters["request_count"]:
+            raise ValueError("reported usage requests cannot exceed request_count")
+        if (
+            counters["successful_usage_reported_requests"]
+            > counters["successful_request_count"]
+        ):
+            raise ValueError("successful usage reports cannot exceed successful requests")
+        if (
+            counters["successful_usage_reported_requests"]
+            > counters["usage_reported_requests"]
+        ):
+            raise ValueError("successful usage reports must be included in all usage reports")
+        await self.session.execute(
+            text(
+                """INSERT INTO embedding_usage_events (
+                    tenant_id, user_id, operation, provider, model, status,
+                    input_count, request_count, successful_request_count,
+                    failed_request_count, cancelled_request_count,
+                    reported_tokens, usage_reported_requests,
+                    successful_usage_reported_requests, duration_ms, error_type
+                ) VALUES (
+                    :tenant_id, :user_id, :operation, 'qwen', :model, :status,
+                    :input_count, :request_count, :successful_request_count,
+                    :failed_request_count, :cancelled_request_count,
+                    :reported_tokens, :usage_reported_requests,
+                    :successful_usage_reported_requests, :duration_ms, :error_type
+                )"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "operation": operation,
+                "model": str(model).strip() or "unknown",
+                "status": status,
+                **counters,
+                "error_type": str(error_type)[:120] if error_type else None,
+            },
+        )
+
     async def stats(
         self,
         tenant_id: str,
@@ -954,6 +1038,28 @@ class PaperRepository:
                     (SELECT COUNT(*) FROM paper_ingestion_jobs j
                         WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
                             AND j.status IN ('pending','retry','running')) AS pending_jobs,
+                    (SELECT COUNT(*) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_call_count,
+                    (SELECT COUNT(*) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id
+                            AND e.status='succeeded') AS embedding_success_count,
+                    (SELECT COUNT(*) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id
+                            AND e.status IN ('failed','cancelled')) AS embedding_failed_count,
+                    (SELECT COALESCE(SUM(e.request_count), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_request_count,
+                    (SELECT COALESCE(SUM(e.successful_request_count), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_successful_request_count,
+                    (SELECT COALESCE(SUM(e.failed_request_count), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_failed_request_count,
+                    (SELECT COALESCE(SUM(e.cancelled_request_count), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_cancelled_request_count,
+                    (SELECT COALESCE(SUM(e.reported_tokens), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_reported_tokens,
+                    (SELECT COALESCE(SUM(e.usage_reported_requests), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_usage_reported_requests,
+                    (SELECT COALESCE(SUM(e.successful_usage_reported_requests), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_successful_usage_reported_requests,
                     COUNT(DISTINCT c.chunk_uuid) FILTER (
                         WHERE p.deleted_at IS NULL AND c.embedding_status='ready'
                             AND c.content_version<>p.current_content_version
@@ -993,6 +1099,16 @@ class PaperRepository:
             "ready_wrong_model",
             "chunk_table_bytes",
             "chunk_index_bytes",
+            "embedding_call_count",
+            "embedding_success_count",
+            "embedding_failed_count",
+            "embedding_request_count",
+            "embedding_successful_request_count",
+            "embedding_failed_request_count",
+            "embedding_cancelled_request_count",
+            "embedding_reported_tokens",
+            "embedding_usage_reported_requests",
+            "embedding_successful_usage_reported_requests",
         )
         return {key: int(row.get(key) or 0) for key in keys}
 

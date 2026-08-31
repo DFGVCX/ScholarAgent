@@ -32,6 +32,7 @@ from app.papers.parsing import (
 )
 from app.papers.repository import PaperRepository
 from app.retrieval.embedding import EmbeddingUnavailable, QwenEmbeddingClient
+from app.retrieval.usage import persist_embedding_usage
 
 
 @dataclass(frozen=True)
@@ -225,33 +226,38 @@ class PaperIngestionService:
                 # not roll back an already committed paper or block embedding.
                 pass
 
+        embedding_client = self._embedding()
         try:
-            embedding_client = self._embedding()
-            vectors = await embedding_client.embed(
-                [chunk.embedding_text(prepared.title) for chunk in chunks]
+            try:
+                vectors = await embedding_client.embed(
+                    [chunk.embedding_text(prepared.title) for chunk in chunks]
+                )
+                async with self.transaction_factory(tenant_id, user_id) as session:
+                    await self.repository_factory(session).set_embeddings(
+                        tenant_id,
+                        user_id,
+                        record.paper_uuid,
+                        content_version.content_uuid,
+                        vectors,
+                        model=embedding_client.model,
+                    )
+                embedding_status = "ready"
+                warning = None
+            except EmbeddingUnavailable as exc:
+                warning = str(exc)
+                async with self.transaction_factory(tenant_id, user_id) as session:
+                    await self.repository_factory(session).mark_embedding_failed(
+                        tenant_id,
+                        user_id,
+                        record.paper_uuid,
+                        content_version.content_uuid,
+                        warning,
+                    )
+                embedding_status = "failed"
+        finally:
+            await persist_embedding_usage(
+                tenant_id, user_id, embedding_client, operation="ingestion"
             )
-            async with self.transaction_factory(tenant_id, user_id) as session:
-                await self.repository_factory(session).set_embeddings(
-                    tenant_id,
-                    user_id,
-                    record.paper_uuid,
-                    content_version.content_uuid,
-                    vectors,
-                    model=embedding_client.model,
-                )
-            embedding_status = "ready"
-            warning = None
-        except EmbeddingUnavailable as exc:
-            warning = str(exc)
-            async with self.transaction_factory(tenant_id, user_id) as session:
-                await self.repository_factory(session).mark_embedding_failed(
-                    tenant_id,
-                    user_id,
-                    record.paper_uuid,
-                    content_version.content_uuid,
-                    warning,
-                )
-            embedding_status = "failed"
 
         async with self.transaction_factory(tenant_id, user_id) as session:
             refreshed = await self.repository_factory(session).get(tenant_id, user_id, paper.paper_id)

@@ -28,6 +28,7 @@ RAG_TEST_TARGETS: tuple[str, ...] = (
     "tests.test_knowledge_metadata",
     "tests.test_paper_repository",
     "tests.test_qwen_embedding",
+    "tests.test_embedding_usage",
     "tests.test_embedding_lifecycle",
     "tests.test_reembedding_service",
     "tests.test_retrieval_service",

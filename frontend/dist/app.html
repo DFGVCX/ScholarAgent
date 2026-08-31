@@ -7566,6 +7566,10 @@
                                         <input id="cfgRagEmbeddingDimensions" type="number" value="1024" data-config-key="SCHOLAR_RAG_EMBEDDING_DIMENSIONS" disabled>
                                     </div>
                                     <div>
+                                        <label for="cfgRagEmbeddingCost">Embedding 单价（元 / 百万 Token）</label>
+                                        <input id="cfgRagEmbeddingCost" type="number" min="0" step="0.0001" data-config-key="SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS" placeholder="0 表示未配置">
+                                    </div>
+                                    <div>
                                         <label for="cfgExternalTimeout">外部源超时</label>
                                         <input id="cfgExternalTimeout" type="number" min="1" step="0.5" data-config-key="SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS" placeholder="8">
                                     </div>
@@ -7611,6 +7615,12 @@
                                     <div><b>当前模型</b><span id="embeddingActiveModel">等待读取</span></div>
                                     <div><b>向量状态</b><span id="embeddingStatusCounts">ready 0 / stale 0 / failed 0 / pending 0</span></div>
                                     <div><b>重建任务</b><span id="embeddingReindexStatus">无需重建</span></div>
+                                </div>
+                                <div class="provider-matrix config-overview-cards">
+                                    <div><b>调用次数</b><span id="embeddingUsageCalls">等待统计</span></div>
+                                    <div><b>厂商回传 Token</b><span id="embeddingUsageTokens">等待统计</span></div>
+                                    <div><b>失败率</b><span id="embeddingUsageFailureRate">等待统计</span></div>
+                                    <div><b>估算费用</b><span id="embeddingUsageCost">未配置单价</span></div>
                                 </div>
                                 <div class="ops-console">
                                     <div class="ops-console-head">
@@ -8446,6 +8456,7 @@
                 $('embeddingProbeResult').textContent = `测试失败：${error.message}`;
                 toast(error.message, 'bad');
             } finally {
+                await loadRagStats();
                 $('embeddingProbeBtn').disabled = false;
             }
         }
@@ -8792,6 +8803,7 @@
             }
             if (route === 'profile') {
                 renderDashboard();
+                loadRagStats();
                 loadRuntimeConfig();
                 renderSettingsHealth();
                 loadInstitutionAccess();
@@ -10104,6 +10116,23 @@
                 }
                 if ($('ragChunkSummary')) {
                     $('ragChunkSummary').textContent = `${stats.chunk_size || 900} 字符 / overlap ${stats.chunk_overlap || 120} / Top K ${stats.top_k || 8}`;
+                }
+                const usage = stats.embedding_usage || {};
+                if ($('embeddingUsageCalls')) {
+                    $('embeddingUsageCalls').textContent = `${usage.call_count || 0} 次逻辑调用 / ${usage.provider_request_count || 0} 次 HTTP 请求`;
+                }
+                if ($('embeddingUsageTokens')) {
+                    const reported = Number(usage.reported_tokens || 0).toLocaleString('zh-CN');
+                    const missing = Number(usage.unreported_successful_requests || 0);
+                    $('embeddingUsageTokens').textContent = `${reported} Token${missing ? ` / ${missing} 次成功请求未回传 usage` : ''}`;
+                }
+                if ($('embeddingUsageFailureRate')) {
+                    $('embeddingUsageFailureRate').textContent = `${(Number(usage.failure_rate || 0) * 100).toFixed(1)}% 逻辑调用失败 / ${usage.failed_calls || 0} 次`;
+                }
+                if ($('embeddingUsageCost')) {
+                    $('embeddingUsageCost').textContent = usage.pricing_configured
+                        ? `¥${Number(usage.estimated_cost_cny || 0).toFixed(6)}（¥${usage.cost_cny_per_million_tokens} / 百万 Token）`
+                        : '未配置单价';
                 }
                 renderDashboard();
             } catch (error) {

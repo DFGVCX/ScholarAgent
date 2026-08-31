@@ -26,7 +26,7 @@ class AlembicRevisionGraphTest(unittest.TestCase):
 
         parents = {parent for parent in revisions.values() if parent is not None}
         heads = set(revisions) - parents
-        self.assertEqual(heads, {"20260828_0006"})
+        self.assertEqual(heads, {"20260901_0007"})
 
     def test_hierarchical_chunk_constraint_accepts_source_code(self) -> None:
         migration = Path("alembic/versions/20260828_0006_code_chunks.py").read_text(
@@ -39,6 +39,21 @@ class AlembicRevisionGraphTest(unittest.TestCase):
             downgrade.index("UPDATE paper_chunks SET chunk_type='prose'"),
             downgrade.index("CHECK (chunk_type IN ('prose','equation','table','figure','algorithm'))"),
         )
+
+    def test_embedding_usage_events_are_tenant_scoped_and_indexed(self) -> None:
+        migration = Path("alembic/versions/20260901_0007_embedding_usage.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("CREATE TABLE embedding_usage_events", migration)
+        self.assertIn("tenant_id TEXT NOT NULL", migration)
+        self.assertIn("user_id TEXT NOT NULL", migration)
+        self.assertIn("ENABLE ROW LEVEL SECURITY", migration)
+        self.assertIn("embedding_usage_events_tenant_user_policy", migration)
+        self.assertIn("idx_embedding_usage_scope_created", migration)
+        self.assertIn("successful_request_count + failed_request_count = request_count", migration)
+        self.assertIn("cancelled_request_count <= failed_request_count", migration)
+        self.assertIn("successful_usage_reported_requests <= successful_request_count", migration)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ class _Repository:
         self.saved_chunks = []
         self.replace_kwargs = {}
         self.parsing_failure = None
+        self.telemetry_after_primary = None
 
     async def save(self, *args):
         self.saved_paper = args[-1]
@@ -109,6 +110,12 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
             paper_id="paper-1", source="manual", title="Paper",
             full_text="A paragraph with enough text to index for retrieval.",
         )
+        async def observe_usage(*_, **__):
+            repository.telemetry_after_primary = bool(
+                repository.vectors is not None or repository.failed is not None
+            )
+            return True
+
         with patch(
             "app.papers.ingestion.get_settings",
             return_value=SimpleNamespace(
@@ -117,6 +124,9 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
                 rag_chunk_strategy="structure_aware_v1",
                 pdf_parse_strategy="structure_aware_v1",
             ),
+        ), patch(
+            "app.papers.ingestion.persist_embedding_usage",
+            side_effect=observe_usage,
         ):
             result = await service.ingest("t", "u", paper)
         return result, repository
@@ -126,12 +136,14 @@ class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.embedding_status, "ready")
         self.assertEqual(len(repository.vectors), 1)
         self.assertEqual(repository.embedding_model, "Qwen3-Embedding-4B")
+        self.assertTrue(repository.telemetry_after_primary)
 
     async def test_embedding_failure_preserves_lexical_content(self) -> None:
         result, repository = await self._run(_BrokenEmbedding())
         self.assertEqual(result.embedding_status, "failed")
         self.assertIn("offline", repository.failed)
         self.assertEqual(result.chunk_count, 1)
+        self.assertTrue(repository.telemetry_after_primary)
 
     async def test_pdf_uses_structured_parser_and_contextualized_embedding(self) -> None:
         repository = _Repository(_record())

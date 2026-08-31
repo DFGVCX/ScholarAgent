@@ -23,6 +23,7 @@ from app.retrieval.models import (
 )
 from app.retrieval.repository import PostgresRetrievalRepository
 from app.retrieval.service import RetrievalService
+from app.retrieval.usage import persist_embedding_usage
 
 
 def _lexical_embedding(content: str, dimensions: int = 256) -> list[float]:
@@ -171,28 +172,34 @@ class RagService:
         chunk_types: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         settings = get_settings()
-        async with tenant_transaction(tenant_id, user_id) as session:
-            retrieval = RetrievalService(
-                PostgresRetrievalRepository(session),
-                QwenEmbeddingClient.from_settings(),
-                semantic_timeout_seconds=settings.rag_semantic_timeout_seconds,
-            )
-            response = await retrieval.search(
-                RetrievalRequest(
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    query=query,
-                    limit=limit,
-                    candidate_limit=settings.rag_candidate_limit,
-                    paper_ids=paper_ids,
-                    year_from=year_from,
-                    year_to=year_to,
-                    author=author,
-                    venue=venue,
-                    section_ids=section_ids,
-                    chunk_types=chunk_types,
-                    max_chunks_per_paper=settings.rag_max_chunks_per_paper,
+        embedding = QwenEmbeddingClient.from_settings()
+        try:
+            async with tenant_transaction(tenant_id, user_id) as session:
+                retrieval = RetrievalService(
+                    PostgresRetrievalRepository(session),
+                    embedding,
+                    semantic_timeout_seconds=settings.rag_semantic_timeout_seconds,
                 )
+                response = await retrieval.search(
+                    RetrievalRequest(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        query=query,
+                        limit=limit,
+                        candidate_limit=settings.rag_candidate_limit,
+                        paper_ids=paper_ids,
+                        year_from=year_from,
+                        year_to=year_to,
+                        author=author,
+                        venue=venue,
+                        section_ids=section_ids,
+                        chunk_types=chunk_types,
+                        max_chunks_per_paper=settings.rag_max_chunks_per_paper,
+                    )
+                )
+        finally:
+            await persist_embedding_usage(
+                tenant_id, user_id, embedding, operation="retrieval"
             )
         return response.to_legacy_dict()
 
@@ -253,6 +260,21 @@ class RagService:
                 "ready_wrong_model",
             )
         )
+        call_count = counts.get("embedding_call_count", 0)
+        failed_calls = counts.get("embedding_failed_count", 0)
+        request_count = counts.get("embedding_request_count", 0)
+        successful_requests = counts.get("embedding_successful_request_count", 0)
+        failed_requests = counts.get("embedding_failed_request_count", 0)
+        cancelled_requests = counts.get("embedding_cancelled_request_count", 0)
+        usage_reported_requests = counts.get("embedding_usage_reported_requests", 0)
+        successful_usage_reported_requests = counts.get(
+            "embedding_successful_usage_reported_requests", 0
+        )
+        reported_tokens = counts.get("embedding_reported_tokens", 0)
+        price = settings.rag_embedding_cost_cny_per_million_tokens
+        estimated_cost = (
+            round(reported_tokens / 1_000_000 * price, 6) if price > 0 else None
+        )
         return {
             "backend": "pgvector",
             **counts,
@@ -267,6 +289,29 @@ class RagService:
             "candidate_limit": settings.rag_candidate_limit,
             "max_chunks_per_paper": settings.rag_max_chunks_per_paper,
             "semantic_timeout_seconds": settings.rag_semantic_timeout_seconds,
+            "embedding_usage": {
+                "call_count": call_count,
+                "successful_calls": counts.get("embedding_success_count", 0),
+                "failed_calls": failed_calls,
+                "failure_rate": round(failed_calls / call_count, 6) if call_count else 0.0,
+                "provider_request_count": request_count,
+                "successful_provider_requests": successful_requests,
+                "failed_provider_requests": failed_requests,
+                "cancelled_provider_requests": cancelled_requests,
+                "provider_request_failure_rate": (
+                    round(failed_requests / request_count, 6) if request_count else 0.0
+                ),
+                "reported_tokens": reported_tokens,
+                "usage_reported_requests": usage_reported_requests,
+                "unreported_successful_requests": max(
+                    0,
+                    successful_requests - successful_usage_reported_requests,
+                ),
+                "pricing_configured": price > 0,
+                "cost_cny_per_million_tokens": price if price > 0 else None,
+                "estimated_cost_cny": estimated_cost,
+                "token_source": "provider_usage_only",
+            },
             "consistency_status": "ok" if consistency_errors == 0 else "degraded",
             "consistency_error_count": consistency_errors,
         }

@@ -12,6 +12,7 @@ from app.dependencies import AuthError, authenticate_api_key
 from app.papers.reembedding import embedding_reindex_service
 from app.papers.repository import PaperRepository
 from app.retrieval.embedding import QwenEmbeddingClient
+from app.retrieval.usage import persist_embedding_usage
 from app.services.auth_service import auth_service
 from app.services.model_configuration import resolve_embedding_candidate, resolve_model_candidate
 from app.services.runtime_config import public_runtime_config, update_runtime_config
@@ -131,14 +132,20 @@ def _embedding_change_requested(values: dict[str, Any], current: Any) -> bool:
     return bool(str(values.get("SCHOLAR_RAG_EMBEDDING_API_KEY", "") or "").strip())
 
 
-async def _probe_embedding_candidate(candidate: Any) -> int:
+async def _probe_embedding_candidate(
+    candidate: Any, *, tenant_id: str = "", user_id: str = ""
+) -> int:
+    client = QwenEmbeddingClient(**candidate.client_kwargs())
     try:
-        vectors = await QwenEmbeddingClient(**candidate.client_kwargs()).embed(
-            ["ScholarAgent embedding probe"]
-        )
+        vectors = await client.embed(["ScholarAgent embedding probe"])
     except Exception as exc:
         detail = str(exc).replace(candidate.api_key, "***")
         raise HTTPException(status_code=502, detail=detail[:1000]) from exc
+    finally:
+        if tenant_id and user_id:
+            await persist_embedding_usage(
+                tenant_id, user_id, client, operation="probe"
+            )
     return len(vectors[0])
 
 
@@ -202,7 +209,11 @@ async def update_runtime_settings(
             candidate = resolve_embedding_candidate(
                 _embedding_candidate_values(request.values), current
             )
-            await _probe_embedding_candidate(candidate)
+            await _probe_embedding_candidate(
+                candidate,
+                tenant_id=str(profile["tenant_id"]),
+                user_id=str(profile["user_id"]),
+            )
         update_runtime_config(request.values)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -270,7 +281,11 @@ async def probe_embedding(
         candidate = resolve_embedding_candidate(request.model_dump(), get_settings())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    dimensions = await _probe_embedding_candidate(candidate)
+    dimensions = await _probe_embedding_candidate(
+        candidate,
+        tenant_id=str(profile["tenant_id"]),
+        user_id=str(profile["user_id"]),
+    )
     return {
         "status": "ok",
         "profile": profile,

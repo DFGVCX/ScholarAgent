@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 import unittest
 
@@ -63,6 +64,11 @@ class _BatchSession:
 class _TimeoutResponse(_Response):
     async def json(self):
         raise TimeoutError("slow response")
+
+
+class _CancelledResponse(_Response):
+    async def json(self):
+        raise asyncio.CancelledError()
 
 
 class _SequenceSession:
@@ -212,6 +218,123 @@ class QwenEmbeddingTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([len(batch) for batch in session.requests], [20, 1])
         self.assertEqual(len(vectors), 21)
+
+    async def test_usage_aggregates_provider_tokens_across_batches(self) -> None:
+        vector = [1.0] + [0.0] * 1023
+        session = _SequenceSession(
+            [
+                _Response(
+                    {
+                        "data": [{"index": index, "embedding": vector} for index in range(20)],
+                        "usage": {"prompt_tokens": 120, "total_tokens": 120},
+                    }
+                ),
+                _Response(
+                    {
+                        "data": [{"index": 0, "embedding": vector}],
+                        "usage": {"prompt_tokens": 7, "total_tokens": 7},
+                    }
+                ),
+            ]
+        )
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            session_factory=lambda **_: session,
+        )
+
+        await client.embed([f"chunk-{index}" for index in range(21)])
+
+        self.assertIsNotNone(client.last_usage)
+        assert client.last_usage is not None
+        self.assertEqual(client.last_usage.status, "succeeded")
+        self.assertEqual(client.last_usage.input_count, 21)
+        self.assertEqual(client.last_usage.request_count, 2)
+        self.assertEqual(client.last_usage.successful_request_count, 2)
+        self.assertEqual(client.last_usage.failed_request_count, 0)
+        self.assertEqual(client.last_usage.cancelled_request_count, 0)
+        self.assertEqual(client.last_usage.reported_tokens, 127)
+        self.assertEqual(client.last_usage.usage_reported_requests, 2)
+        self.assertEqual(client.last_usage.successful_usage_reported_requests, 2)
+
+    async def test_usage_records_failed_logical_call_without_storing_provider_error(self) -> None:
+        session = _SequenceSession([_Response({"error": "secret detail"}, status=400)])
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            session_factory=lambda **_: session,
+        )
+
+        with self.assertRaises(EmbeddingUnavailable):
+            await client.embed(["query"])
+
+        self.assertIsNotNone(client.last_usage)
+        assert client.last_usage is not None
+        self.assertEqual(client.last_usage.status, "failed")
+        self.assertEqual(client.last_usage.request_count, 1)
+        self.assertEqual(client.last_usage.successful_request_count, 0)
+        self.assertEqual(client.last_usage.failed_request_count, 1)
+        self.assertEqual(client.last_usage.error_type, "EmbeddingUnavailable")
+        self.assertNotIn("secret detail", repr(client.last_usage))
+
+    async def test_cancelled_request_is_not_reported_as_success_without_usage(self) -> None:
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            session_factory=lambda **_: _SequenceSession([_CancelledResponse({})]),
+        )
+
+        with self.assertRaises(asyncio.CancelledError):
+            await client.embed(["query"])
+
+        assert client.last_usage is not None
+        self.assertEqual(client.last_usage.status, "cancelled")
+        self.assertEqual(client.last_usage.request_count, 1)
+        self.assertEqual(client.last_usage.successful_request_count, 0)
+        self.assertEqual(client.last_usage.failed_request_count, 1)
+        self.assertEqual(client.last_usage.cancelled_request_count, 1)
+
+    async def test_provider_usage_is_kept_for_retryable_and_invalid_responses(self) -> None:
+        vector = [1.0] + [0.0] * 1023
+        retry_client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            session_factory=lambda **_: _SequenceSession(
+                [
+                    _Response({"error": "busy", "usage": {"prompt_tokens": 5}}, status=503),
+                    _Response(
+                        {
+                            "data": [{"index": 0, "embedding": vector}],
+                            "usage": {"prompt_tokens": 7},
+                        }
+                    ),
+                ]
+            ),
+            sleep_func=lambda _: asyncio.sleep(0),
+        )
+
+        await retry_client.embed(["query"])
+
+        assert retry_client.last_usage is not None
+        self.assertEqual(retry_client.last_usage.reported_tokens, 12)
+        self.assertEqual(retry_client.last_usage.usage_reported_requests, 2)
+        self.assertEqual(retry_client.last_usage.successful_usage_reported_requests, 1)
+
+        invalid_client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            session_factory=lambda **_: _SequenceSession(
+                [
+                    _Response(
+                        {
+                            "data": [{"index": 0, "embedding": [1.0, 2.0]}],
+                            "usage": {"prompt_tokens": 11},
+                        }
+                    )
+                ]
+            ),
+        )
+        with self.assertRaises(EmbeddingResponseError):
+            await invalid_client.embed(["query"])
+        assert invalid_client.last_usage is not None
+        self.assertEqual(invalid_client.last_usage.reported_tokens, 11)
+        self.assertEqual(invalid_client.last_usage.usage_reported_requests, 1)
+        self.assertEqual(invalid_client.last_usage.successful_usage_reported_requests, 0)
 
     async def test_qwen_model_name_can_change_but_dimensions_remain_1024(self) -> None:
         session = _Session(

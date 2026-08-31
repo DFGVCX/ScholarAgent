@@ -52,6 +52,18 @@ class PostgreSQLConfigTest(unittest.TestCase):
 
         self.assertEqual(settings.rag_max_chunks_per_paper, 5)
 
+    def test_embedding_cost_is_opt_in_and_non_negative(self) -> None:
+        env = {
+            "SCHOLAR_DATABASE_URL": "postgresql+psycopg://u:p@db/scholar",
+            "SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS": "0.7",
+        }
+        with patch.dict(os.environ, env, clear=False), patch(
+            "app.config.read_runtime_config", return_value={}
+        ):
+            settings = get_settings()
+
+        self.assertEqual(settings.rag_embedding_cost_cny_per_million_tokens, 0.7)
+
     def test_previous_parser_strategies_remain_selectable(self) -> None:
         env = {
             "SCHOLAR_DATABASE_URL": "postgresql+psycopg://u:p@db/scholar",

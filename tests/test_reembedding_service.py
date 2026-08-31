@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import unittest
+from unittest.mock import patch
 
 from app.papers.reembedding import EmbeddingReindexService
 
@@ -92,7 +93,16 @@ class ReembeddingServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_process_next_embeds_current_chunks_with_active_model(self) -> None:
         embedding = _Embedding()
         self.service.embedding_factory = lambda: embedding
-        processed = await self.service.process_next("worker-test")
+
+        async def observe_usage(*_, **__):
+            self.assertEqual(self.repository.completed_job, "job-1")
+            return True
+
+        with patch(
+            "app.papers.reembedding.persist_embedding_usage",
+            side_effect=observe_usage,
+        ):
+            processed = await self.service.process_next("worker-test")
 
         self.assertEqual(processed.status, "completed")
         self.assertEqual(processed.chunk_count, 2)

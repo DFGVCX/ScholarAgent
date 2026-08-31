@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.db.session import tenant_transaction, worker_transaction
 from app.papers.repository import PaperRepository
 from app.retrieval.embedding import QwenEmbeddingClient
+from app.retrieval.usage import persist_embedding_usage
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ class EmbeddingReindexService:
         job_id = str(job["job_uuid"])
         tenant_id = str(job["tenant_id"])
         user_id = str(job["user_id"])
+        embedding = None
         try:
             async with self.tenant_transaction_factory(tenant_id, user_id) as session:
                 batch = await self.repository_factory(session).current_embedding_batch(
@@ -99,6 +101,11 @@ class EmbeddingReindexService:
                 else "failed"
             )
             return ReindexResult(job_id, status, error=error)
+        finally:
+            if embedding is not None:
+                await persist_embedding_usage(
+                    tenant_id, user_id, embedding, operation="reindex"
+                )
 
 
 embedding_reindex_service = EmbeddingReindexService()

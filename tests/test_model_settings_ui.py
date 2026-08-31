@@ -16,6 +16,19 @@ class ModelSettingsUiTests(unittest.TestCase):
         for legacy in ("MySQL URL", "JSON 文件", "Jina Embeddings", "Cohere Embeddings"):
             self.assertNotIn(legacy, self.html)
 
+    def test_embedding_usage_is_visible_and_never_claims_unreported_tokens(self) -> None:
+        for control in (
+            "embeddingUsageCalls",
+            "embeddingUsageTokens",
+            "embeddingUsageFailureRate",
+            "embeddingUsageCost",
+        ):
+            self.assertIn(control, self.html)
+        self.assertIn("厂商回传 Token", self.html)
+        self.assertIn("usage.pricing_configured", self.html)
+        self.assertIn("未配置单价", self.html)
+        self.assertIn("await loadRagStats();\n                $('embeddingProbeBtn').disabled", self.html)
+
     def test_candidate_values_are_sent_to_probe_routes(self) -> None:
         self.assertIn("/settings/model/probe", self.html)
         self.assertIn("/settings/embedding/probe", self.html)
