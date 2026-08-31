@@ -71,6 +71,32 @@ class _SlowEmbedding:
 
 
 class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
+    def test_retrieval_request_normalizes_structured_filters(self) -> None:
+        request = RetrievalRequest(
+            "tenant",
+            "user",
+            "query",
+            paper_ids=(" paper-1 ", "paper-1", "paper-2"),
+            year_from=2020,
+            year_to=2024,
+            author=" Alice ",
+            venue=" NeurIPS ",
+            section_ids=(" method ", "method", "results"),
+            chunk_types=(" equation ", "table"),
+        )
+
+        self.assertEqual(request.paper_ids, ("paper-1", "paper-2"))
+        self.assertEqual(request.author, "Alice")
+        self.assertEqual(request.venue, "NeurIPS")
+        self.assertEqual(request.section_ids, ("method", "results"))
+        self.assertEqual(request.chunk_types, ("equation", "table"))
+
+    def test_retrieval_request_rejects_invalid_filter_ranges_and_types(self) -> None:
+        with self.assertRaisesRegex(ValueError, "year_from"):
+            RetrievalRequest("tenant", "user", "query", year_from=2025, year_to=2024)
+        with self.assertRaisesRegex(ValueError, "chunk type"):
+            RetrievalRequest("tenant", "user", "query", chunk_types=("unknown",))
+
     async def test_parent_context_returns_complete_section(self) -> None:
         parent = ParentSectionContext(
             center_chunk_id="center",
@@ -277,6 +303,32 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(hit.can_cite for hit in response.local_hits))
         self.assertEqual(response.external_candidates, ())
         self.assertEqual(repository.embedding_model, "Qwen3-Embedding-4B")
+
+    async def test_response_echoes_normalized_filters_for_audit(self) -> None:
+        request = RetrievalRequest(
+            "t",
+            "u",
+            "retrieval",
+            paper_ids=(" paper-1 ",),
+            year_from=2020,
+            author=" Alice ",
+            chunk_types=("equation",),
+        )
+
+        response = await RetrievalService(_Repository(), _Embedding()).search(request)
+
+        self.assertEqual(
+            response.to_dict()["filters"],
+            {
+                "paper_ids": ["paper-1"],
+                "year_from": 2020,
+                "year_to": None,
+                "author": "Alice",
+                "venue": "",
+                "section_ids": [],
+                "chunk_types": ["equation"],
+            },
+        )
 
     async def test_hits_expose_chunk_index(self) -> None:
         response = await RetrievalService(_Repository(), _Embedding()).search(

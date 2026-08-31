@@ -13,6 +13,13 @@ class RetrievalRequest:
     limit: int = 8
     candidate_limit: int = 80
     include_external: bool = False
+    paper_ids: tuple[str, ...] = ()
+    year_from: int | None = None
+    year_to: int | None = None
+    author: str = ""
+    venue: str = ""
+    section_ids: tuple[str, ...] = ()
+    chunk_types: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.tenant_id or not self.user_id:
@@ -20,6 +27,42 @@ class RetrievalRequest:
         object.__setattr__(self, "query", self.query.strip())
         object.__setattr__(self, "limit", max(1, min(int(self.limit), 50)))
         object.__setattr__(self, "candidate_limit", max(self.limit, min(int(self.candidate_limit), 800)))
+        object.__setattr__(self, "paper_ids", self._terms(self.paper_ids, limit=100))
+        object.__setattr__(self, "section_ids", self._terms(self.section_ids, limit=50))
+        chunk_types = tuple(value.lower() for value in self._terms(self.chunk_types, limit=6))
+        allowed_types = {"prose", "equation", "table", "figure", "algorithm", "code"}
+        invalid_types = [value for value in chunk_types if value not in allowed_types]
+        if invalid_types:
+            raise ValueError(f"unsupported chunk type: {invalid_types[0]}")
+        object.__setattr__(self, "chunk_types", chunk_types)
+        object.__setattr__(self, "author", self.author.strip())
+        object.__setattr__(self, "venue", self.venue.strip())
+        if self.year_from is not None:
+            object.__setattr__(self, "year_from", int(self.year_from))
+        if self.year_to is not None:
+            object.__setattr__(self, "year_to", int(self.year_to))
+        if (
+            self.year_from is not None
+            and self.year_to is not None
+            and self.year_from > self.year_to
+        ):
+            raise ValueError("year_from cannot be greater than year_to")
+
+    @staticmethod
+    def _terms(values: tuple[str, ...], *, limit: int) -> tuple[str, ...]:
+        normalized = (str(value).strip() for value in values)
+        return tuple(dict.fromkeys(value for value in normalized if value))[:limit]
+
+    def filters_dict(self) -> dict[str, Any]:
+        return {
+            "paper_ids": list(self.paper_ids),
+            "year_from": self.year_from,
+            "year_to": self.year_to,
+            "author": self.author,
+            "venue": self.venue,
+            "section_ids": list(self.section_ids),
+            "chunk_types": list(self.chunk_types),
+        }
 
 
 @dataclass(frozen=True)
@@ -212,6 +255,7 @@ class RetrievalResponse:
     external_candidates: tuple[ExternalCandidate, ...] = ()
     warnings: tuple[str, ...] = ()
     backend: str = "postgresql+pgvector"
+    filters: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -221,6 +265,7 @@ class RetrievalResponse:
             "local_hits": [hit.to_dict() for hit in self.local_hits],
             "external_candidates": [item.to_dict() for item in self.external_candidates],
             "warnings": list(self.warnings),
+            "filters": dict(self.filters or {}),
         }
 
     def to_legacy_dict(self) -> dict[str, Any]:

@@ -37,6 +37,43 @@ class _Session:
 
 
 class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_lexical_and_vector_queries_share_structured_filters(self) -> None:
+        request = RetrievalRequest(
+            "tenant",
+            "user",
+            "query",
+            paper_ids=("paper-1",),
+            year_from=2020,
+            year_to=2024,
+            author="Alice",
+            venue="NeurIPS",
+            section_ids=("method",),
+            chunk_types=("equation", "table"),
+        )
+        session = _Session([_Result(), _Result(), _Result()])
+        repository = PostgresRetrievalRepository(session)
+
+        await repository.lexical_candidates(request)
+        await repository.vector_candidates(
+            request, [1.0] + [0.0] * 1023, "Qwen3-Embedding-4B"
+        )
+
+        lexical_sql, lexical_params = session.calls[0]
+        vector_sql, vector_params = session.calls[2]
+        for sql in (lexical_sql, vector_sql):
+            self.assertIn("p.paper_id = ANY", sql)
+            self.assertIn("EXTRACT(YEAR FROM p.published_at) >= :year_from", sql)
+            self.assertIn("p.authors::text ILIKE :author_pattern", sql)
+            self.assertIn("p.metadata->>'venue'", sql)
+            self.assertIn("c.section_id = ANY", sql)
+            self.assertIn("c.chunk_type = ANY", sql)
+        for params in (lexical_params, vector_params):
+            self.assertEqual(params["paper_ids"], ["paper-1"])
+            self.assertEqual(params["year_from"], 2020)
+            self.assertEqual(params["year_to"], 2024)
+            self.assertEqual(params["author_pattern"], "%Alice%")
+            self.assertEqual(params["venue_pattern"], "%NeurIPS%")
+
     async def test_parent_context_prefers_parent_section_in_current_version(self) -> None:
         session = _Session(
             [

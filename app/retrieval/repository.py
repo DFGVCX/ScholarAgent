@@ -46,6 +46,42 @@ def _lexical_aliases(query: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(aliases))
 
 
+def _structured_filters(request: RetrievalRequest) -> tuple[str, dict[str, Any]]:
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    if request.paper_ids:
+        clauses.append("p.paper_id = ANY(CAST(:paper_ids AS text[]))")
+        params["paper_ids"] = list(request.paper_ids)
+    if request.year_from is not None:
+        clauses.append("EXTRACT(YEAR FROM p.published_at) >= :year_from")
+        params["year_from"] = request.year_from
+    if request.year_to is not None:
+        clauses.append("EXTRACT(YEAR FROM p.published_at) <= :year_to")
+        params["year_to"] = request.year_to
+    if request.author:
+        clauses.append("p.authors::text ILIKE :author_pattern")
+        params["author_pattern"] = f"%{request.author}%"
+    if request.venue:
+        clauses.append(
+            "(p.metadata->>'venue' ILIKE :venue_pattern "
+            "OR p.metadata->>'publication_venue' ILIKE :venue_pattern "
+            "OR p.source ILIKE :venue_pattern)"
+        )
+        params["venue_pattern"] = f"%{request.venue}%"
+    if request.section_ids:
+        clauses.append(
+            "(c.section_id = ANY(CAST(:section_ids AS text[])) "
+            "OR c.section_path ILIKE ANY(CAST(:section_patterns AS text[])))"
+        )
+        params["section_ids"] = list(request.section_ids)
+        params["section_patterns"] = [f"%{value}%" for value in request.section_ids]
+    if request.chunk_types:
+        clauses.append("c.chunk_type = ANY(CAST(:chunk_types AS text[]))")
+        params["chunk_types"] = list(request.chunk_types)
+    sql = "".join(f"\n                    AND {clause}" for clause in clauses)
+    return sql, params
+
+
 class PostgresRetrievalRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -133,6 +169,7 @@ class PostgresRetrievalRepository:
 
     async def lexical_candidates(self, request: RetrievalRequest) -> list[RetrievalCandidate]:
         aliases = _lexical_aliases(request.query)
+        filter_sql, filter_params = _structured_filters(request)
         alias_score_sql = "".join(
             f" + CASE WHEN p.title ILIKE :alias_pattern_{index} THEN 1.5 "
             f"WHEN c.content ILIKE :alias_pattern_{index} THEN 1.0 "
@@ -155,6 +192,7 @@ class PostgresRetrievalRepository:
                 f"alias_pattern_{index}": f"%{alias}%"
                 for index, alias in enumerate(aliases)
             },
+            **filter_params,
         }
         result = await self.session.execute(
             text(
@@ -185,6 +223,7 @@ class PostgresRetrievalRepository:
                 WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
                     AND p.deleted_at IS NULL AND p.in_knowledge_base=true
                     AND c.content_version=p.current_content_version
+                    {filter_sql}
                     AND (:query='' OR c.search_vector @@ plainto_tsquery('simple', :query)
                          OR c.content ILIKE :pattern OR p.title ILIKE :pattern
                          OR p.paper_id ILIKE :pattern
@@ -203,11 +242,12 @@ class PostgresRetrievalRepository:
         embedding: Sequence[float],
         embedding_model: str,
     ) -> list[RetrievalCandidate]:
+        filter_sql, filter_params = _structured_filters(request)
         await self.session.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
         vector = "[" + ",".join(format(float(value), ".9g") for value in embedding) + "]"
         result = await self.session.execute(
             text(
-                """SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
+                f"""SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
                     c.chunk_index AS chunk_index, c.section_id, c.section_path,
                     c.page_start, c.page_end, c.chunk_type, c.parent_section_id,
                     c.source_block_ids, c.chunk_metadata, c.context_before, c.context_after,
@@ -233,6 +273,7 @@ class PostgresRetrievalRepository:
                     AND c.content_version=p.current_content_version
                     AND c.embedding_status='ready' AND c.embedding IS NOT NULL
                     AND c.embedding_model=:embedding_model
+                    {filter_sql}
                 ORDER BY c.embedding <=> CAST(:embedding AS vector)
                 LIMIT :candidate_limit"""
             ),
@@ -242,6 +283,7 @@ class PostgresRetrievalRepository:
                 "embedding": vector,
                 "embedding_model": embedding_model,
                 "candidate_limit": request.candidate_limit,
+                **filter_params,
             },
         )
         return [self._candidate(row) for row in result.mappings().all()]

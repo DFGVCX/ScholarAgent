@@ -22,6 +22,7 @@ from app.routes.knowledge import (
     save_file_annotations,
     save_file_text,
     save_knowledge,
+    search_rag,
     upload_knowledge_file,
     _resolve_paper_asset,
 )
@@ -29,6 +30,39 @@ from app.services.rag_service import rag_service
 
 
 class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_rag_search_passes_structured_filters_to_service(self):
+        expected = {"items": [], "count": 0}
+        with patch.object(
+            rag_service, "search", new=AsyncMock(return_value=expected)
+        ) as search:
+            response = await search_rag(
+                query="robust aggregation",
+                limit=5,
+                paper_id=["paper-1"],
+                year_from=2020,
+                year_to=2024,
+                author="Alice",
+                venue="NeurIPS",
+                section=["method"],
+                chunk_type=["equation"],
+                x_api_key="demo-key",
+            )
+
+        self.assertEqual(response, expected)
+        search.assert_awaited_once_with(
+            "tenant_demo",
+            "user_demo",
+            "robust aggregation",
+            5,
+            paper_ids=("paper-1",),
+            year_from=2020,
+            year_to=2024,
+            author="Alice",
+            venue="NeurIPS",
+            section_ids=("method",),
+            chunk_types=("equation",),
+        )
+
     async def test_parent_context_uses_authenticated_tenant_and_user(self):
         chunk_id = uuid4()
         expected = {

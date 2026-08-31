@@ -88,6 +88,7 @@ class RetrievalService:
             local_hits=tuple(hits),
             external_candidates=external,
             warnings=tuple(warnings),
+            filters=request.filters_dict(),
         )
 
     async def _semantic_candidates(

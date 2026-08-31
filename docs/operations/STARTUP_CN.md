@@ -226,6 +226,14 @@ GET http://127.0.0.1:8000/knowledge/rag/stats
 GET http://127.0.0.1:8000/knowledge/rag/search?query=citation&limit=5
 ```
 
+本地 lexical 与 pgvector 候选支持相同的结构化过滤参数；多值参数可重复传入：
+
+```text
+GET http://127.0.0.1:8000/knowledge/rag/search?query=robust+aggregation&year_from=2020&year_to=2024&author=Alice&venue=NeurIPS&section=method&chunk_type=equation&chunk_type=table
+```
+
+可用参数为 `paper_id`、`year_from`、`year_to`、`author`、`venue`、`section` 和 `chunk_type`。对象类型支持 `prose/equation/table/figure/algorithm/code`。响应中的 `filters` 是服务实际采用的规范化条件。
+
 检索结果中的 `previous_chunk_id` / `next_chunk_id` 可用于按需展开完整上下文。接口只返回当前用户知识库、当前论文内容版本中的 Chunk，并且只按完整 Chunk 控制 token 预算，不截断原文：
 
 ```text

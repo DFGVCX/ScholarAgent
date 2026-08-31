@@ -546,10 +546,32 @@ async def toggle_knowledge_base(
 async def search_rag(
     query: str = "",
     limit: int = Query(default=10, ge=1, le=50),
+    paper_id: list[str] | None = Query(default=None),
+    year_from: int | None = Query(default=None, ge=1000, le=3000),
+    year_to: int | None = Query(default=None, ge=1000, le=3000),
+    author: str = Query(default="", max_length=200),
+    venue: str = Query(default="", max_length=200),
+    section: list[str] | None = Query(default=None),
+    chunk_type: list[str] | None = Query(default=None),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
     user = _current_user(x_api_key)
-    return await rag_service.search(user.tenant_id, user.user_id, query, limit)
+    try:
+        return await rag_service.search(
+            user.tenant_id,
+            user.user_id,
+            query,
+            limit,
+            paper_ids=tuple(paper_id or ()),
+            year_from=year_from,
+            year_to=year_to,
+            author=author,
+            venue=venue,
+            section_ids=tuple(section or ()),
+            chunk_types=tuple(chunk_type or ()),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/rag/chunks/{chunk_id}/context")

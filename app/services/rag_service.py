@@ -156,7 +156,19 @@ class RagService:
             await PaperRepository(session).soft_delete(tenant_id, user_id, paper_id)
 
     async def search(
-        self, tenant_id: str, user_id: str, query: str, limit: int = 10
+        self,
+        tenant_id: str,
+        user_id: str,
+        query: str,
+        limit: int = 10,
+        *,
+        paper_ids: tuple[str, ...] = (),
+        year_from: int | None = None,
+        year_to: int | None = None,
+        author: str = "",
+        venue: str = "",
+        section_ids: tuple[str, ...] = (),
+        chunk_types: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         settings = get_settings()
         async with tenant_transaction(tenant_id, user_id) as session:
@@ -172,6 +184,13 @@ class RagService:
                     query=query,
                     limit=limit,
                     candidate_limit=settings.rag_candidate_limit,
+                    paper_ids=paper_ids,
+                    year_from=year_from,
+                    year_to=year_to,
+                    author=author,
+                    venue=venue,
+                    section_ids=section_ids,
+                    chunk_types=chunk_types,
                 )
             )
         return response.to_legacy_dict()
