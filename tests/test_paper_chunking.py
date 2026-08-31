@@ -85,6 +85,71 @@ class PaperChunkingTest(unittest.TestCase):
         self.assertIn(formula.context_before, formula.embedding_content)
         self.assertIn(formula.context_after, formula.embedding_content)
         self.assertEqual(formula.metadata["provenance"]["page_number"], 1)
+        self.assertTrue(
+            formula.embedding_text("Federated Learning Paper").startswith(
+                "Paper: Federated Learning Paper\nSection: 2 Method > Equation 1"
+            )
+        )
+        self.assertEqual(formula.metadata["embedding_context_policy"]["version"], "v1")
+
+    def test_v4_regular_prose_uses_section_without_repeating_paper_title(self) -> None:
+        text = " ".join(
+            [
+                "The method aggregates encrypted client updates while preserving local privacy."
+                for _ in range(12)
+            ]
+        )
+        body = ParsedBlock(1, "body", text, (0, 0, 500, 300), 0, metadata={"block_id": "method-body"})
+        parsed = ParsedPaper(
+            text,
+            (ParsedPage(1, text, "hash", len(text), "docling", "usable", (body,)),),
+            (_section("method", "2 Method", text, kind="method"),),
+            {},
+            {},
+            "ready",
+            1.0,
+        )
+
+        prose = next(chunk for chunk in chunking.chunk_hierarchical(parsed) if chunk.chunk_type == "prose")
+        embedding_text = prose.embedding_text("Federated Learning Paper")
+
+        self.assertTrue(embedding_text.startswith("Section: 2 Method\n\n"))
+        self.assertNotIn("Paper: Federated Learning Paper", embedding_text)
+        self.assertEqual(
+            prose.metadata["embedding_context_policy"],
+            {
+                "version": "v1",
+                "include_paper_title": False,
+                "include_section_path": True,
+                "context_mode": "source_only",
+            },
+        )
+
+    def test_v4_abstract_and_conclusion_keep_paper_title_as_topic_context(self) -> None:
+        for kind, title in (("abstract", "Abstract"), ("conclusion", "6 Conclusion")):
+            with self.subTest(kind=kind):
+                text = f"This {kind} summarizes the contribution and evidence."
+                body = ParsedBlock(1, "body", text, (0, 0, 500, 60), 0, metadata={"block_id": kind})
+                parsed = ParsedPaper(
+                    text,
+                    (ParsedPage(1, text, "hash", len(text), "docling", "usable", (body,)),),
+                    (_section(kind, title, text, kind=kind),),
+                    {},
+                    {},
+                    "ready",
+                    1.0,
+                )
+
+                prose = chunking.chunk_hierarchical(parsed)[0]
+
+                self.assertTrue(
+                    prose.embedding_text("Federated Learning Paper").startswith(
+                        f"Paper: Federated Learning Paper\nSection: {title}\n\n"
+                    )
+                )
+                self.assertTrue(
+                    prose.metadata["embedding_context_policy"]["include_paper_title"]
+                )
 
     def test_large_table_chunks_repeat_caption_and_header_by_complete_rows(self) -> None:
         self.assertTrue(hasattr(chunking, "chunk_hierarchical"))

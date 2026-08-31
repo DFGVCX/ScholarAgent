@@ -264,7 +264,7 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         for sql, _ in session.calls:
             self.assertIn("embedding_status IN ('stale','failed')", sql)
 
-    async def test_reembedding_batch_reconstructs_original_contextual_payload(self) -> None:
+    async def test_reembedding_batch_reuses_stored_context_policy(self) -> None:
         session = _Session(
             [
                 _Result(
@@ -276,6 +276,14 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
                             "embedding_content": "definition before\n\nraw formula",
                             "section_path": "2 Method > Equation 1",
                             "section_id": "method",
+                            "chunk_metadata": {
+                                "embedding_context_policy": {
+                                    "version": "v1",
+                                    "include_paper_title": False,
+                                    "include_section_path": True,
+                                    "context_mode": "source_only",
+                                }
+                            },
                             "title": "Test Paper",
                         }
                     ]
@@ -287,11 +295,47 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             batch["chunks"][0]["embedding_text"],
-            "Paper: Test Paper\nSection: 2 Method > Equation 1\n\ndefinition before\n\nraw formula",
+            "Section: 2 Method > Equation 1\n\ndefinition before\n\nraw formula",
         )
         sql, _ = session.calls[0]
         self.assertIn("c.embedding_content", sql)
+        self.assertIn("c.chunk_metadata", sql)
         self.assertIn("p.title", sql)
+
+    async def test_reembedding_batch_tolerates_non_object_context_metadata(self) -> None:
+        invalid_values = (
+            ["not-an-object"],
+            {"embedding_context_policy": "not-an-object"},
+        )
+        for chunk_metadata in invalid_values:
+            with self.subTest(chunk_metadata=chunk_metadata):
+                session = _Session(
+                    [
+                        _Result(
+                            [
+                                {
+                                    "content_uuid": "content-1",
+                                    "chunk_index": 0,
+                                    "content": "raw text",
+                                    "embedding_content": "",
+                                    "section_path": "2 Method",
+                                    "section_id": "method",
+                                    "chunk_metadata": chunk_metadata,
+                                    "title": "Test Paper",
+                                }
+                            ]
+                        )
+                    ]
+                )
+
+                batch = await PaperRepository(session).current_embedding_batch(
+                    "tenant", "user", "paper"
+                )
+
+                self.assertEqual(
+                    batch["chunks"][0]["embedding_text"],
+                    "Paper: Test Paper\nSection: 2 Method\n\nraw text",
+                )
 
 
 if __name__ == "__main__":

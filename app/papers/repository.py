@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.papers.assets import inventory_from_manifest
-from app.papers.chunking import ChunkDraft
+from app.papers.chunking import ChunkDraft, build_embedding_text
 from app.papers.models import ContentVersion, PaperInput, PaperRecord, normalize_arxiv_id, normalize_doi
 from app.papers.parsing import ParsedPaper
 
@@ -21,6 +21,20 @@ published_at, normalized_doi, normalized_arxiv_id, canonical_url,
 in_knowledge_base, ingestion_status, current_content_version, metadata,
 created_at, updated_at
 """
+
+
+def _json_value(value: Any, fallback: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return fallback
+    return value if value is not None else fallback
+
+
+def _json_mapping(value: Any) -> dict[str, Any]:
+    parsed = _json_value(value, {})
+    return dict(parsed) if isinstance(parsed, Mapping) else {}
 
 
 class PaperRepository:
@@ -126,14 +140,6 @@ class PaperRepository:
             {"tenant_id": tenant_id, "user_id": user_id, "content_uuid": content_uuid},
         )
 
-        def json_value(value: Any, fallback: Any) -> Any:
-            if isinstance(value, str):
-                try:
-                    return json.loads(value)
-                except json.JSONDecodeError:
-                    return fallback
-            return value if value is not None else fallback
-
         pages = []
         for page in page_result.mappings().all():
             pages.append(
@@ -142,7 +148,7 @@ class PaperRepository:
                     "text": str(page.get("text") or ""),
                     "quality_status": str(page.get("quality_status") or ""),
                     "extraction_method": str(page.get("extraction_method") or ""),
-                    "blocks": list(json_value(page.get("blocks"), [])),
+                    "blocks": list(_json_value(page.get("blocks"), [])),
                 }
             )
         sections = []
@@ -175,8 +181,8 @@ class PaperRepository:
                     "embedding_content": str(chunk.get("embedding_content") or ""),
                     "character_count": len(content),
                     "token_count": int(chunk.get("token_count") or 0),
-                    "source_block_ids": list(json_value(chunk.get("source_block_ids"), [])),
-                    "metadata": dict(json_value(chunk.get("chunk_metadata"), {})),
+                    "source_block_ids": list(_json_value(chunk.get("source_block_ids"), [])),
+                    "metadata": _json_mapping(chunk.get("chunk_metadata")),
                     "context_before": str(chunk.get("context_before") or ""),
                     "context_after": str(chunk.get("context_after") or ""),
                     "previous_chunk_id": (
@@ -193,7 +199,7 @@ class PaperRepository:
                     "embedding_model": str(chunk.get("embedding_model") or ""),
                 }
             )
-        manifest = dict(json_value(row.get("parse_manifest"), {}))
+        manifest = _json_mapping(row.get("parse_manifest"))
         assets = inventory_from_manifest(manifest)
         return {
             "paper_id": str(row["paper_id"]),
@@ -856,7 +862,8 @@ class PaperRepository:
         result = await self.session.execute(
             text(
                 """SELECT c.content_uuid, c.chunk_index, c.content,
-                    c.embedding_content, c.section_path, c.section_id, p.title
+                    c.embedding_content, c.section_path, c.section_id,
+                    c.chunk_metadata, p.title
                 FROM paper_chunks c
                 JOIN papers p ON p.paper_uuid=c.paper_uuid
                     AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
@@ -876,10 +883,13 @@ class PaperRepository:
                 {
                     "chunk_index": int(row["chunk_index"]),
                     "content": str(row["content"]),
-                    "embedding_text": (
-                        f"Paper: {row['title']}\n"
-                        f"Section: {row.get('section_path') or row.get('section_id') or 'Document'}\n\n"
-                        f"{row.get('embedding_content') or row['content']}"
+                    "embedding_text": build_embedding_text(
+                        paper_title=str(row.get("title") or ""),
+                        section_path=str(row.get("section_path") or "") or None,
+                        section_id=str(row.get("section_id") or "") or None,
+                        content=str(row["content"]),
+                        embedding_content=str(row.get("embedding_content") or ""),
+                        metadata=_json_mapping(row.get("chunk_metadata")),
                     ),
                 }
                 for row in rows

@@ -9,6 +9,32 @@ from typing import Any, Mapping
 from app.papers.parsing import ParsedPaper, ParsedSection
 
 
+def build_embedding_text(
+    *,
+    paper_title: str,
+    section_path: str | None,
+    section_id: str | None,
+    content: str,
+    embedding_content: str = "",
+    metadata: Mapping[str, Any] | None = None,
+) -> str:
+    """Render the canonical embedding payload for ingestion and re-indexing."""
+    section = section_path or section_id or "Document"
+    body = embedding_content or content
+    raw_policy = (metadata or {}).get("embedding_context_policy")
+    policy = dict(raw_policy) if isinstance(raw_policy, Mapping) else {}
+    # Chunks created before the policy was versioned keep their historical
+    # title + section behavior when they are re-indexed.
+    include_title = bool(policy.get("include_paper_title", True))
+    include_section = bool(policy.get("include_section_path", True))
+    prefixes = []
+    if include_title and paper_title.strip():
+        prefixes.append(f"Paper: {paper_title.strip()}")
+    if include_section:
+        prefixes.append(f"Section: {section}")
+    return "\n".join([*prefixes, "", body]).strip()
+
+
 @dataclass(frozen=True)
 class ChunkDraft:
     position: int
@@ -30,9 +56,14 @@ class ChunkDraft:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def embedding_text(self, paper_title: str) -> str:
-        section = self.section_path or self.section_id or "Document"
-        body = self.embedding_content or self.content
-        return f"Paper: {paper_title}\nSection: {section}\n\n{body}"
+        return build_embedding_text(
+            paper_title=paper_title,
+            section_path=self.section_path,
+            section_id=self.section_id,
+            content=self.content,
+            embedding_content=self.embedding_content,
+            metadata=self.metadata,
+        )
 
 
 def _draft(position: int, content: str) -> ChunkDraft:
@@ -98,6 +129,32 @@ _NON_RETRIEVAL_SECTION_KINDS = {
     "header",
     "footer",
 }
+
+
+def _embedding_context_policy(chunk_type: str, section_kind: str) -> dict[str, Any]:
+    normalized_type = str(chunk_type or "prose").lower()
+    normalized_section = str(section_kind or "").lower()
+    if normalized_type == "prose":
+        topic_section = normalized_section in {"abstract", "conclusion"}
+        return {
+            "version": "v1",
+            "include_paper_title": topic_section,
+            "include_section_path": True,
+            "context_mode": "topic_source" if topic_section else "source_only",
+        }
+    context_modes = {
+        "equation": "formula_explanation",
+        "table": "caption_rows_local_context",
+        "figure": "caption_reference_local_context",
+        "algorithm": "caption_steps_local_context",
+        "code": "code_scope_local_context",
+    }
+    return {
+        "version": "v1",
+        "include_paper_title": True,
+        "include_section_path": True,
+        "context_mode": context_modes.get(normalized_type, "typed_local_context"),
+    }
 
 
 @dataclass(frozen=True)
@@ -742,7 +799,12 @@ def _chunk_prose_section(
                     parent_section_id=section.parent_section_id,
                     source_block_ids=source_ids,
                     embedding_content=content,
-                    metadata={"provenance": provenance},
+                    metadata={
+                        "provenance": provenance,
+                        "embedding_context_policy": _embedding_context_policy(
+                            "prose", section.kind
+                        ),
+                    },
                 ),
             )
         )
@@ -841,6 +903,9 @@ def chunk_hierarchical(
                                 "provenance": provenance,
                                 "source_metadata": metadata,
                                 "part_index": piece_index,
+                                "embedding_context_policy": _embedding_context_policy(
+                                    block_type, section.kind
+                                ),
                             },
                         ),
                     )
