@@ -268,6 +268,14 @@ docker compose --profile setup run --rm --build docling_models
 
 它只下载当前文本型论文流程需要的 layout、TableFormer 和 code/formula 模型，不下载 OCR 模型。模型保存在 `scholar_storage` 卷的 `/app/storage/models/docling`，backend 和 worker 会显式从这个目录加载，后续重启不需要重复下载。
 
+命令结束时会输出 JSON。只有 `ready: true`、`runtime.cpu_only: true` 且 `missing` 为空，才表示模型准备完成。以后可以不下载、只复检：
+
+```powershell
+docker compose --profile setup run --rm docling_models `
+  python -m app.papers.docling_models check `
+  --output-dir /app/storage/models/docling
+```
+
 模型准备完成后启动网站：
 
 ```powershell
@@ -403,6 +411,25 @@ SCHOLAR_DATABASE_URL=postgresql+psycopg://用户:密码@主机:5432/数据库
 - `SCHOLAR_LLM_MODEL`
 - 网络代理或防火墙
 - 模型服务是否兼容 OpenAI Chat Completions 接口
+
+### 10.7 Docker Desktop 在 `dockerInference` 启动阶段崩溃
+
+如果 Docker Desktop 日志包含以下错误：
+
+```text
+initializing Inference manager ... remove ...\Docker\run\dockerInference:
+The file cannot be accessed by the system. (error 1920)
+```
+
+这是用户目录里的 Docker 运行时 socket 残留，不是 ScholarAgent 镜像或数据卷损坏。完全退出 Docker Desktop 后，只清理该 socket，再启动 Docker：
+
+```powershell
+$socket = Join-Path $env:LOCALAPPDATA "Docker\run\dockerInference"
+Remove-Item -LiteralPath $socket -Force
+Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+```
+
+不要删除 `Docker\wsl`、Docker data、`scholar_storage` 或 `scholar_postgres`。如果当前终端无法访问该 ReparsePoint，需要在有相应权限的 PowerShell 中执行清理。
 
 ## 11. 推荐开发启动流程
 

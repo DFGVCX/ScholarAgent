@@ -37,13 +37,12 @@ class PdfDependencyPinsTest(unittest.TestCase):
         self.assertEqual(
             service["command"],
             [
-                "docling-tools",
-                "models",
-                "download",
-                "--output-dir=/app/storage/models/docling",
-                "layout",
-                "tableformer",
-                "code_formula",
+                "python",
+                "-m",
+                "app.papers.docling_models",
+                "prepare",
+                "--output-dir",
+                "/app/storage/models/docling",
             ],
         )
 

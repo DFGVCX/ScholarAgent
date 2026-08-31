@@ -96,6 +96,8 @@ class HierarchicalPdfParsingTest(unittest.TestCase):
 
         self.assertEqual(parsed.status, "ready")
         self.assertEqual(parsed.manifest["parser"]["engine"], "docling")
+        self.assertEqual(parsed.manifest["requested_parser"], parsing.HIERARCHICAL_PARSER_NAME)
+        self.assertEqual(parsed.manifest["actual_parser"], parsing.HIERARCHICAL_PARSER_NAME)
         self.assertEqual(parsed.sections[0].title, "2 Method")
         typed = {block.block_type: block for block in parsed.pages[0].blocks}
         self.assertEqual(typed["equation"].metadata["markdown"], "$$w^{t+1}=\\sum_i p_i w_i^t$$")

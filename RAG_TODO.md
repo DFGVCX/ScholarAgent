@@ -162,6 +162,8 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] Docling 固定为 `2.123.0`，模型缓存挂载到 Docker 持久化卷。
 - [x] Docker 依赖固定为 CPU 版 PyTorch，避免 Docling 构建错误下载整套 CUDA 依赖。
 - [x] backend/worker 显式使用共享 `DOCLING_ARTIFACTS_PATH`，并提供 `docling_models` 一次性预取服务下载 layout、TableFormer 和 code/formula 模型（不包含 OCR）。
+- [x] `docling_models` 下载后会检查各模型目录的真实文件、Docling/PyTorch 版本和 CPU-only 状态，缺失模型或 CUDA 版 PyTorch 会以非零状态退出。
+- [x] Docling 成功与回退 manifest 统一显式记录 `requested_parser` 和 `actual_parser`，不再依赖调用方推断。
 - [x] 浏览器 Worker 与 MCP 镜像不安装 Docling 重依赖，避免拖慢 Playwright 构建。
 - [x] 使用真实 4 页联邦学习论文验证缺模型时的回退链路，最终成功生成 25 个 v4 Chunk。
 - [x] 使用真实 13 页 IEEE 联邦学习论文完成 v4 切片回退验收：实际解析器为 `multimodal_aware_v3`，切片器为 `scholar_hierarchical_v4`，生成 77 个 Chunk。
@@ -475,3 +477,9 @@ PostgreSQL/pgvector 基础
 - 浏览器自动点击验收受本机浏览器连接组件路径错误影响，API、静态资源和渲染器测试均已通过；下次继续时先人工打开“知识库 → 论文 → 切片”确认界面。
 
 下一次继续开发时，从 P0 的 Docling CPU 镜像完整构建和真实主路径验收开始；随后直接利用“切片”视图改进边界质量。评测、reranker、父子检索和元数据补全暂时排在其后，不包含 OCR 与扫描件解析。
+
+### 2026-08-31 Goal 续跑记录
+
+- 已增加 Docling 模型 `prepare/check` 诊断，模型不完整或不是 CPU PyTorch 时不会误报 ready。
+- 当前 Docker Desktop 4.69.0 在损坏的 `%LOCALAPPDATA%\Docker\run\dockerInference` ReparsePoint 上稳定复现错误 1920 并崩溃；当前工具不能删除该对象，恢复步骤已写入中文启动说明。
+- Docker daemon 恢复后，先执行模型准备命令，再完成 backend/worker 全量构建和真实 PDF 主路径验收；这两项仍保持未完成。

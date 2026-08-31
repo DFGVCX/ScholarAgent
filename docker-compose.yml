@@ -127,13 +127,12 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.backend
     command:
-      - docling-tools
-      - models
-      - download
-      - --output-dir=/app/storage/models/docling
-      - layout
-      - tableformer
-      - code_formula
+      - python
+      - -m
+      - app.papers.docling_models
+      - prepare
+      - --output-dir
+      - /app/storage/models/docling
     environment:
       - HF_HOME=/app/storage/models/huggingface
       - DOCLING_ARTIFACTS_PATH=/app/storage/models/docling

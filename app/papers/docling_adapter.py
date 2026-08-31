@@ -333,6 +333,8 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
             "version": HIERARCHICAL_PARSER_VERSION,
             "engine": "docling",
         },
+        "requested_parser": HIERARCHICAL_PARSER_NAME,
+        "actual_parser": HIERARCHICAL_PARSER_NAME,
         "coverage": {
             "total_pages": len(pages),
             "pages_extracted": sum(bool(page.searchable_chars) for page in pages),
