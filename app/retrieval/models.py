@@ -45,6 +45,10 @@ class RetrievalCandidate:
     parent_section_id: str | None = None
     source_block_ids: tuple[str, ...] = ()
     chunk_metadata: dict[str, Any] | None = None
+    context_before: str = ""
+    context_after: str = ""
+    previous_chunk_id: str | None = None
+    next_chunk_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,10 @@ class LocalHit:
     parent_section_id: str | None = None
     source_block_ids: tuple[str, ...] = ()
     chunk_metadata: dict[str, Any] | None = None
+    context_before: str = ""
+    context_after: str = ""
+    previous_chunk_id: str | None = None
+    next_chunk_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)

@@ -210,6 +210,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 大表按完整行拆分，每块重复表题和表头。
 - [x] 长算法按完整步骤拆分，每块重复算法标题，步骤不重复。
 - [x] 图、表、公式和算法保存 `chunk_type`、父章节、来源块 ID、上下文和坐标 provenance。
+- [x] 统一检索 hit 返回 `context_before/context_after` 和前后稳定 Chunk UUID，Top-K 原始 Chunk 身份与完整原文不变。
 - [x] 原始 `content` 与增强后的 `embedding_content` 分离，前端调试仍显示完整原文。
 - [x] 五种策略可配置、可重复运行并可在同一评测集上比较。
 - [x] 论文结构接口返回当前内容版本的全部 Chunk，并按 `chunk_index` 排序，包含类型、章节路径、页码、完整原文、字符数、token 数、来源块和向量状态。
@@ -225,11 +226,12 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 
 - [ ] 实现父子 Chunk：小 Chunk 用于召回，父章节/相邻上下文用于交给 Agent。
 - [ ] 实现相邻 Chunk 合并，避免答案跨 Chunk 边界时丢失上下文。
-- [ ] 实现同证据、相邻重叠和同对象重复结果去重。
+- [ ] 实现语义近重复、相邻重叠和同对象分片结果去重。
+- [x] 已实现同一论文内“忽略空白和大小写后正文完全相同”的检索结果去重；不同证据和不同论文仍保留。语义近重复/相邻重叠去重仍待实现。
 - [ ] 比较不同 `chunk_size`、overlap 和原子块上下文注入参数。
 - [ ] 为摘要、结论、公式解释、图表标题等内容设计可控的上下文增强，而不是无条件重复标题。
 - [x] 记录每个 Chunk 的父级章节和来源对象 ID，为后续父子检索提供稳定关系。
-- [ ] 将相邻节点从当前上下文文本升级为可导航的稳定 Chunk ID 关系。
+- [x] 将相邻节点从当前上下文文本升级为可导航的 `previous_chunk_id/next_chunk_id` 稳定关系。
 
 ## 8. 阶段六：统一检索接口
 
@@ -241,6 +243,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 返回完整 Chunk 原文，不在后端或前端截断调试内容。
 - [x] 返回论文、章节、页码、Chunk 序号和可引用状态。
 - [x] 返回 Chunk 类型、父章节、来源块 ID 和结构化 provenance。
+- [x] 返回原子块前后解释上下文及前后稳定 Chunk ID，供 Agent/UI 按需展开，不自动消耗额外回答 token。
 - [x] 实现 PostgreSQL lexical 检索。
 - [x] 实现 pgvector cosine semantic 检索。
 - [x] 使用 RRF 融合 lexical 与 vector 排名。
@@ -503,6 +506,7 @@ PostgreSQL/pgvector 基础
 - 已审计 20 个表格与 9 个算法对象：19 个回退表格无可靠单元格，继续保留原图和 review 标记等待 TableFormer；真实 IEEE 论文的 6 个算法已由 3 行恢复为 8–14 行步骤，最大 227 token。
 - 已审计现存 54 个 figure PNG，未复现大面积留白；但当前 figure Chunk 为 41 个，说明历史解析会残留候选资产，后续需按 content version 建立资产清单和安全清理策略，不能粗暴删除旧目录。
 - 已建立 content-version 级 `asset_inventory` 并由结构 API/下载白名单统一消费；旧 manifest 自动归一化。孤立资产目前只做安全候选计算，待确定旧版本保留策略后才执行删除。
+- 已在 RRF Top-K 后抑制同论文完全重复正文，并返回 `context_before/context_after/previous_chunk_id/next_chunk_id`；同论文不同 Chunk 与跨论文相同文字不会被误删。
 - 已解除论文解析包与数据库初始化的导入时耦合，离线 PDF 批处理不再产生 PostgreSQL 连接超时。
 - 已将 Docling 2.123.0 的必需模型目录固定为轻量检查清单，检查过程不再导入 Docling/Torch；缺模型的 4 页真实论文显式回退总耗时由 17.154 秒降至 2.826 秒。
 - 已增加按模型目录复用 Docling 转换器的进程内缓存，待 Docker 恢复并补齐模型后验证连续解析多篇论文时只初始化一次模型。

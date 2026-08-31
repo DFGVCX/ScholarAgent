@@ -66,8 +66,14 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
     def test_top_k_keeps_multiple_chunks_from_the_same_paper(self) -> None:
         hits = RetrievalService._fuse(
             [
-                _candidate("a", "p1", 0.9, chunk_index=0),
-                _candidate("b", "p1", 0.8, chunk_index=1),
+                replace(
+                    _candidate("a", "p1", 0.9, chunk_index=0),
+                    content="First independent evidence.",
+                ),
+                replace(
+                    _candidate("b", "p1", 0.8, chunk_index=1),
+                    content="Second independent evidence.",
+                ),
             ],
             [],
             2,
@@ -75,6 +81,23 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([hit.chunk_id for hit in hits], ["a", "b"])
         self.assertEqual([hit.chunk_index for hit in hits], [0, 1])
+
+    def test_top_k_suppresses_exact_normalized_duplicates_within_paper(self) -> None:
+        first = replace(_candidate("a", "p1", 0.9, 0), content="Same\n\nevidence")
+        duplicate = replace(_candidate("b", "p1", 0.8, 1), content=" same EVIDENCE ")
+        distinct = replace(_candidate("c", "p1", 0.7, 2), content="Different evidence")
+
+        hits = RetrievalService._fuse([first, duplicate, distinct], [], 3)
+
+        self.assertEqual([hit.chunk_id for hit in hits], ["a", "c"])
+
+    def test_identical_text_from_different_papers_remains_citeable(self) -> None:
+        first = replace(_candidate("a", "p1", 0.9), content="Shared evidence")
+        second = replace(_candidate("b", "p2", 0.8), content="Shared evidence")
+
+        hits = RetrievalService._fuse([first, second], [], 2)
+
+        self.assertEqual([hit.chunk_id for hit in hits], ["a", "b"])
 
     def test_hit_exposes_section_and_page_provenance(self) -> None:
         candidate = replace(
@@ -87,6 +110,10 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
             parent_section_id="method",
             source_block_ids=("eq-3",),
             chunk_metadata={"provenance": {"page_number": 4}},
+            context_before="The objective is defined below.",
+            context_after="Here x denotes the model.",
+            previous_chunk_id="previous-chunk",
+            next_chunk_id="next-chunk",
         )
 
         hit = RetrievalService._fuse([candidate], [], 1)[0]
@@ -102,6 +129,10 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["source_block_ids"], ["eq-3"])
         self.assertEqual(payload["chunk_metadata"]["provenance"]["page_number"], 4)
         self.assertEqual(payload["provenance"]["page_number"], 4)
+        self.assertEqual(payload["context_before"], "The objective is defined below.")
+        self.assertEqual(payload["context_after"], "Here x denotes the model.")
+        self.assertEqual(payload["previous_chunk_id"], "previous-chunk")
+        self.assertEqual(payload["next_chunk_id"], "next-chunk")
 
     def test_rrf_merges_by_id_without_recency(self) -> None:
         merged = reciprocal_rank_fusion([["a", "b"], ["b", "c"]], k=60)

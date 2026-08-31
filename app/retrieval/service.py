@@ -84,8 +84,17 @@ class RetrievalService:
         lexical_rank = {item.chunk_id: rank for rank, item in enumerate(lexical, start=1)}
         vector_rank = {item.chunk_id: rank for rank, item in enumerate(vector, start=1)}
         hits: list[LocalHit] = []
+        seen_evidence: set[tuple[str, str]] = set()
         for chunk_id, score in fused:
             candidate = candidates[chunk_id]
+            normalized = " ".join(candidate.content.casefold().split())
+            evidence_key = (
+                candidate.paper_uuid,
+                normalized if normalized else f"<chunk:{candidate.chunk_id}>",
+            )
+            if evidence_key in seen_evidence:
+                continue
+            seen_evidence.add(evidence_key)
             hits.append(
                 LocalHit(
                     chunk_id=candidate.chunk_id,
@@ -110,6 +119,10 @@ class RetrievalService:
                     parent_section_id=candidate.parent_section_id,
                     source_block_ids=candidate.source_block_ids,
                     chunk_metadata=candidate.chunk_metadata,
+                    context_before=candidate.context_before,
+                    context_after=candidate.context_after,
+                    previous_chunk_id=candidate.previous_chunk_id,
+                    next_chunk_id=candidate.next_chunk_id,
                 )
             )
             if len(hits) >= limit:

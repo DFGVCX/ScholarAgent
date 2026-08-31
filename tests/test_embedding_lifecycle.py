@@ -45,6 +45,10 @@ class EmbeddingLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         sql, _ = session.calls[0]
         self.assertIn("c.chunk_index AS chunk_index", sql)
+        self.assertIn("AS previous_chunk_id", sql)
+        self.assertIn("AS next_chunk_id", sql)
+        self.assertIn("c.context_before", sql)
+        self.assertIn("c.context_after", sql)
 
     async def test_chinese_lexical_query_expands_academic_terms(self) -> None:
         session = _Session([_Result()])

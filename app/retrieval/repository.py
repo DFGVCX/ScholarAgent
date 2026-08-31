@@ -73,7 +73,17 @@ class PostgresRetrievalRepository:
                 f"""SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
                     c.chunk_index AS chunk_index, c.section_id, c.section_path,
                     c.page_start, c.page_end, c.chunk_type, c.parent_section_id,
-                    c.source_block_ids, c.chunk_metadata,
+                    c.source_block_ids, c.chunk_metadata, c.context_before, c.context_after,
+                    (SELECT adjacent.chunk_uuid::text FROM paper_chunks adjacent
+                        WHERE adjacent.tenant_id=c.tenant_id AND adjacent.user_id=c.user_id
+                            AND adjacent.content_uuid=c.content_uuid
+                            AND adjacent.chunk_index=c.chunk_index - 1
+                        LIMIT 1) AS previous_chunk_id,
+                    (SELECT adjacent.chunk_uuid::text FROM paper_chunks adjacent
+                        WHERE adjacent.tenant_id=c.tenant_id AND adjacent.user_id=c.user_id
+                            AND adjacent.content_uuid=c.content_uuid
+                            AND adjacent.chunk_index=c.chunk_index + 1
+                        LIMIT 1) AS next_chunk_id,
                     p.paper_id, p.title, p.authors, c.content, p.source,
                     p.normalized_doi AS doi, p.normalized_arxiv_id AS arxiv_id,
                     p.canonical_url, p.published_at,
@@ -112,7 +122,17 @@ class PostgresRetrievalRepository:
                 """SELECT c.chunk_uuid::text AS chunk_id, p.paper_uuid::text AS paper_uuid,
                     c.chunk_index AS chunk_index, c.section_id, c.section_path,
                     c.page_start, c.page_end, c.chunk_type, c.parent_section_id,
-                    c.source_block_ids, c.chunk_metadata,
+                    c.source_block_ids, c.chunk_metadata, c.context_before, c.context_after,
+                    (SELECT adjacent.chunk_uuid::text FROM paper_chunks adjacent
+                        WHERE adjacent.tenant_id=c.tenant_id AND adjacent.user_id=c.user_id
+                            AND adjacent.content_uuid=c.content_uuid
+                            AND adjacent.chunk_index=c.chunk_index - 1
+                        LIMIT 1) AS previous_chunk_id,
+                    (SELECT adjacent.chunk_uuid::text FROM paper_chunks adjacent
+                        WHERE adjacent.tenant_id=c.tenant_id AND adjacent.user_id=c.user_id
+                            AND adjacent.content_uuid=c.content_uuid
+                            AND adjacent.chunk_index=c.chunk_index + 1
+                        LIMIT 1) AS next_chunk_id,
                     p.paper_id, p.title, p.authors, c.content, p.source,
                     p.normalized_doi AS doi, p.normalized_arxiv_id AS arxiv_id,
                     p.canonical_url, p.published_at,
@@ -165,4 +185,10 @@ class PostgresRetrievalRepository:
             parent_section_id=row.get("parent_section_id"),
             source_block_ids=tuple(row.get("source_block_ids") or ()),
             chunk_metadata=dict(row.get("chunk_metadata") or {}),
+            context_before=str(row.get("context_before") or ""),
+            context_after=str(row.get("context_after") or ""),
+            previous_chunk_id=(
+                str(row["previous_chunk_id"]) if row.get("previous_chunk_id") else None
+            ),
+            next_chunk_id=str(row["next_chunk_id"]) if row.get("next_chunk_id") else None,
         )
