@@ -65,6 +65,21 @@ class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "unsafe"):
                 _resolve_paper_asset(paper, "../page_001_figure_1.png")
 
+            inventory_only = {
+                "metadata": {"file_path": str(pdf)},
+                "parsing": {
+                    "manifest": {
+                        "asset_inventory": [
+                            {"name": "page_001_figure_1.png", "type": "figure"}
+                        ]
+                    }
+                },
+            }
+            self.assertEqual(
+                _resolve_paper_asset(inventory_only, "page_001_figure_1.png"),
+                image.resolve(),
+            )
+
     async def test_login_and_me_return_tenant_context(self):
         profile = await login(
             LoginRequestDTO(username="acme", password="acme123", tenant_id="tenant_acme")

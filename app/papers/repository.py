@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.papers.assets import inventory_from_manifest
 from app.papers.chunking import ChunkDraft
 from app.papers.models import ContentVersion, PaperInput, PaperRecord, normalize_arxiv_id, normalize_doi
 from app.papers.parsing import ParsedPaper
@@ -176,6 +177,8 @@ class PaperRepository:
                     "embedding_model": str(chunk.get("embedding_model") or ""),
                 }
             )
+        manifest = dict(json_value(row.get("parse_manifest"), {}))
+        assets = inventory_from_manifest(manifest)
         return {
             "paper_id": str(row["paper_id"]),
             "content_version": int(row.get("content_version") or 0),
@@ -188,7 +191,8 @@ class PaperRepository:
                 "strategy": str(row.get("chunk_strategy") or ""),
                 "version": str(row.get("chunker_version") or ""),
             },
-            "manifest": dict(json_value(row.get("parse_manifest"), {})),
+            "manifest": manifest,
+            "assets": assets,
             "pages": pages,
             "sections": sections,
             "chunks": chunks,

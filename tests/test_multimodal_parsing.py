@@ -219,6 +219,13 @@ class MultimodalPdfParsingTest(unittest.TestCase):
                 self.assertIn(typed[kind].metadata["quality_status"], {"usable", "review"})
             self.assertIn("visual_blocks", parsed.manifest)
             self.assertEqual(len(parsed.manifest["visual_blocks"]), 2)
+            inventory = parsed.to_manifest()["asset_inventory"]
+            self.assertEqual(
+                {item["name"] for item in inventory},
+                {typed["figure"].metadata["asset_name"], typed["algorithm"].metadata["asset_name"]},
+            )
+            self.assertEqual({item["type"] for item in inventory}, {"figure", "algorithm"})
+            self.assertTrue(all(item["page_number"] == 1 for item in inventory))
             algorithm = typed["algorithm"]
             self.assertNotIn("resumes the paper prose", algorithm.text)
             self.assertNotIn("resumes the paper prose", algorithm.metadata["markdown"])

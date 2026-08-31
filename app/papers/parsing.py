@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
 
+from app.papers.assets import inventory_from_pages
 from app.papers.formulas import (
     contains_invalid_controls,
     extract_numbered_formula,
@@ -134,6 +135,7 @@ class ParsedPaper:
     def to_manifest(self) -> dict[str, Any]:
         return {
             **dict(self.manifest),
+            "asset_inventory": inventory_from_pages(self.pages),
             "status": self.status,
             "quality_score": self.quality_score,
             "warnings": list(self.warnings),

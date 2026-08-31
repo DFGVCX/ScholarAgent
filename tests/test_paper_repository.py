@@ -73,7 +73,16 @@ class _StructureSession(_Session):
                         "chunk_strategy": "scholar_hierarchical_v4",
                         "chunker_version": "4",
                         "parse_status": "ready",
-                        "parse_manifest": {"visual_blocks": [{"block_type": "figure"}]},
+                        "parse_manifest": {
+                            "visual_blocks": [{"block_type": "figure"}],
+                            "asset_inventory": [
+                                {
+                                    "name": "page_001_figure_1.png",
+                                    "type": "figure",
+                                    "page_number": 1,
+                                }
+                            ],
+                        },
                     }
                 ]
             )
@@ -176,6 +185,10 @@ class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
         assert structure is not None
         self.assertEqual(structure["parser"]["name"], "multimodal_aware_v3")
         self.assertEqual(structure["pages"][0]["blocks"][0]["block_type"], "figure")
+        self.assertEqual(
+            structure["assets"],
+            [{"name": "page_001_figure_1.png", "type": "figure", "page_number": 1}],
+        )
         self.assertEqual(structure["sections"][0]["section_id"], "method")
         self.assertEqual([chunk["index"] for chunk in structure["chunks"]], [0, 1])
         self.assertEqual(

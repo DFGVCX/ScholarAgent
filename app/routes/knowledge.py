@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
 from app.db.session import tenant_transaction
+from app.papers.assets import inventory_from_manifest
 from app.papers.repository import PaperRepository
 from app.services import mysql_store
 from app.services.rag_service import rag_service
@@ -141,16 +142,7 @@ def _resolve_paper_asset(paper: dict[str, Any], asset_name: str) -> Path:
     ):
         raise ValueError("unsafe paper asset name")
     manifest = dict((paper.get("parsing") or {}).get("manifest") or {})
-    allowed = {
-        str((block.get("metadata") or {}).get("asset_name") or "")
-        for block in manifest.get("visual_blocks", []) or []
-        if isinstance(block, dict)
-    }
-    allowed.update(
-        str(equation.get("asset_name") or "")
-        for equation in manifest.get("equations", []) or []
-        if isinstance(equation, dict)
-    )
+    allowed = {item["name"] for item in inventory_from_manifest(manifest)}
     if asset_name not in allowed:
         raise ValueError("paper asset is not referenced by the current parse manifest")
     file_path = str((paper.get("metadata") or {}).get("file_path") or paper.get("file_path") or "")
