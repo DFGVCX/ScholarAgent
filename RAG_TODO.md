@@ -409,7 +409,7 @@ arXiv
 - [x] 修复 Windows Python 3.14 默认 ProactorEventLoop 与异步 psycopg 不兼容：数据库运行时入口在 Windows 提前切换 Selector policy，并有平台专项测试；Python 3.16 移除 policy API 时需改用宿主 `loop_factory`。
 - [ ] Docker 启动后重新执行 PostgreSQL、上传、解析、索引、检索和页面展示的完整 E2E。
 - [x] 建立固定 RAG 回归命令 `python scripts/run_rag_regression.py` 和 GitHub Actions 任务；固定清单显式排除 Docker、真实 PostgreSQL、浏览器和外部模型 API 测试，E2E 仍是独立门禁。
-- [ ] 更新仍提到 Chroma 或“尚未迁移 PostgreSQL/pgvector”的过时文档。
+- [x] 更新仍提到 Chroma、SQLite/TinyDB fallback 或“尚未迁移 PostgreSQL/pgvector”的过时架构文档与测试注释；SQLite SQL 翻译单测仅保留为旧调用兼容，不代表存储回退。
 - [ ] 将旧计划文档中的复选框状态与实际提交同步，或明确标注为历史计划。
 - [ ] 清理 `tmp/` 中的调试 PDF、截图和 JSON 结果，防止测试资产混入正式提交。
 - [ ] 检查密钥、上传论文、生成截图和数据库数据均未进入 Git。

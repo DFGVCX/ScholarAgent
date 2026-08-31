@@ -106,13 +106,15 @@ whether the runtime is a real StateGraph.
 
 Tenant-scoped retrieval now fuses four independently inspectable signals:
 
-1. Chroma vector rank.
-2. Standard Okapi BM25 with configurable `k1` and `b`.
+1. PostgreSQL/pgvector cosine vector rank, restricted to ready vectors from the active embedding model.
+2. PostgreSQL lexical rank (plus the retained Okapi BM25 evaluation baseline with configurable `k1` and `b`).
 3. Exponential publication-time decay with a configurable half-life.
 4. Long-term preference recall from user memory, restricted by tenant and user.
 
-Every result contains a `score_breakdown` so evaluation can attribute ranking
-changes to vector, BM25, temporal or preference signals.
+The production local retrieval contract exposes lexical rank, vector rank, RRF
+score, optional reranker score and final rank. Evaluation-only ranking components
+retain their own score breakdown so experiments can attribute changes to BM25,
+temporal or preference signals without misrepresenting the production SQL path.
 
 ### Skill discovery baseline
 
