@@ -3,7 +3,11 @@ from __future__ import annotations
 import math
 import unittest
 
-from app.retrieval.embedding import EmbeddingResponseError, QwenEmbeddingClient
+from app.retrieval.embedding import (
+    EmbeddingResponseError,
+    EmbeddingUnavailable,
+    QwenEmbeddingClient,
+)
 
 
 class _Response:
@@ -65,6 +69,7 @@ class _SequenceSession:
     def __init__(self, responses) -> None:
         self.responses = list(responses)
         self.requests = 0
+        self.request_inputs = []
 
     async def __aenter__(self):
         return self
@@ -73,12 +78,75 @@ class _SequenceSession:
         return None
 
     def post(self, url, *, json, headers):
+        self.request_inputs.append(list(json["input"]))
         response = self.responses[self.requests]
         self.requests += 1
         return response
 
 
 class QwenEmbeddingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_rate_limit_on_later_batch_does_not_repeat_completed_batch(self) -> None:
+        vector = [1.0] + [0.0] * 1023
+        first_batch = {
+            "data": [
+                {"index": index, "embedding": vector} for index in range(20)
+            ]
+        }
+        last_batch = {"data": [{"index": 0, "embedding": vector}]}
+        session = _SequenceSession(
+            [
+                _Response(first_batch),
+                _Response({"error": {"message": "rate limited"}}, status=429),
+                _Response(last_batch),
+            ]
+        )
+        delays = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            session_factory=lambda **_: session,
+            sleep_func=no_wait,
+        )
+        texts = [f"chunk-{index}" for index in range(21)]
+
+        vectors = await client.embed(texts)
+
+        self.assertEqual(len(vectors), 21)
+        self.assertEqual([len(values) for values in session.request_inputs], [20, 1, 1])
+        self.assertEqual(session.request_inputs[0], texts[:20])
+        self.assertEqual(session.request_inputs[1], texts[20:])
+        self.assertEqual(session.request_inputs[2], texts[20:])
+        self.assertEqual(delays, [0.5])
+
+    async def test_retry_exhaustion_raises_uniform_unavailable_error(self) -> None:
+        session = _SequenceSession(
+            [
+                _Response({"error": "busy"}, status=503),
+                _Response({"error": "busy"}, status=503),
+                _Response({"error": "busy"}, status=503),
+            ]
+        )
+        delays = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        client = QwenEmbeddingClient(
+            base_url="https://embedding.example",
+            session_factory=lambda **_: session,
+            max_retries=2,
+            sleep_func=no_wait,
+        )
+
+        with self.assertRaisesRegex(EmbeddingUnavailable, "after 3 attempts"):
+            await client.embed(["first"])
+
+        self.assertEqual(session.requests, 3)
+        self.assertEqual(delays, [0.5, 1.0])
+
     async def test_timeout_retries_the_same_batch_without_losing_order(self) -> None:
         vector = [1.0] + [0.0] * 1023
         session = _SequenceSession(
