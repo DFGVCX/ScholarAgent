@@ -6,6 +6,7 @@ import hashlib
 import re
 from typing import Any, Mapping
 
+from app.papers.object_quality import assess_object_quality
 from app.papers.parsing import ParsedPaper, ParsedSection
 
 
@@ -854,6 +855,12 @@ def chunk_hierarchical(
             )
             block_id = _source_block_id(block)
             metadata = dict(block.metadata or {})
+            object_quality = assess_object_quality(
+                block_type,
+                str(block.text or ""),
+                metadata,
+                block.bbox,
+            )
             label = str(metadata.get("label") or "").strip()
             caption = str(metadata.get("caption") or "").strip()
             reference = (
@@ -902,6 +909,7 @@ def chunk_hierarchical(
                             metadata={
                                 "provenance": provenance,
                                 "source_metadata": metadata,
+                                "object_quality": object_quality,
                                 "part_index": piece_index,
                                 "embedding_context_policy": _embedding_context_policy(
                                     block_type, section.kind

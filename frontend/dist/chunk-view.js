@@ -73,6 +73,29 @@
             </details>`;
     }
 
+    function renderObjectQuality(chunk) {
+        if (String(chunk?.type || 'prose') === 'prose') return '';
+        const quality = chunk?.metadata?.object_quality;
+        if (!quality || typeof quality !== 'object') return '';
+        const status = String(quality.status || 'review');
+        const parsedScore = Number(quality.score);
+        const score = Number.isFinite(parsedScore) ? parsedScore.toFixed(2) : '-';
+        const reasons = Array.isArray(quality.reasons)
+            ? quality.reasons.map((reason) => String(reason)).filter(Boolean)
+            : [];
+        const checks = quality.checks && typeof quality.checks === 'object'
+            ? quality.checks
+            : {};
+        return `
+            <details class="paper-chunk-context paper-object-quality">
+                <summary>对象质量 ${escapeHtml(status)} · ${escapeHtml(score)}</summary>
+                <div>${reasons.length
+                    ? `原因：${escapeHtml(reasons.join('、'))}`
+                    : '未发现自动质量告警'}</div>
+                <pre>${escapeHtml(JSON.stringify(checks, null, 2))}</pre>
+            </details>`;
+    }
+
     function renderCard(chunk, chunks) {
         const content = String(chunk.content ?? '');
         const blockCount = Array.isArray(chunk.source_block_ids) ? chunk.source_block_ids.length : 0;
@@ -100,6 +123,7 @@
                     <span>来源块 ${blockCount}</span>
                     <span title="${escapeHtml(chunk.id || '')}">${escapeHtml(chunk.id || '-')}</span>
                 </footer>
+                ${renderObjectQuality(chunk)}
                 ${renderContext(chunk, chunks)}
             </article>`;
     }

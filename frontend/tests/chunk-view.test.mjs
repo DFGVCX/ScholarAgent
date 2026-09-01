@@ -51,6 +51,15 @@ const structure = {
       parent_section_id: 'method',
       previous_chunk_id: 'chunk-prose',
       next_chunk_id: null,
+      metadata: {
+        object_quality: {
+          version: 'v1',
+          status: 'review',
+          score: 0.55,
+          reasons: ['source_marked_review'],
+          checks: { structured_content_available: true },
+        },
+      },
     },
   ],
 };
@@ -94,4 +103,16 @@ test('renders auditable parent and adjacent chunk context without replacing sour
   assert.match(html, /Definition before the atomic object/);
   assert.match(html, /Explanation after the atomic object/);
   assert.match(html, /chunk-equation/);
+});
+
+test('renders typed object quality status, reasons, and checks', () => {
+  const chunkView = loadChunkView();
+  assert.ok(chunkView);
+
+  const html = chunkView.render(structure, 'equation');
+
+  assert.match(html, /对象质量 review/);
+  assert.match(html, /0\.55/);
+  assert.match(html, /source_marked_review/);
+  assert.match(html, /structured_content_available/);
 });

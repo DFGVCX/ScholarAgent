@@ -9,6 +9,7 @@ class RagRegressionManifestTest(unittest.TestCase):
     def test_manifest_covers_core_rag_layers(self) -> None:
         required = {
             "tests.test_paper_chunking",
+            "tests.test_object_quality",
             "tests.test_paper_repository",
             "tests.test_qwen_embedding",
             "tests.test_paper_metadata",

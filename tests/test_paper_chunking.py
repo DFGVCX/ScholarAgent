@@ -182,6 +182,12 @@ class PaperChunkingTest(unittest.TestCase):
         self.assertGreater(len(chunks), 1)
         self.assertTrue(all(chunk.content.startswith("Table 2. Results\n\n| Method | Score |") for chunk in chunks))
         self.assertTrue(all(chunk.source_block_ids == ("table-2",) for chunk in chunks))
+        self.assertTrue(
+            all(chunk.metadata["object_quality"]["status"] == "usable" for chunk in chunks)
+        )
+        self.assertTrue(
+            all(chunk.metadata["object_quality"]["checks"]["row_count"] == 8 for chunk in chunks)
+        )
         rendered_rows = "\n".join(chunk.content for chunk in chunks)
         self.assertIn("| Model 0 | 80.0 |", rendered_rows)
         self.assertIn("| Model 7 | 87.0 |", rendered_rows)
@@ -249,6 +255,9 @@ class PaperChunkingTest(unittest.TestCase):
         self.assertTrue(all(chunk.content.startswith("Algorithm 1. Secure aggregation") for chunk in chunks))
         self.assertTrue(all("Input: encrypted client updates" in chunk.content for chunk in chunks))
         self.assertTrue(all("Output: aggregated global model" in chunk.content for chunk in chunks))
+        self.assertTrue(
+            all(chunk.metadata["object_quality"]["checks"]["step_count"] == 8 for chunk in chunks)
+        )
         combined = "\n".join(chunk.content for chunk in chunks)
         self.assertTrue(all(combined.count(step) == 1 for step in steps))
 
@@ -500,6 +509,32 @@ class PaperChunkingTest(unittest.TestCase):
         )
 
         self.assertIn("As shown in Fig. 2", visual.embedding_content)
+
+    def test_image_only_figure_does_not_invent_retrieval_text(self) -> None:
+        figure = ParsedBlock(
+            2,
+            "figure",
+            "",
+            (10, 20, 500, 300),
+            1,
+            metadata={
+                "block_id": "figure-1",
+                "label": "Fig. 1",
+                "asset_name": "page_002_figure_01.png",
+                "source_image_available": True,
+            },
+        )
+        page = ParsedPage(2, "", "hash", 0, "docling", "usable", (figure,))
+        section = _section("method", "2 Method", "", page_start=2, page_end=2, kind="method")
+        parsed = ParsedPaper("", (page,), (section,), {}, {}, "ready", 0.9)
+
+        figures = [
+            chunk
+            for chunk in chunking.chunk_hierarchical(parsed)
+            if chunk.chunk_type == "figure"
+        ]
+
+        self.assertEqual(figures, [])
 
     def test_multimodal_visual_blocks_are_atomic_and_keep_provenance(self) -> None:
         body = ParsedBlock(2, "body", "Method prose remains searchable.", (10, 10, 200, 30), 0)

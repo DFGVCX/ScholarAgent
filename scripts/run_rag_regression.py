@@ -21,6 +21,7 @@ RAG_TEST_TARGETS: tuple[str, ...] = (
     "tests.test_formula_parsing",
     "tests.test_hierarchical_parsing",
     "tests.test_multimodal_parsing",
+    "tests.test_object_quality",
     "tests.test_paper_assets",
     "tests.test_paper_chunking",
     "tests.test_paper_ingestion",
