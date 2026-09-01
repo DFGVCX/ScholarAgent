@@ -171,6 +171,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 配置 `DOCLING_ARTIFACTS_PATH` 后，上传解析会在加载 Docling/Torch 前轻量检查模型目录；模型不完整时立即显式回退，不在请求中临时下载或长时间加载权重。
 - [x] Docling `DocumentConverter` 按模型目录在 Worker 进程内安全复用，避免每篇论文重复初始化数百 MB 模型；共享转换器的实际转换串行执行，避免未知线程安全问题。
 - [x] Docling 成功与回退 manifest 统一显式记录 `requested_parser` 和 `actual_parser`，不再依赖调用方推断。
+- [x] Docling provenance bbox 按页面高度统一归一化为 PDF 左上角坐标；修复 Docling 左下角坐标被直接保存后产生的垂直翻转，为页码定位和后续可靠原图裁剪提供稳定坐标。
 - [x] 离线导入 PDF 解析/切片模块不再初始化 ingestion 与 PostgreSQL 连接栈，评测脚本可在数据库离线时独立运行。
 - [x] 浏览器 Worker 与 MCP 镜像不安装 Docling 重依赖，避免拖慢 Playwright 构建。
 - [x] 使用真实 4 页联邦学习论文验证缺模型时的回退链路，最终成功生成 25 个 v4 Chunk。
@@ -537,3 +538,4 @@ PostgreSQL/pgvector 基础
 - `scholar_hierarchical_v4` 已为公式、表格、图片、算法和代码保存 `object_quality v1`；同一原子对象的拆分 Chunk 共享对象级诊断，完整原文与 Embedding 内容策略不变。
 - 论文“切片”页可直接展开质量状态、诊断分、原因和检查明细；操作与指标边界见 `docs/operations/STRUCTURED_OBJECT_QUALITY.md`。
 - 该功能是自动审计入口，不代表公式、表格或图片已经达到人工准确率标准；多出版社真实 Docling 主路径与 Docker E2E 仍保持未完成。
+- 已按 Docling 2.123.0 的 `BoundingBox.to_top_left_origin(page_height)` 契约修复来源框坐标原点；没有页面尺寸的历史或模拟数据保持原值，不猜测坐标。

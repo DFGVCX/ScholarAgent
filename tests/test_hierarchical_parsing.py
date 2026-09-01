@@ -94,6 +94,95 @@ class _Converter:
 
 
 class HierarchicalPdfParsingTest(unittest.TestCase):
+    def test_docling_bottom_left_bbox_is_normalized_to_top_left(self) -> None:
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class BottomLeftBBox:
+            l = 10.0
+            t = 700.0
+            r = 110.0
+            b = 650.0
+
+            def to_top_left_origin(self, page_height: float):
+                return SimpleNamespace(
+                    l=self.l,
+                    t=page_height - self.t,
+                    r=self.r,
+                    b=page_height - self.b,
+                )
+
+        body = _DoclingItem(
+            "text",
+            "The server aggregates client updates while preserving complete source provenance. " * 3,
+            bbox=BottomLeftBBox(),
+        )
+        document = _DoclingDocument(
+            [
+                (_DoclingItem("section_header", "2 Method"), 1),
+                (body, 2),
+            ]
+        )
+        document.pages[1].size = SimpleNamespace(height=800.0)
+
+        parsed = parse_docling_pdf(Path("paper.pdf"), converter=_Converter(document))
+
+        normalized = next(block for block in parsed.pages[0].blocks if block.block_type == "body")
+        self.assertEqual(normalized.bbox, (10.0, 100.0, 110.0, 150.0))
+
+    def test_sparse_page_mapping_never_uses_previous_page_height(self) -> None:
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class BottomLeftBBox:
+            l = 10.0
+            t = 700.0
+            r = 110.0
+            b = 650.0
+
+            def to_top_left_origin(self, page_height: float):
+                return SimpleNamespace(
+                    l=self.l,
+                    t=page_height - self.t,
+                    r=self.r,
+                    b=page_height - self.b,
+                )
+
+        body = _DoclingItem(
+            "text",
+            "This second-page paragraph has enough searchable text for provenance validation. " * 3,
+            page=2,
+            bbox=BottomLeftBBox(),
+        )
+        document = _DoclingDocument([(body, 1)], page_count=2)
+        document.pages = {1: SimpleNamespace(size=SimpleNamespace(height=1000.0))}
+
+        parsed = parse_docling_pdf(Path("paper.pdf"), converter=_Converter(document))
+
+        second_page = next(page for page in parsed.pages if page.page_number == 2)
+        self.assertEqual(second_page.blocks[0].bbox, (10.0, 700.0, 110.0, 650.0))
+
+    def test_docling_bbox_conversion_failure_is_not_silently_ignored(self) -> None:
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class BrokenBBox:
+            l = 10.0
+            t = 700.0
+            r = 110.0
+            b = 650.0
+
+            def to_top_left_origin(self, page_height: float):
+                raise ValueError(f"cannot normalize at height {page_height}")
+
+        item = _DoclingItem(
+            "text",
+            "This paragraph is long enough to pass the searchable text quality gate. " * 3,
+            bbox=BrokenBBox(),
+        )
+        document = _DoclingDocument([(item, 1)])
+        document.pages[1].size = SimpleNamespace(height=800.0)
+
+        with self.assertRaisesRegex(ValueError, "cannot normalize"):
+            parse_docling_pdf(Path("paper.pdf"), converter=_Converter(document))
+
     def test_docling_output_is_normalized_without_leaking_docling_types(self) -> None:
         self.assertIsNotNone(importlib.util.find_spec("app.papers.docling_adapter"))
         from app.papers.docling_adapter import parse_docling_pdf

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 import os
 from pathlib import Path
 import re
@@ -79,13 +80,42 @@ def _bbox_tuple(value: Any) -> tuple[float, float, float, float]:
     return (0.0, 0.0, 0.0, 0.0)
 
 
-def _provenance(item: Any) -> tuple[int, tuple[float, float, float, float]]:
+def _document_page_height(document: Any, page_number: int) -> float | None:
+    pages = getattr(document, "pages", None)
+    if isinstance(pages, Mapping):
+        page = pages.get(page_number)
+    elif isinstance(pages, Sequence) and not isinstance(pages, (str, bytes)):
+        try:
+            page = pages[page_number - 1]
+        except (IndexError, TypeError):
+            return None
+    else:
+        return None
+    if page is None:
+        return None
+    size = getattr(page, "size", None)
+    try:
+        height = float(getattr(size, "height", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    return height if height > 0 else None
+
+
+def _provenance(
+    item: Any,
+    document: Any,
+) -> tuple[int, tuple[float, float, float, float]]:
     records = tuple(getattr(item, "prov", ()) or ())
     if not records:
         return 1, (0.0, 0.0, 0.0, 0.0)
     record = records[0]
     page_number = max(1, int(getattr(record, "page_no", 1) or 1))
-    return page_number, _bbox_tuple(getattr(record, "bbox", None))
+    bbox = getattr(record, "bbox", None)
+    to_top_left = getattr(bbox, "to_top_left_origin", None)
+    page_height = _document_page_height(document, page_number)
+    if callable(to_top_left) and page_height is not None:
+        bbox = to_top_left(page_height=page_height)
+    return page_number, _bbox_tuple(bbox)
 
 
 def _item_text(item: Any, document: Any, block_type: str) -> tuple[str, str, str]:
@@ -312,7 +342,7 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
             block_type = "heading"
         if not text and not markdown:
             continue
-        page_number, bbox = _provenance(item)
+        page_number, bbox = _provenance(item, document)
         reading_order = len(by_page[page_number])
         metadata = {
             "block_id": f"docling-p{page_number}-b{reading_order}",
