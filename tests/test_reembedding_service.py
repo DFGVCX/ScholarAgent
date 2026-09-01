@@ -28,6 +28,8 @@ class _Repository:
             "paper_uuid": "paper-1",
             "attempt_count": 1,
             "max_attempts": 3,
+            "locked_by": "worker-test",
+            "lease_token": "00000000-0000-0000-0000-000000000999",
         }
 
     async def current_embedding_batch(self, tenant_id, user_id, paper_uuid):
@@ -51,11 +53,13 @@ class _Repository:
         self.saved_model = model
         self.vectors = vectors
 
-    async def complete_ingestion_job(self, tenant_id, user_id, job_uuid):
-        self.completed_job = job_uuid
+    async def complete_ingestion_job(self, tenant_id, user_id, job):
+        self.completed_job = job["job_uuid"]
+        return True
 
     async def fail_ingestion_job(self, tenant_id, user_id, job, error):
         self.failed_job = (job, error)
+        return "retry"
 
 
 class _Embedding:

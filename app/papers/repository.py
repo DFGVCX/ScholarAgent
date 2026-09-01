@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 import json
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,29 @@ def _json_value(value: Any, fallback: Any) -> Any:
 def _json_mapping(value: Any) -> dict[str, Any]:
     parsed = _json_value(value, {})
     return dict(parsed) if isinstance(parsed, Mapping) else {}
+
+
+def _merge_parser_metadata(
+    current: Mapping[str, Any], incoming: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Merge parser-owned keys while preserving late user bibliography edits."""
+
+    merged = {
+        key: value
+        for key, value in incoming.items()
+        if key in {"parsing", "bibliography"}
+    }
+    incoming_bibliography = merged.get("bibliography")
+    current_bibliography = current.get("bibliography")
+    if isinstance(incoming_bibliography, Mapping) and isinstance(
+        current_bibliography, Mapping
+    ):
+        bibliography = dict(incoming_bibliography)
+        for name, value in current_bibliography.items():
+            if isinstance(value, Mapping) and value.get("user_edited") is True:
+                bibliography[str(name)] = dict(value)
+        merged["bibliography"] = bibliography
+    return merged
 
 
 class PaperRepository:
@@ -352,6 +375,71 @@ class PaperRepository:
             raise RuntimeError("paper upsert returned no row")
         return self._record(row)
 
+    async def merge_extracted_metadata(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        paper: PaperInput,
+    ) -> PaperRecord:
+        """Merge parser-owned metadata without overwriting user-editable fields."""
+
+        current_result = await self.session.execute(
+            text(
+                """SELECT metadata FROM papers
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND deleted_at IS NULL
+                FOR UPDATE"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+            },
+        )
+        current_row = current_result.mappings().first()
+        if current_row is None:
+            raise KeyError("paper not found")
+        parser_metadata = _merge_parser_metadata(
+            _json_mapping(current_row.get("metadata")), dict(paper.metadata)
+        )
+        result = await self.session.execute(
+            text(
+                """UPDATE papers SET
+                    title=CASE
+                        WHEN btrim(title)='' OR title=paper_id THEN :title
+                        ELSE title
+                    END,
+                    authors=CASE
+                        WHEN jsonb_array_length(authors)=0 THEN CAST(:authors AS jsonb)
+                        ELSE authors
+                    END,
+                    published_at=COALESCE(published_at, :published_at),
+                    normalized_doi=COALESCE(normalized_doi, :doi),
+                    normalized_arxiv_id=COALESCE(normalized_arxiv_id, :arxiv_id),
+                    metadata=metadata || CAST(:metadata AS jsonb),
+                    updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND deleted_at IS NULL
+                RETURNING """ + _PAPER_COLUMNS
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "title": paper.title.strip(),
+                "authors": json.dumps(list(paper.authors), ensure_ascii=False),
+                "published_at": paper.published_at,
+                "doi": normalize_doi(paper.doi),
+                "arxiv_id": normalize_arxiv_id(paper.arxiv_id),
+                "metadata": json.dumps(parser_metadata, ensure_ascii=False),
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            raise KeyError("paper not found")
+        return self._record(row)
+
     async def update_bibliography(
         self,
         tenant_id: str,
@@ -417,7 +505,26 @@ class PaperRepository:
             ),
             {"tenant_id": tenant_id, "user_id": user_id, "paper_id": paper_id},
         )
-        return result.first() is not None
+        row = result.mappings().first()
+        if row is None:
+            return False
+        await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status='failed', completed_at=now(), locked_at=NULL,
+                    locked_by=NULL, lease_token=NULL,
+                    last_error='paper deleted while PDF ingestion was active', updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND job_type='ingest_pdf'
+                  AND status IN ('pending','retry','running')"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": row["paper_uuid"],
+            },
+        )
+        return True
 
     async def replace_content(
         self,
@@ -434,6 +541,7 @@ class PaperRepository:
         parser_version: str = "1",
         chunk_strategy: str = "legacy_fixed",
         chunker_version: str = "1",
+        ingestion_generation: UUID | str | None = None,
     ) -> ContentVersion:
         locked = await self.session.execute(
             text(
@@ -445,17 +553,25 @@ class PaperRepository:
         row = locked.mappings().first()
         if row is None:
             raise KeyError("paper not found")
+        if ingestion_generation is not None:
+            existing = await self.content_version_for_generation(
+                tenant_id, user_id, paper_uuid, ingestion_generation
+            )
+            if existing is not None:
+                return existing
         version = int(row["current_content_version"]) + 1
         inserted = await self.session.execute(
             text(
                 """INSERT INTO paper_contents (
                     tenant_id, user_id, paper_uuid, content_version, full_text, content_hash,
                     language, extraction_method, extraction_quality, parser_name, parser_version,
-                    chunk_strategy, chunker_version, parse_status, parse_manifest
+                    chunk_strategy, chunker_version, parse_status, parse_manifest,
+                    ingestion_generation
                 ) VALUES (
                     :tenant_id, :user_id, :paper_uuid, :version, :full_text, :content_hash,
                     :language, :extraction_method, :extraction_quality, :parser_name, :parser_version,
-                    :chunk_strategy, :chunker_version, :parse_status, CAST(:parse_manifest AS jsonb)
+                    :chunk_strategy, :chunker_version, :parse_status,
+                    CAST(:parse_manifest AS jsonb), :ingestion_generation
                 ) RETURNING content_uuid"""
             ),
             {
@@ -474,6 +590,7 @@ class PaperRepository:
                 "chunker_version": chunker_version,
                 "parse_status": parsed.status if parsed else "ready",
                 "parse_manifest": json.dumps(parsed.to_manifest() if parsed else {}, ensure_ascii=False),
+                "ingestion_generation": ingestion_generation,
             },
         )
         content_uuid = inserted.scalar_one()
@@ -581,10 +698,17 @@ class PaperRepository:
         await self.session.execute(
             text(
                 "UPDATE papers SET current_content_version=:version, ingestion_status='embedding', "
-                "last_error=NULL, updated_at=now() WHERE tenant_id=:tenant_id AND user_id=:user_id "
+                "ingestion_generation=:ingestion_generation, last_error=NULL, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id "
                 "AND paper_uuid=:paper_uuid"
             ),
-            {"version": version, "tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
+            {
+                "version": version,
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "ingestion_generation": ingestion_generation,
+            },
         )
         return ContentVersion(
             paper_uuid,
@@ -597,6 +721,86 @@ class PaperRepository:
             chunk_strategy,
             chunker_version,
         )
+
+    async def content_version_for_generation(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        ingestion_generation: UUID | str,
+    ) -> ContentVersion | None:
+        result = await self.session.execute(
+            text(
+                """SELECT pc.content_uuid, pc.content_version, pc.parse_status,
+                    pc.parser_name, pc.parser_version, pc.chunk_strategy,
+                    pc.chunker_version, COUNT(c.chunk_uuid) AS chunk_count
+                FROM paper_contents pc
+                JOIN papers p ON p.tenant_id=pc.tenant_id AND p.user_id=pc.user_id
+                    AND p.paper_uuid=pc.paper_uuid
+                LEFT JOIN paper_chunks c ON c.tenant_id=pc.tenant_id
+                    AND c.user_id=pc.user_id AND c.paper_uuid=pc.paper_uuid
+                    AND c.content_uuid=pc.content_uuid
+                WHERE pc.tenant_id=:tenant_id AND pc.user_id=:user_id
+                  AND pc.paper_uuid=:paper_uuid
+                  AND pc.ingestion_generation=:ingestion_generation
+                  AND p.deleted_at IS NULL
+                GROUP BY pc.content_uuid, pc.content_version, pc.parse_status,
+                    pc.parser_name, pc.parser_version, pc.chunk_strategy,
+                    pc.chunker_version"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "ingestion_generation": ingestion_generation,
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return ContentVersion(
+            paper_uuid=UUID(str(paper_uuid)),
+            content_uuid=UUID(str(row["content_uuid"])),
+            content_version=int(row["content_version"]),
+            chunk_count=int(row.get("chunk_count") or 0),
+            parse_status=str(row.get("parse_status") or "ready"),
+            parser_name=str(row.get("parser_name") or "legacy_fixed"),
+            parser_version=str(row.get("parser_version") or "1"),
+            chunk_strategy=str(row.get("chunk_strategy") or "legacy_fixed"),
+            chunker_version=str(row.get("chunker_version") or "1"),
+        )
+
+    async def content_embeddings_ready(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        content_uuid: UUID | str,
+        *,
+        model: str,
+    ) -> bool:
+        result = await self.session.execute(
+            text(
+                """SELECT COUNT(*) AS total,
+                    COUNT(*) FILTER (
+                        WHERE embedding_status='ready' AND embedding IS NOT NULL
+                          AND embedding_model=:model
+                    ) AS ready
+                FROM paper_chunks
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND content_uuid=:content_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "content_uuid": content_uuid,
+                "model": model,
+            },
+        )
+        row = result.mappings().first() or {}
+        total = int(row.get("total") or 0)
+        return total > 0 and int(row.get("ready") or 0) == total
 
     async def save_asset(self, tenant_id: str, user_id: str, paper_uuid: UUID, paper: PaperInput) -> None:
         if not paper.file_uri:
@@ -691,20 +895,31 @@ class PaperRepository:
         )
 
     async def mark_parsing_failed(
-        self, tenant_id: str, user_id: str, paper_uuid: UUID, error: str
-    ) -> None:
-        await self.session.execute(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        error: str,
+        *,
+        expected_generation: UUID | str | None = None,
+    ) -> bool:
+        result = await self.session.execute(
             text(
                 "UPDATE papers SET ingestion_status='failed', last_error=:error, updated_at=now() "
-                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid"
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid "
+                "AND deleted_at IS NULL "
+                "AND (:expected_generation IS NULL OR ingestion_generation=:expected_generation) "
+                "RETURNING paper_uuid"
             ),
             {
                 "error": error[:4000],
                 "tenant_id": tenant_id,
                 "user_id": user_id,
                 "paper_uuid": paper_uuid,
+                "expected_generation": expected_generation,
             },
         )
+        return result.mappings().first() is not None
 
     async def mark_embeddings_stale(
         self, tenant_id: str, user_id: str, active_model: str, *, force: bool = False
@@ -815,6 +1030,102 @@ class PaperRepository:
         created = len(inserted.mappings().all())
         return {"created": created, "existing": int(existing_row.get("existing") or 0)}
 
+    async def enqueue_pdf_ingestion_job(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        payload: Mapping[str, Any],
+        *,
+        asset_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Create or replace the one waiting generation for a tenant paper."""
+
+        generation_uuid = uuid4()
+        # All enqueue/failure paths lock the paper first, then the job row.  This
+        # keeps their lock order identical when an old worker fails while a new
+        # upload creates its successor generation.
+        await self.session.execute(
+            text(
+                """SELECT paper_uuid FROM papers
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND deleted_at IS NULL
+                FOR UPDATE"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+            },
+        )
+        await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status='failed', completed_at=now(), locked_at=NULL,
+                    locked_by=NULL, lease_token=NULL,
+                    last_error='superseded by a newer PDF upload', updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND job_type='ingest_pdf'
+                  AND status='running' AND generation_uuid<>:generation_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "generation_uuid": generation_uuid,
+            },
+        )
+        result = await self.session.execute(
+            text(
+                """INSERT INTO paper_ingestion_jobs AS jobs (
+                    tenant_id, user_id, paper_uuid, job_type, status, payload,
+                    generation_uuid, asset_sha256
+                ) VALUES (
+                    :tenant_id, :user_id, :paper_uuid, 'ingest_pdf', 'pending',
+                    CAST(:payload AS jsonb), :generation_uuid, :asset_sha256
+                )
+                ON CONFLICT (tenant_id, user_id, paper_uuid, job_type)
+                    WHERE job_type='ingest_pdf'
+                      AND status IN ('pending','retry')
+                DO UPDATE SET
+                    payload=EXCLUDED.payload,
+                    generation_uuid=EXCLUDED.generation_uuid,
+                    asset_sha256=EXCLUDED.asset_sha256,
+                    status='pending', available_at=now(), attempt_count=0,
+                    last_error=NULL, completed_at=NULL,
+                    updated_at=now()
+                RETURNING jobs.job_uuid, jobs.status, jobs.generation_uuid,
+                    jobs.asset_sha256"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "payload": json.dumps(dict(payload), ensure_ascii=False),
+                "asset_sha256": asset_sha256,
+                "generation_uuid": generation_uuid,
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            raise RuntimeError("PDF ingestion job upsert returned no row")
+        await self.session.execute(
+            text(
+                """UPDATE papers
+                SET ingestion_status='parsing', last_error=NULL,
+                    ingestion_generation=:generation_uuid, updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND deleted_at IS NULL"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "generation_uuid": row["generation_uuid"],
+            },
+        )
+        return dict(row)
+
     async def list_worker_scopes(self) -> list[tuple[str, str]]:
         result = await self.session.execute(
             text(
@@ -845,16 +1156,159 @@ class PaperRepository:
                 )
                 UPDATE paper_ingestion_jobs j
                 SET status='running', locked_at=now(), locked_by=:worker_id,
+                    lease_token=gen_random_uuid(),
                     attempt_count=j.attempt_count + 1, updated_at=now()
                 FROM candidate
                 WHERE j.job_uuid=candidate.job_uuid
                 RETURNING j.job_uuid, j.tenant_id, j.user_id, j.paper_uuid,
-                    j.attempt_count, j.max_attempts"""
+                    j.attempt_count, j.max_attempts, j.locked_by, j.lease_token"""
             ),
             {"worker_id": worker_id, "tenant_id": tenant_id, "user_id": user_id},
         )
         row = result.mappings().first()
         return dict(row) if row else None
+
+    async def claim_pdf_ingestion_job(
+        self, worker_id: str, tenant_id: str, user_id: str
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            text(
+                """WITH candidate AS (
+                    SELECT j.job_uuid
+                    FROM paper_ingestion_jobs j
+                    JOIN papers p ON p.tenant_id=j.tenant_id AND p.user_id=j.user_id
+                        AND p.paper_uuid=j.paper_uuid
+                    WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                      AND j.job_type='ingest_pdf' AND p.deleted_at IS NULL
+                      AND p.ingestion_generation=j.generation_uuid
+                      AND (
+                          (j.status IN ('pending','retry') AND j.available_at <= now())
+                          OR (j.status='running'
+                              AND j.locked_at < now() - interval '2 hours')
+                      )
+                    ORDER BY j.created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE paper_ingestion_jobs j
+                SET status='running', locked_at=now(), locked_by=:worker_id,
+                    lease_token=gen_random_uuid(),
+                    attempt_count=j.attempt_count + 1, updated_at=now()
+                FROM candidate
+                WHERE j.job_uuid=candidate.job_uuid
+                RETURNING j.job_uuid, j.tenant_id, j.user_id, j.paper_uuid,
+                    j.attempt_count, j.max_attempts, j.payload,
+                    j.generation_uuid, j.asset_sha256, j.locked_by, j.lease_token"""
+            ),
+            {"worker_id": worker_id, "tenant_id": tenant_id, "user_id": user_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def load_pdf_ingestion_input(
+        self,
+        tenant_id: str,
+        user_id: str,
+        job: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            text(
+                """SELECT p.paper_id, p.source, p.title, p.authors, p.abstract,
+                    p.published_at, p.normalized_doi AS doi,
+                    p.normalized_arxiv_id AS arxiv_id, p.canonical_url AS url,
+                    p.in_knowledge_base, p.metadata, a.file_uri, a.file_name,
+                    a.mime_type, a.sha256 AS file_sha256, a.file_size
+                FROM paper_ingestion_jobs j
+                JOIN papers p ON p.tenant_id=j.tenant_id AND p.user_id=j.user_id
+                    AND p.paper_uuid=j.paper_uuid
+                JOIN paper_assets a ON a.tenant_id=j.tenant_id AND a.user_id=j.user_id
+                    AND a.paper_uuid=j.paper_uuid AND a.sha256=j.asset_sha256
+                WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                  AND j.job_uuid=:job_uuid AND j.status='running'
+                  AND j.locked_by=:locked_by AND j.lease_token=:lease_token
+                  AND p.deleted_at IS NULL
+                  AND p.ingestion_generation=j.generation_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+            },
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def assert_pdf_ingestion_claim(
+        self,
+        tenant_id: str,
+        user_id: str,
+        job: Mapping[str, Any],
+    ) -> None:
+        await self.session.execute(
+            text(
+                """SELECT paper_uuid FROM papers
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid
+                FOR UPDATE"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": job["paper_uuid"],
+            },
+        )
+        result = await self.session.execute(
+            text(
+                """SELECT j.job_uuid
+                FROM paper_ingestion_jobs j
+                JOIN papers p ON p.tenant_id=j.tenant_id AND p.user_id=j.user_id
+                    AND p.paper_uuid=j.paper_uuid
+                JOIN paper_assets a ON a.tenant_id=j.tenant_id AND a.user_id=j.user_id
+                    AND a.paper_uuid=j.paper_uuid AND a.sha256=j.asset_sha256
+                WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                  AND j.job_uuid=:job_uuid AND j.status='running'
+                  AND j.locked_by=:locked_by AND j.lease_token=:lease_token
+                  AND p.deleted_at IS NULL
+                  AND p.ingestion_generation=j.generation_uuid
+                FOR UPDATE OF j"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+            },
+        )
+        if result.mappings().first() is None:
+            raise RuntimeError("PDF ingestion generation or worker lease is no longer current")
+
+    async def refresh_ingestion_job_lease(
+        self,
+        tenant_id: str,
+        user_id: str,
+        job: Mapping[str, Any],
+    ) -> bool:
+        result = await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET locked_at=now(), updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND job_uuid=:job_uuid AND status='running'
+                  AND locked_by=:locked_by AND lease_token=:lease_token
+                RETURNING job_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+            },
+        )
+        return result.mappings().first() is not None
 
     async def current_embedding_batch(
         self, tenant_id: str, user_id: str, paper_uuid: UUID | str
@@ -896,18 +1350,80 @@ class PaperRepository:
             ],
         }
 
+    async def embedding_batch_for_content(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        content_uuid: UUID | str,
+    ) -> dict[str, Any] | None:
+        """Load one exact content version only while it remains paper-current."""
+
+        result = await self.session.execute(
+            text(
+                """SELECT pc.content_uuid, pc.chunk_index, pc.content,
+                    pc.embedding_content, pc.section_path, pc.section_id,
+                    pc.chunk_metadata, p.title
+                FROM paper_chunks pc
+                JOIN papers p ON p.paper_uuid=pc.paper_uuid
+                    AND p.tenant_id=pc.tenant_id AND p.user_id=pc.user_id
+                WHERE pc.tenant_id=:tenant_id AND pc.user_id=:user_id
+                  AND pc.paper_uuid=:paper_uuid AND pc.content_uuid=:content_uuid
+                  AND pc.content_version=p.current_content_version
+                  AND p.deleted_at IS NULL
+                ORDER BY pc.chunk_index"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "content_uuid": content_uuid,
+            },
+        )
+        rows = result.mappings().all()
+        if not rows:
+            return None
+        return {
+            "content_uuid": rows[0]["content_uuid"],
+            "chunks": [
+                {
+                    "chunk_index": int(row["chunk_index"]),
+                    "content": str(row["content"]),
+                    "embedding_text": build_embedding_text(
+                        paper_title=str(row.get("title") or ""),
+                        section_path=str(row.get("section_path") or "") or None,
+                        section_id=str(row.get("section_id") or "") or None,
+                        content=str(row["content"]),
+                        embedding_content=str(row.get("embedding_content") or ""),
+                        metadata=_json_mapping(row.get("chunk_metadata")),
+                    ),
+                }
+                for row in rows
+            ],
+        }
+
     async def complete_ingestion_job(
-        self, tenant_id: str, user_id: str, job_uuid: UUID | str
-    ) -> None:
-        await self.session.execute(
+        self, tenant_id: str, user_id: str, job: Mapping[str, Any]
+    ) -> bool:
+        result = await self.session.execute(
             text(
                 """UPDATE paper_ingestion_jobs
                 SET status='completed', completed_at=now(), locked_at=NULL,
-                    locked_by=NULL, last_error=NULL, updated_at=now()
-                WHERE tenant_id=:tenant_id AND user_id=:user_id AND job_uuid=:job_uuid"""
+                    locked_by=NULL, lease_token=NULL, last_error=NULL, updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND job_uuid=:job_uuid AND status='running'
+                  AND locked_by=:locked_by AND lease_token=:lease_token
+                RETURNING job_uuid"""
             ),
-            {"tenant_id": tenant_id, "user_id": user_id, "job_uuid": job_uuid},
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+            },
         )
+        return result.mappings().first() is not None
 
     async def fail_ingestion_job(
         self,
@@ -915,26 +1431,77 @@ class PaperRepository:
         user_id: str,
         job: Mapping[str, Any],
         error: str,
-    ) -> None:
+    ) -> str | None:
         retry = int(job.get("attempt_count") or 0) < int(job.get("max_attempts") or 1)
         await self.session.execute(
             text(
-                """UPDATE paper_ingestion_jobs
-                SET status=:status, last_error=:error, locked_at=NULL, locked_by=NULL,
-                    available_at=CASE WHEN :retry THEN now() + interval '1 minute' ELSE available_at END,
-                    completed_at=CASE WHEN :retry THEN NULL ELSE now() END,
-                    updated_at=now()
-                WHERE tenant_id=:tenant_id AND user_id=:user_id AND job_uuid=:job_uuid"""
+                """SELECT paper_uuid FROM papers
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid
+                FOR UPDATE"""
             ),
             {
-                "status": "retry" if retry else "failed",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": job["paper_uuid"],
+            },
+        )
+        result = await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status=CASE
+                        WHEN :retry AND (
+                            :generation_uuid IS NULL OR EXISTS (
+                                SELECT 1 FROM papers p
+                                WHERE p.tenant_id=paper_ingestion_jobs.tenant_id
+                                  AND p.user_id=paper_ingestion_jobs.user_id
+                                  AND p.paper_uuid=paper_ingestion_jobs.paper_uuid
+                                  AND p.deleted_at IS NULL
+                                  AND p.ingestion_generation=:generation_uuid
+                            )
+                        ) THEN 'retry' ELSE 'failed'
+                    END,
+                    last_error=:error, locked_at=NULL, locked_by=NULL,
+                    lease_token=NULL,
+                    available_at=CASE WHEN :retry AND (
+                        :generation_uuid IS NULL OR EXISTS (
+                            SELECT 1 FROM papers p
+                            WHERE p.tenant_id=paper_ingestion_jobs.tenant_id
+                              AND p.user_id=paper_ingestion_jobs.user_id
+                              AND p.paper_uuid=paper_ingestion_jobs.paper_uuid
+                              AND p.deleted_at IS NULL
+                              AND p.ingestion_generation=:generation_uuid
+                        )
+                    ) THEN now() + interval '1 minute' ELSE available_at END,
+                    completed_at=CASE WHEN :retry AND (
+                        :generation_uuid IS NULL OR EXISTS (
+                            SELECT 1 FROM papers p
+                            WHERE p.tenant_id=paper_ingestion_jobs.tenant_id
+                              AND p.user_id=paper_ingestion_jobs.user_id
+                              AND p.paper_uuid=paper_ingestion_jobs.paper_uuid
+                              AND p.deleted_at IS NULL
+                              AND p.ingestion_generation=:generation_uuid
+                        )
+                    ) THEN NULL ELSE now() END,
+                    updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND job_uuid=:job_uuid AND status='running'
+                  AND locked_by=:locked_by AND lease_token=:lease_token
+                RETURNING status"""
+            ),
+            {
                 "retry": retry,
                 "error": error[:4000],
                 "tenant_id": tenant_id,
                 "user_id": user_id,
                 "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+                "generation_uuid": job.get("generation_uuid"),
             },
         )
+        row = result.mappings().first()
+        return str(row["status"]) if row else None
 
     async def record_embedding_usage(
         self,

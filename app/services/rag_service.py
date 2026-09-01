@@ -97,7 +97,7 @@ def _chunk_text(text: str, size: int | None = None, overlap: int | None = None) 
     return chunks
 
 
-def _paper_input(paper: dict[str, Any]) -> PaperInput:
+def paper_input_from_dict(paper: dict[str, Any]) -> PaperInput:
     metadata = dict(paper.get("metadata") or {})
     file_uri = str(paper.get("file_path") or metadata.get("file_path") or "") or None
     file_sha256 = None
@@ -138,7 +138,7 @@ class RagService:
 
     async def index_paper(self, paper: dict[str, Any]) -> list[dict[str, Any]]:
         result = await paper_ingestion_service.ingest(
-            str(paper["tenant_id"]), str(paper["user_id"]), _paper_input(paper)
+            str(paper["tenant_id"]), str(paper["user_id"]), paper_input_from_dict(paper)
         )
         return [
             {

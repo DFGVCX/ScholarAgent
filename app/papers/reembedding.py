@@ -87,7 +87,7 @@ class EmbeddingReindexService:
                     vectors,
                     model=embedding.model,
                 )
-                await repository.complete_ingestion_job(tenant_id, user_id, job["job_uuid"])
+                await repository.complete_ingestion_job(tenant_id, user_id, job)
             return ReindexResult(job_id, "completed", len(vectors))
         except Exception as exc:
             error = _redact_error(exc)

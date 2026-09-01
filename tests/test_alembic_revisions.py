@@ -26,7 +26,41 @@ class AlembicRevisionGraphTest(unittest.TestCase):
 
         parents = {parent for parent in revisions.values() if parent is not None}
         heads = set(revisions) - parents
-        self.assertEqual(heads, {"20260901_0007"})
+        self.assertEqual(heads, {"20260901_0010"})
+
+    def test_pdf_ingestion_jobs_are_unique_while_active(self) -> None:
+        migration = Path("alembic/versions/20260901_0008_pdf_ingestion_queue.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("uq_active_pdf_ingestion_job", migration)
+        self.assertIn("job_type='ingest_pdf'", migration)
+        self.assertIn("status IN ('pending','running','retry')", migration)
+
+    def test_pdf_ingestion_queue_has_generation_and_fenced_lease(self) -> None:
+        migration = Path(
+            "alembic/versions/20260901_0009_pdf_ingestion_fencing.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('down_revision = "20260901_0008"', migration)
+        self.assertIn("ingestion_generation", migration)
+        self.assertIn("generation_uuid", migration)
+        self.assertIn("asset_sha256", migration)
+        self.assertIn("lease_token", migration)
+        self.assertIn("DROP INDEX IF EXISTS uq_active_pdf_ingestion_job", migration)
+        self.assertIn("uq_waiting_pdf_ingestion_job", migration)
+        self.assertIn("status IN ('pending','retry')", migration)
+        self.assertIn("ROW_NUMBER() OVER", migration)
+        self.assertIn("ranked.active_rank > 1", migration)
+
+    def test_pdf_content_versions_are_idempotent_per_ingestion_generation(self) -> None:
+        migration = Path(
+            "alembic/versions/20260901_0010_pdf_content_generation.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('down_revision = "20260901_0009"', migration)
+        self.assertIn("paper_contents ADD COLUMN ingestion_generation", migration)
+        self.assertIn("uq_paper_content_ingestion_generation", migration)
 
     def test_hierarchical_chunk_constraint_accepts_source_code(self) -> None:
         migration = Path("alembic/versions/20260828_0006_code_chunks.py").read_text(

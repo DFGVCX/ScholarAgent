@@ -32,10 +32,15 @@ class _Repository:
         self.vectors = None
         self.embedding_model = None
         self.saved_paper = None
+        self.merged_paper = None
         self.saved_chunks = []
         self.replace_kwargs = {}
         self.parsing_failure = None
         self.telemetry_after_primary = None
+        self.committed_generation = None
+        self.embedding_batch = None
+        self.embeddings_already_ready = False
+        self.embedding_batch_content_uuid = None
 
     async def save(self, *args):
         self.saved_paper = args[-1]
@@ -43,6 +48,10 @@ class _Repository:
 
     async def save_asset(self, *args):
         return None
+
+    async def merge_extracted_metadata(self, *args):
+        self.merged_paper = args[-1]
+        return self.record
 
     async def replace_content(self, *args, **kwargs):
         self.saved_chunks = list(args[5])
@@ -62,6 +71,16 @@ class _Repository:
     async def get(self, *args):
         return self.record
 
+    async def content_version_for_generation(self, *args):
+        return self.committed_generation
+
+    async def embedding_batch_for_content(self, *args):
+        self.embedding_batch_content_uuid = args[-1]
+        return self.embedding_batch
+
+    async def content_embeddings_ready(self, *args, **kwargs):
+        return self.embeddings_already_ready
+
 
 class _Embedding:
     model = "Qwen3-Embedding-4B"
@@ -80,6 +99,123 @@ class _BrokenEmbedding:
 
 
 class PaperIngestionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_generation_resume_skips_parse_version_and_embedding(self) -> None:
+        record = _record()
+        repository = _Repository(record)
+        repository.committed_generation = ContentVersion(
+            record.paper_uuid,
+            uuid4(),
+            7,
+            12,
+            "ready",
+            "scholar_hierarchical_v4",
+            "4",
+            "scholar_hierarchical_v4",
+            "4",
+        )
+        repository.embedding_batch = {
+            "content_uuid": repository.committed_generation.content_uuid,
+            "chunks": [{"chunk_index": 0, "content": "saved", "embedding_text": "saved"}],
+        }
+        repository.embeddings_already_ready = True
+        embedding = _Embedding()
+
+        @asynccontextmanager
+        async def transaction(*_):
+            yield object()
+
+        async def guard(_):
+            return None
+
+        def parser(_):
+            raise AssertionError("a committed generation must not be parsed again")
+
+        service = PaperIngestionService(
+            embedding,
+            parser=parser,
+            transaction_factory=transaction,
+            repository_factory=lambda _: repository,
+        )
+        paper = PaperInput(
+            paper_id="paper-1", source="pdf", title="Paper",
+            file_uri="paper.pdf", file_name="paper.pdf",
+            mime_type="application/pdf", file_sha256="a" * 64, file_size=123,
+        )
+        with patch(
+            "app.papers.ingestion.get_settings",
+            return_value=SimpleNamespace(
+                rag_chunk_size=900,
+                rag_chunk_overlap=120,
+                rag_chunk_strategy="scholar_hierarchical_v4",
+                pdf_parse_strategy="scholar_hierarchical_v4",
+            ),
+        ):
+            result = await service.ingest_existing(
+                "t",
+                "u",
+                paper,
+                record.paper_uuid,
+                "00000000-0000-0000-0000-000000000888",
+                guard,
+            )
+
+        self.assertEqual(result.chunk_count, 12)
+        self.assertEqual(result.embedding_status, "ready")
+        self.assertEqual(embedding.texts, [])
+        self.assertEqual(repository.saved_chunks, [])
+        self.assertEqual(
+            repository.embedding_batch_content_uuid,
+            repository.committed_generation.content_uuid,
+        )
+
+    async def test_existing_pdf_ingestion_preserves_user_fields_and_checks_claim(self) -> None:
+        record = _record()
+        repository = _Repository(record)
+        embedding = _Embedding()
+        guard_calls = []
+
+        @asynccontextmanager
+        async def transaction(*_):
+            yield object()
+
+        async def guard(repo):
+            self.assertIs(repo, repository)
+            guard_calls.append("checked")
+
+        service = PaperIngestionService(
+            embedding,
+            parser=lambda _: _parsed("ready"),
+            transaction_factory=transaction,
+            repository_factory=lambda _: repository,
+        )
+        paper = PaperInput(
+            paper_id="paper-1", source="pdf", title="Latest user title",
+            file_uri="paper.pdf", file_name="paper.pdf",
+            mime_type="application/pdf", file_sha256="a" * 64, file_size=123,
+        )
+        with patch(
+            "app.papers.ingestion.get_settings",
+            return_value=SimpleNamespace(
+                rag_chunk_size=900,
+                rag_chunk_overlap=120,
+                rag_chunk_strategy="structure_aware_v1",
+                pdf_parse_strategy="structure_aware_v1",
+            ),
+        ), patch("app.papers.ingestion.persist_embedding_usage", return_value=True):
+            result = await service.ingest_existing(
+                "t",
+                "u",
+                paper,
+                record.paper_uuid,
+                "00000000-0000-0000-0000-000000000888",
+                guard,
+            )
+
+        self.assertEqual(result.embedding_status, "ready")
+        self.assertIsNone(repository.saved_paper)
+        self.assertIsNotNone(repository.merged_paper)
+        self.assertGreaterEqual(len(guard_calls), 2)
+
     def test_default_embedding_client_is_refreshed_between_ingestions(self) -> None:
         first = _Embedding()
         second = _Embedding()

@@ -11,6 +11,7 @@ class RagRegressionManifestTest(unittest.TestCase):
             "tests.test_paper_chunking",
             "tests.test_object_quality",
             "tests.test_paper_repository",
+            "tests.test_pdf_ingestion_queue",
             "tests.test_qwen_embedding",
             "tests.test_paper_metadata",
             "tests.test_retrieval_service",

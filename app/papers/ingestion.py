@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from dataclasses import replace
 import hashlib
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
+from uuid import UUID
 
 from app.config import get_settings
 from app.db.session import tenant_transaction
@@ -68,6 +69,38 @@ class PaperIngestionService:
         return QwenEmbeddingClient.from_settings()
 
     async def ingest(self, tenant_id: str, user_id: str, paper: PaperInput) -> IngestionResult:
+        return await self._ingest(tenant_id, user_id, paper)
+
+    async def ingest_existing(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper: PaperInput,
+        paper_uuid: UUID | str,
+        ingestion_generation: UUID | str,
+        claim_guard: Callable[[PaperRepository], Awaitable[None]],
+    ) -> IngestionResult:
+        """Parse a queued asset without replaying stale user-editable metadata."""
+
+        return await self._ingest(
+            tenant_id,
+            user_id,
+            paper,
+            existing_paper_uuid=paper_uuid,
+            ingestion_generation=ingestion_generation,
+            claim_guard=claim_guard,
+        )
+
+    async def _ingest(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper: PaperInput,
+        *,
+        existing_paper_uuid: UUID | str | None = None,
+        ingestion_generation: UUID | str | None = None,
+        claim_guard: Callable[[PaperRepository], Awaitable[None]] | None = None,
+    ) -> IngestionResult:
         settings = get_settings()
         is_pdf = bool(
             paper.file_uri
@@ -78,6 +111,25 @@ class PaperIngestionService:
         )
         updated_from = str(paper.metadata.get("updated_from") or "")
         manual_edit = updated_from.startswith("inline_")
+        if existing_paper_uuid is not None and ingestion_generation is not None:
+            async with self.transaction_factory(tenant_id, user_id) as session:
+                repository = self.repository_factory(session)
+                if claim_guard is not None:
+                    await claim_guard(repository)
+                committed = await repository.content_version_for_generation(
+                    tenant_id,
+                    user_id,
+                    existing_paper_uuid,
+                    ingestion_generation,
+                )
+            if committed is not None:
+                return await self._resume_existing_generation(
+                    tenant_id,
+                    user_id,
+                    paper,
+                    committed,
+                    claim_guard,
+                )
         parser_name = "manual_text"
         parser_version = "1"
         prepared = paper
@@ -150,9 +202,18 @@ class PaperIngestionService:
             warning = "; ".join(parsed.warnings) or parsed.error or "PDF parsing failed"
             async with self.transaction_factory(tenant_id, user_id) as session:
                 repository = self.repository_factory(session)
-                record = await repository.save(tenant_id, user_id, prepared)
-                await repository.save_asset(tenant_id, user_id, record.paper_uuid, prepared)
-                await repository.mark_parsing_failed(tenant_id, user_id, record.paper_uuid, warning)
+                if existing_paper_uuid is not None:
+                    if claim_guard is not None:
+                        await claim_guard(repository)
+                    record = await repository.merge_extracted_metadata(
+                        tenant_id, user_id, existing_paper_uuid, prepared
+                    )
+                else:
+                    record = await repository.save(tenant_id, user_id, prepared)
+                    await repository.save_asset(tenant_id, user_id, record.paper_uuid, prepared)
+                    await repository.mark_parsing_failed(
+                        tenant_id, user_id, record.paper_uuid, warning
+                    )
             return IngestionResult(
                 paper=record,
                 chunk_count=0,
@@ -178,8 +239,15 @@ class PaperIngestionService:
         content_version = None
         async with self.transaction_factory(tenant_id, user_id) as session:
             repository = self.repository_factory(session)
-            record = await repository.save(tenant_id, user_id, prepared)
-            await repository.save_asset(tenant_id, user_id, record.paper_uuid, prepared)
+            if existing_paper_uuid is not None:
+                if claim_guard is not None:
+                    await claim_guard(repository)
+                record = await repository.merge_extracted_metadata(
+                    tenant_id, user_id, existing_paper_uuid, prepared
+                )
+            else:
+                record = await repository.save(tenant_id, user_id, prepared)
+                await repository.save_asset(tenant_id, user_id, record.paper_uuid, prepared)
             if chunks:
                 content_hash = hashlib.sha256(prepared.full_text.encode("utf-8")).hexdigest()
                 content_version = await repository.replace_content(
@@ -201,6 +269,7 @@ class PaperIngestionService:
                         if settings.rag_chunk_strategy == HIERARCHICAL_PARSER_NAME
                         else "1"
                     ),
+                    ingestion_generation=ingestion_generation,
                 )
 
         if content_version is None:
@@ -233,7 +302,10 @@ class PaperIngestionService:
                     [chunk.embedding_text(prepared.title) for chunk in chunks]
                 )
                 async with self.transaction_factory(tenant_id, user_id) as session:
-                    await self.repository_factory(session).set_embeddings(
+                    repository = self.repository_factory(session)
+                    if claim_guard is not None:
+                        await claim_guard(repository)
+                    await repository.set_embeddings(
                         tenant_id,
                         user_id,
                         record.paper_uuid,
@@ -246,7 +318,10 @@ class PaperIngestionService:
             except EmbeddingUnavailable as exc:
                 warning = str(exc)
                 async with self.transaction_factory(tenant_id, user_id) as session:
-                    await self.repository_factory(session).mark_embedding_failed(
+                    repository = self.repository_factory(session)
+                    if claim_guard is not None:
+                        await claim_guard(repository)
+                    await repository.mark_embedding_failed(
                         tenant_id,
                         user_id,
                         record.paper_uuid,
@@ -269,6 +344,87 @@ class PaperIngestionService:
             parsed.status,
             parser_name,
             settings.rag_chunk_strategy,
+        )
+
+    async def _resume_existing_generation(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper: PaperInput,
+        content_version: Any,
+        claim_guard: Callable[[PaperRepository], Awaitable[None]] | None,
+    ) -> IngestionResult:
+        embedding_client = self._embedding()
+        async with self.transaction_factory(tenant_id, user_id) as session:
+            repository = self.repository_factory(session)
+            if claim_guard is not None:
+                await claim_guard(repository)
+            record = await repository.get(tenant_id, user_id, paper.paper_id)
+            batch = await repository.embedding_batch_for_content(
+                tenant_id,
+                user_id,
+                content_version.paper_uuid,
+                content_version.content_uuid,
+            )
+            ready = await repository.content_embeddings_ready(
+                tenant_id,
+                user_id,
+                content_version.paper_uuid,
+                content_version.content_uuid,
+                model=embedding_client.model,
+            )
+        if record is None or batch is None:
+            raise RuntimeError("committed PDF generation is missing its current chunks")
+
+        warning = None
+        if ready:
+            embedding_status = "ready"
+        else:
+            try:
+                try:
+                    vectors = await embedding_client.embed(
+                        [str(item["embedding_text"]) for item in batch["chunks"]]
+                    )
+                    async with self.transaction_factory(tenant_id, user_id) as session:
+                        repository = self.repository_factory(session)
+                        if claim_guard is not None:
+                            await claim_guard(repository)
+                        await repository.set_embeddings(
+                            tenant_id,
+                            user_id,
+                            content_version.paper_uuid,
+                            content_version.content_uuid,
+                            vectors,
+                            model=embedding_client.model,
+                        )
+                    embedding_status = "ready"
+                except EmbeddingUnavailable as exc:
+                    warning = str(exc)
+                    async with self.transaction_factory(tenant_id, user_id) as session:
+                        repository = self.repository_factory(session)
+                        if claim_guard is not None:
+                            await claim_guard(repository)
+                        await repository.mark_embedding_failed(
+                            tenant_id,
+                            user_id,
+                            content_version.paper_uuid,
+                            content_version.content_uuid,
+                            warning,
+                        )
+                    embedding_status = "failed"
+            finally:
+                await persist_embedding_usage(
+                    tenant_id, user_id, embedding_client, operation="ingestion"
+                )
+
+        return IngestionResult(
+            paper=record,
+            chunk_count=int(content_version.chunk_count),
+            embedding_status=embedding_status,
+            warning=warning,
+            parse_status=str(content_version.parse_status),
+            parser_strategy=str(content_version.parser_name),
+            chunk_strategy=str(content_version.chunk_strategy),
         )
 
 

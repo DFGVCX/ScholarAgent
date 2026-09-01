@@ -62,7 +62,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 ### 后续
 
 - [x] 增加数据库备份、隔离恢复和迁移回滚的一键演练脚本与文档；脚本只在一次性 `_restore_check_<PID>` 数据库执行恢复和 Alembic downgrade/upgrade，静态安全回归已通过。
-- [ ] Docker 恢复后实际运行 `scripts/postgres_disaster_rehearsal.ps1`，记录备份 SHA-256、恢复后的论文/Chunk 数与 Alembic revision；当前 Linux engine pipe 缺失，不能虚报真实演练完成。
+- [ ] 实际运行 `scripts/postgres_disaster_rehearsal.ps1`，记录备份 SHA-256、恢复后的论文/Chunk 数与 Alembic revision；Docker Linux engine 已恢复，但本轮未执行破坏性恢复演练，不能虚报完成。
 - [ ] 增加面向大规模 Chunk 数量的 HNSW 参数和查询延迟压测。
 - [x] 建立数据库容量指标：论文、当前 Chunk、ready 向量、失败/待处理任务、Chunk 表字节和索引字节，并通过 `/knowledge/rag/stats` 返回。
 
@@ -178,9 +178,9 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 使用真实 4 页联邦学习论文验证缺模型时的回退链路，最终成功生成 25 个 v4 Chunk。
 - [x] 使用真实 13 页 IEEE 联邦学习论文完成 v4 切片回退验收：实际解析器为 `multimodal_aware_v3`，切片器为 `scholar_hierarchical_v4`，生成 77 个 Chunk。
 - [x] 为 v4 的公式、表格、图片、算法和代码 Chunk 增加版本化 `object_quality` 自动诊断；保存状态、分数、原因和类型专项检查，并保留上游解析质量原因。该分数只用于审计，不冒充人工准确率。
-- [ ] 网络可稳定访问 Hugging Face 后，补齐 `TableModel04_rs` 并完成 Docling 主路径的多版式真实 PDF 验收。
+- [ ] Docling layout、TableFormer、CodeFormulaV2 模型已补齐并通过单篇主路径；继续完成 IEEE、arXiv、ACM、Springer、Elsevier 多版式真实 PDF 验收。
 - [x] 完成包含 Docling 的 backend/worker CPU 镜像全量构建；容器内已验证 Docling `2.123.0`、Torch `2.10.0+cpu`、CUDA `null`，并可导入 TableFormer 依赖 OpenCV。
-- [ ] Docling 主路径验收通过前，v4 仅通过网站运行配置显式选择；不要把“请求 v4”误报为“Docling 实际执行成功”。
+- [x] v4 通过网站运行配置显式选择后，真实上传论文已确认 `requested_parser=actual_parser=scholar_hierarchical_v4` 且无 fallback；是否改为代码默认值仍留在 P0 单独决定。
 
 ### 后续
 
@@ -418,7 +418,7 @@ arXiv
 ### 后续
 
 - [x] 修复 Windows Python 3.14 默认 ProactorEventLoop 与异步 psycopg 不兼容：数据库运行时入口在 Windows 提前切换 Selector policy，并有平台专项测试；Python 3.16 移除 policy API 时需改用宿主 `loop_factory`。
-- [ ] Docker 启动后重新执行 PostgreSQL、上传、解析、索引、检索和页面展示的完整 E2E。
+- [ ] Docker 已完成 PostgreSQL、网站上传、Worker 解析、索引、结构 API 和中文 hybrid 检索；切片页面视觉点击、重新生成向量和删除流程仍需补齐后才能称为完整 E2E。
 - [x] 建立固定 RAG 回归命令 `python scripts/run_rag_regression.py` 和 GitHub Actions 任务；固定清单显式排除 Docker、真实 PostgreSQL、浏览器和外部模型 API 测试，E2E 仍是独立门禁。
 - [x] 更新仍提到 Chroma、SQLite/TinyDB fallback 或“尚未迁移 PostgreSQL/pgvector”的过时架构文档与测试注释；SQLite SQL 翻译单测仅保留为旧调用兼容，不代表存储回退。
 - [x] 将 `docs/superpowers/plans/` 明确标注为历史实施计划；其中复选框不再代表当前状态，RAG 进度只以本文件为准。
@@ -438,6 +438,10 @@ arXiv
 - [ ] 直接使用“切片”视图逐篇检查边界质量，记录过长、过短、跨章节、上下文不足、重复和乱码 Chunk。
 - [ ] 修复公式 Markdown、表格结构、图片裁剪和算法步骤的剩余质量问题。
 - [ ] 完成上传 → 解析 → v4 切片 → Embedding → 切片浏览的 Docker 端到端回归。
+  - [x] 网站上传在 1 秒内返回 `parsing`，MCP 仅登记论文/资产/任务，Docling 重依赖由 Worker 执行。
+  - [x] Worker 对真实 4 页 FLchain PDF 完成 Docling v4：21 节、32 Chunk、无 fallback，32 个千问向量全部 ready。
+  - [x] 结构 API 返回按序 32 个完整 Chunk；中文“联邦学习是什么” hybrid 检索返回 8 个 Chunk，Top 3 来自当前 v4 内容且同时具有 lexical/vector 排名。
+  - [ ] Codex 浏览器运行时初始化失败，尚未在 UI 中视觉点击“切片”视图；不能用 API 验收替代这一项。
 - [ ] 主路径稳定后再决定是否把 `scholar_hierarchical_v4` 设为默认策略。
 
 ### P1：提高 Top-1 和上下文质量
@@ -508,11 +512,11 @@ PostgreSQL/pgvector 基础
 ### 2026-08-31 Goal 续跑记录
 
 - 已增加 Docling 模型 `prepare/check` 诊断，模型不完整或不是 CPU PyTorch 时不会误报 ready。
-- 当前 Docker Desktop 4.69.0 在损坏的 `%LOCALAPPDATA%\Docker\run\dockerInference` ReparsePoint 上稳定复现错误 1920 并崩溃；当前工具不能删除该对象，恢复步骤已写入中文启动说明。
+- Docker Desktop 4.69.0 曾在损坏的 `%LOCALAPPDATA%\Docker\run\dockerInference` Windows Unix socket 上稳定崩溃；关闭 Inference 并隔离旧 runtime socket 后 Linux engine 已无损恢复，未执行恢复出厂、未删除镜像或卷。
 - Windows Python 3.14 的 async psycopg 已从 Proactor 切到 Selector event loop；专项测试通过。原先两个知识库集成用例不再抛 `InterfaceError`，但在 Docker daemon 不可用时会继续等待 PostgreSQL，不能把这部分误报为 E2E 通过。
 - 已建立无外部服务依赖的固定 RAG 回归入口与 CI；本地首次清单审计排除了会真实写库的 `test_paper_acquisition`，最终 164 个解析、切片、公式、多模态、仓储、Embedding、检索和评测测试通过。
 - `/knowledge/rag/stats` 已增加容量与 ready 向量一致性指标；发现非当前版本 ready Chunk、ready 但无向量或模型不一致时返回 `consistency_status=degraded`，真实数据库归零验收等待 Docker 恢复。
-- Docker daemon 恢复后，先执行模型准备命令，再完成 backend/worker 全量构建和真实 PDF 主路径验收；这两项仍保持未完成。
+- Docker daemon、模型准备、backend/worker 全量 CPU 构建和单篇真实 PDF 主路径验收均已完成；后续重点转为多版式人工检查和完整页面 E2E。
 - 已对 7 篇、82 页真实文本 PDF 跑 `multimodal_aware_v3` 回退解析 + `scholar_hierarchical_v4` 切片审计；所有原子 Chunk 非空且无超 800 token 项，详细记录见 `docs/operations/RAG_CHUNK_AUDIT_2026-08-31.md`。
 - 审计发现并修复同页重复公式编号造成的元数据串写/重复 Chunk；另记录 4 个作者、机构或 arXiv 标识短 preamble Chunk，待首页元数据结构化后安全排除，不使用长度阈值直接误删。
 - 公式编号抽取、pypdf 候选选择和去编号已区分 `O(1)` 与真正的独立 `(1)` 标签；对应真实论文由 36 个 Chunk/2 个公式修正为 35 个 Chunk/1 个真实公式。
@@ -543,3 +547,8 @@ PostgreSQL/pgvector 基础
 - Docker Desktop 4.69 的启动崩溃已定位为 Model Runner 的失效 Windows Unix socket；通过官方设置键 `EnableInference=false` 和可恢复地隔离旧 runtime 目录恢复 Linux engine，未执行恢复出厂、未删除镜像或卷。
 - `docling_models` 已在持久化卷补齐 layout、layout ONNX、TableFormer 与 CodeFormulaV2，backend/worker 内检查均为 `ready=true`；CPU-only 运行时与模型文件数已由 setup 命令实际验证。
 - Docker backend 使用真实 4 页 FLchain PDF 完成 Docling 主路径：`actual_parser=scholar_hierarchical_v4`、21 个章节、32 个 v4 Chunk（21 prose、3 figure、7 equation、1 code），无 fallback；全公式增强 CPU 首次解析约 16 分钟，后续上传必须继续通过队列化 Worker 验收，不能把函数级成功误报为上传 E2E 完成。
+- 网站上传同一真实 FLchain PDF 已完成队列化 Worker E2E：上传响应约 0.986 秒，Worker 实际 Docling 转换 722.02 秒，论文从 `parsing` 原子切换到内容版本 2 的 `ready`，32 个 Chunk 全部使用 `qwen3.7-text-embedding` 生成 1024 维向量。
+- PDF 上传任务改为 generation + immutable asset SHA-256 + fenced lease：新上传可排队 successor，旧 Worker 在提交内容/向量前验证当前代际和租约；删除论文会使活跃任务失效，Worker 定时续租，完成/失败只接受当前 lease token，多租户轮询使用轮转起点避免固定首租户饥饿。
+- Alembic 已升级到 `20260901_0010`；真实 PostgreSQL 事务冒烟完成 enqueue → claim → 当前资产加载 → lease refresh → fenced complete 并 rollback，数据库最终活跃 PDF 任务为 0。
+- 内容提交按 ingestion generation 建立唯一约束，Worker 崩溃重试可直接恢复同代 32 个 Chunk/向量而不重复解析；恢复读取严格绑定目标 `content_uuid`，所有并发路径统一按 paper → job 加锁，新上传、旧任务失败与 lease 校验不会形成反向锁序。
+- `/knowledge/rag/stats` 当前仍为 `degraded`：`ready_missing_vectors=0`、`ready_wrong_model=0`，但历史非当前版本仍有 1240 个 ready Chunk；清理/降级历史向量状态后才能把一致性归零项标记完成。

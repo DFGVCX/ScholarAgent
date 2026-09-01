@@ -6,7 +6,7 @@ from uuid import UUID
 from app.papers.chunking import ChunkDraft
 from app.papers.models import PaperInput, normalize_arxiv_id, normalize_doi
 from app.papers.parsing import ParsedBlock, ParsedPage, ParsedPaper, ParsedSection
-from app.papers.repository import PaperRepository
+from app.papers.repository import PaperRepository, _merge_parser_metadata
 
 
 class _Mappings:
@@ -54,6 +54,17 @@ class _Session:
 
     async def execute(self, statement, params=None):
         self.statements.append((str(statement), params or {}))
+        return _Result()
+
+
+class _SoftDeleteSession(_Session):
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.statements.append((sql, params or {}))
+        if "UPDATE papers SET deleted_at=now()" in sql:
+            return _Result(
+                [{"paper_uuid": UUID("00000000-0000-0000-0000-000000000111")}]
+            )
         return _Result()
 
 
@@ -214,7 +225,222 @@ class _StatsSession(_Session):
         )
 
 
+class _PdfJobSession(_Session):
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.statements.append((sql, params or {}))
+        if "SELECT paper_uuid FROM papers" in sql and "FOR UPDATE" in sql:
+            return _Result(
+                [{"paper_uuid": UUID("00000000-0000-0000-0000-000000000111")}]
+            )
+        if "INSERT INTO paper_ingestion_jobs AS jobs" in sql:
+            return _Result(
+                [
+                    {
+                        "job_uuid": "job-1",
+                        "status": "pending",
+                        "generation_uuid": UUID(
+                            "00000000-0000-0000-0000-000000000888"
+                        ),
+                        "asset_sha256": "abc",
+                    }
+                ]
+            )
+        if "WITH candidate AS" in sql and "job_type='ingest_pdf'" in sql:
+            return _Result(
+                [
+                    {
+                        "job_uuid": "job-1",
+                        "tenant_id": "tenant-a",
+                        "user_id": "user-a",
+                        "paper_uuid": UUID("00000000-0000-0000-0000-000000000111"),
+                        "attempt_count": 1,
+                        "max_attempts": 3,
+                        "payload": {"paper_id": "paper-1"},
+                    }
+                ]
+            )
+        return _Result()
+
+
 class PaperRepositoryTest(unittest.IsolatedAsyncioTestCase):
+    def test_parser_metadata_merge_preserves_late_user_edits(self) -> None:
+        merged = _merge_parser_metadata(
+            {
+                "bibliography": {
+                    "title": {
+                        "value": "User title",
+                        "source": "user_edit",
+                        "confidence": 1.0,
+                        "user_edited": True,
+                    },
+                    "venue": {"value": "Old venue", "user_edited": False},
+                },
+                "unrelated": {"keep": True},
+            },
+            {
+                "parsing": {"actual_parser": "scholar_hierarchical_v4"},
+                "bibliography": {
+                    "title": {"value": "Parser title", "user_edited": False},
+                    "venue": {"value": "New venue", "user_edited": False},
+                },
+                "unrelated": {"overwrite": True},
+            },
+        )
+
+        self.assertEqual(merged["bibliography"]["title"]["value"], "User title")
+        self.assertEqual(merged["bibliography"]["venue"]["value"], "New venue")
+        self.assertNotIn("unrelated", merged)
+
+    async def test_pdf_ingestion_job_upsert_is_unique_and_marks_paper_parsing(self) -> None:
+        session = _PdfJobSession()
+
+        job = await PaperRepository(session).enqueue_pdf_ingestion_job(
+            "tenant-a",
+            "user-a",
+            UUID("00000000-0000-0000-0000-000000000111"),
+            {"paper_id": "paper-1", "authors": ["Alice"]},
+        )
+
+        self.assertEqual(job["job_uuid"], "job-1")
+        self.assertEqual(job["status"], "pending")
+        self.assertEqual(str(job["generation_uuid"]), "00000000-0000-0000-0000-000000000888")
+        lock_sql, _ = session.statements[0]
+        supersede_sql, supersede_params = session.statements[1]
+        insert_sql, insert_params = session.statements[2]
+        update_sql, update_params = session.statements[3]
+        self.assertIn("SELECT paper_uuid FROM papers", lock_sql)
+        self.assertIn("FOR UPDATE", lock_sql)
+        self.assertIn("status='running'", supersede_sql)
+        self.assertIn("generation_uuid<>:generation_uuid", supersede_sql)
+        self.assertIn("job_type='ingest_pdf'", insert_sql)
+        self.assertNotIn("status IN ('pending','running','retry')", insert_sql)
+        self.assertIn("generation_uuid", insert_sql)
+        self.assertIn("asset_sha256", insert_sql)
+        self.assertIn("status IN ('pending','retry')", insert_sql)
+        self.assertIn('"paper_id": "paper-1"', insert_params["payload"])
+        self.assertIn("ingestion_status='parsing'", update_sql)
+        self.assertIn("tenant_id=:tenant_id", update_sql)
+        self.assertEqual(update_params["user_id"], "user-a")
+        self.assertEqual(supersede_params["paper_uuid"], update_params["paper_uuid"])
+
+    async def test_pdf_ingestion_claim_uses_skip_locked_and_returns_payload(self) -> None:
+        session = _PdfJobSession()
+
+        job = await PaperRepository(session).claim_pdf_ingestion_job(
+            "worker-1", "tenant-a", "user-a"
+        )
+
+        self.assertIsNotNone(job)
+        assert job is not None
+        self.assertEqual(job["payload"], {"paper_id": "paper-1"})
+        sql, params = session.statements[0]
+        self.assertIn("FOR UPDATE SKIP LOCKED", sql)
+        self.assertIn("job_type='ingest_pdf'", sql)
+        self.assertIn("locked_at < now() - interval '2 hours'", sql)
+        self.assertIn("lease_token=gen_random_uuid()", sql)
+        self.assertIn("j.lease_token", sql)
+        self.assertIn("p.ingestion_generation=j.generation_uuid", sql)
+        self.assertIn("j.payload", sql)
+        self.assertEqual(params["worker_id"], "worker-1")
+
+    async def test_job_completion_is_fenced_by_worker_and_lease_token(self) -> None:
+        session = _Session()
+        job = {
+            "job_uuid": "job-1",
+            "paper_uuid": "00000000-0000-0000-0000-000000000111",
+            "locked_by": "worker-1",
+            "lease_token": "00000000-0000-0000-0000-000000000999",
+        }
+
+        await PaperRepository(session).complete_ingestion_job(
+            "tenant-a", "user-a", job
+        )
+
+        sql, params = session.statements[-1]
+        self.assertIn("status='running'", sql)
+        self.assertIn("locked_by=:locked_by", sql)
+        self.assertIn("lease_token=:lease_token", sql)
+        self.assertEqual(params["locked_by"], "worker-1")
+
+    async def test_pdf_retry_requires_the_same_current_generation(self) -> None:
+        session = _Session()
+        job = {
+            "job_uuid": "job-1",
+            "paper_uuid": "00000000-0000-0000-0000-000000000111",
+            "locked_by": "worker-1",
+            "lease_token": "00000000-0000-0000-0000-000000000999",
+            "generation_uuid": "00000000-0000-0000-0000-000000000888",
+            "attempt_count": 1,
+            "max_attempts": 3,
+        }
+
+        await PaperRepository(session).fail_ingestion_job(
+            "tenant-a", "user-a", job, "parser failed"
+        )
+
+        lock_sql, _ = session.statements[0]
+        sql, params = session.statements[1]
+        self.assertIn("SELECT paper_uuid FROM papers", lock_sql)
+        self.assertIn("FOR UPDATE", lock_sql)
+        self.assertIn("p.ingestion_generation=:generation_uuid", sql)
+        self.assertIn("THEN 'retry' ELSE 'failed'", sql)
+        self.assertEqual(params["generation_uuid"], job["generation_uuid"])
+
+    async def test_pdf_claim_guard_locks_paper_before_job(self) -> None:
+        session = _Session()
+        job = {
+            "job_uuid": "job-1",
+            "paper_uuid": "00000000-0000-0000-0000-000000000111",
+            "locked_by": "worker-1",
+            "lease_token": "00000000-0000-0000-0000-000000000999",
+        }
+
+        with self.assertRaises(RuntimeError):
+            await PaperRepository(session).assert_pdf_ingestion_claim(
+                "tenant-a", "user-a", job
+            )
+
+        self.assertEqual(len(session.statements), 2)
+        paper_sql, _ = session.statements[0]
+        job_sql, _ = session.statements[1]
+        self.assertIn("SELECT paper_uuid FROM papers", paper_sql)
+        self.assertIn("FOR UPDATE", paper_sql)
+        self.assertNotIn("paper_ingestion_jobs", paper_sql)
+        self.assertIn("FROM paper_ingestion_jobs j", job_sql)
+        self.assertIn("FOR UPDATE OF j", job_sql)
+        self.assertNotIn("FOR UPDATE OF j, p", job_sql)
+
+    async def test_embedding_batch_is_bound_to_target_current_content(self) -> None:
+        session = _Session()
+        content_uuid = UUID("00000000-0000-0000-0000-000000000222")
+
+        await PaperRepository(session).embedding_batch_for_content(
+            "tenant-a",
+            "user-a",
+            UUID("00000000-0000-0000-0000-000000000111"),
+            content_uuid,
+        )
+
+        sql, params = session.statements[-1]
+        self.assertIn("pc.content_uuid=:content_uuid", sql)
+        self.assertIn("pc.content_version=p.current_content_version", sql)
+        self.assertEqual(params["content_uuid"], content_uuid)
+
+    async def test_soft_delete_invalidates_active_pdf_jobs(self) -> None:
+        session = _SoftDeleteSession()
+
+        await PaperRepository(session).soft_delete(
+            "tenant-a", "user-a", "paper-1"
+        )
+
+        self.assertEqual(len(session.statements), 2)
+        job_sql, job_params = session.statements[-1]
+        self.assertIn("UPDATE paper_ingestion_jobs", job_sql)
+        self.assertIn("status IN ('pending','retry','running')", job_sql)
+        self.assertIn("paper_uuid=:paper_uuid", job_sql)
+        self.assertEqual(job_params["tenant_id"], "tenant-a")
+
     async def test_update_bibliography_changes_only_tenant_scoped_paper_metadata(self) -> None:
         session = _Session()
         session.execute = _metadata_update_execute(session)  # type: ignore[method-assign]

@@ -4,8 +4,9 @@ from pathlib import Path
 from typing import Any
 
 from app.db.session import tenant_transaction
+from app.papers.queued_ingestion import pdf_ingestion_queue_service
 from app.papers.repository import PaperRepository
-from app.services.rag_service import rag_service
+from app.services.rag_service import paper_input_from_dict, rag_service
 from mcp_server.scholar_mcp.models import PaperRecord
 
 
@@ -16,12 +17,41 @@ def _paper_input(paper: PaperRecord) -> dict[str, Any]:
 class KnowledgeStore:
     """PostgreSQL-only paper store; `path` remains accepted for API compatibility."""
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        ingestion_queue: Any | None = None,
+        rag: Any | None = None,
+    ) -> None:
         self.path = path
+        self.ingestion_queue = ingestion_queue or pdf_ingestion_queue_service
+        self.rag = rag or rag_service
+
+    @staticmethod
+    def _queues_pdf(paper: PaperRecord) -> bool:
+        updated_from = str(paper.metadata.get("updated_from") or "")
+        content_type = str(paper.metadata.get("content_type") or "").lower()
+        file_path = str(paper.file_path or paper.metadata.get("file_path") or "")
+        return bool(
+            file_path
+            and not updated_from.startswith("inline_")
+            and (
+                Path(file_path).suffix.lower() == ".pdf"
+                or content_type == "application/pdf"
+            )
+        )
 
     async def save_paper(self, paper: PaperRecord) -> dict[str, Any]:
         payload = _paper_input(paper)
-        await rag_service.index_paper(payload)
+        if self._queues_pdf(paper):
+            await self.ingestion_queue.enqueue(
+                paper.tenant_id,
+                paper.user_id,
+                paper_input_from_dict(payload),
+            )
+        else:
+            await self.rag.index_paper(payload)
         saved = await self.get(paper.tenant_id, paper.user_id, paper.paper_id)
         if saved is None:
             raise RuntimeError("paper was not visible after PostgreSQL ingestion")
