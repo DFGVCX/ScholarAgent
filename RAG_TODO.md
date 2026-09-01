@@ -166,6 +166,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 表格、公式、图片、算法及版面来源信息统一转换为稳定块模型。
 - [x] Docling 固定为 `2.123.0`，模型缓存挂载到 Docker 持久化卷。
 - [x] Docker 依赖固定为 CPU 版 PyTorch，避免 Docling 构建错误下载整套 CUDA 依赖。
+- [x] backend/worker 安装 OpenCV/TableFormer 所需的 `libxcb1`、`libgl1` 与 `libglib2.0-0t64`；修复模型加载后因 `libxcb.so.1` 缺失而退出、实际始终回退 v3 的容器缺陷。
 - [x] backend/worker 显式使用共享 `DOCLING_ARTIFACTS_PATH`，并提供 `docling_models` 一次性预取服务下载 layout、TableFormer 和 code/formula 模型（不包含 OCR）。
 - [x] `docling_models` 下载后会检查各模型目录的真实文件、Docling/PyTorch 版本和 CPU-only 状态，缺失模型或 CUDA 版 PyTorch 会以非零状态退出。
 - [x] 配置 `DOCLING_ARTIFACTS_PATH` 后，上传解析会在加载 Docling/Torch 前轻量检查模型目录；模型不完整时立即显式回退，不在请求中临时下载或长时间加载权重。
@@ -178,7 +179,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [x] 使用真实 13 页 IEEE 联邦学习论文完成 v4 切片回退验收：实际解析器为 `multimodal_aware_v3`，切片器为 `scholar_hierarchical_v4`，生成 77 个 Chunk。
 - [x] 为 v4 的公式、表格、图片、算法和代码 Chunk 增加版本化 `object_quality` 自动诊断；保存状态、分数、原因和类型专项检查，并保留上游解析质量原因。该分数只用于审计，不冒充人工准确率。
 - [ ] 网络可稳定访问 Hugging Face 后，补齐 `TableModel04_rs` 并完成 Docling 主路径的多版式真实 PDF 验收。
-- [ ] 完成包含 Docling 的 backend/worker 镜像全量构建；当前正在运行的复用镜像尚未安装 Docling，因此会自动回退到 `multimodal_aware_v3`。
+- [x] 完成包含 Docling 的 backend/worker CPU 镜像全量构建；容器内已验证 Docling `2.123.0`、Torch `2.10.0+cpu`、CUDA `null`，并可导入 TableFormer 依赖 OpenCV。
 - [ ] Docling 主路径验收通过前，v4 仅通过网站运行配置显式选择；不要把“请求 v4”误报为“Docling 实际执行成功”。
 
 ### 后续
@@ -431,8 +432,8 @@ arXiv
 
 ### P0：完善最佳解析与切片主路径
 
-- [ ] 完成包含 CPU PyTorch 与 Docling 的 backend/worker 镜像构建，确认不再下载 CUDA 依赖。
-- [ ] 补齐 Docling 所需模型并通过主解析路径验收，确认 manifest 中 actual parser 确实为 Docling。
+- [x] 完成包含 CPU PyTorch 与 Docling 的 backend/worker 镜像构建，确认不再下载 CUDA 依赖。
+- [x] 补齐 Docling 所需模型并通过单篇真实 PDF 主解析路径验收，manifest 中 `actual_parser=scholar_hierarchical_v4`、engine 为 Docling；多出版社版式检查仍在下一项单独跟踪。
 - [ ] 使用 IEEE、arXiv、ACM、Springer、Elsevier 文本型 PDF 人工检查阅读顺序、章节、公式、表格、图片和算法。
 - [ ] 直接使用“切片”视图逐篇检查边界质量，记录过长、过短、跨章节、上下文不足、重复和乱码 Chunk。
 - [ ] 修复公式 Markdown、表格结构、图片裁剪和算法步骤的剩余质量问题。
@@ -539,3 +540,6 @@ PostgreSQL/pgvector 基础
 - 论文“切片”页可直接展开质量状态、诊断分、原因和检查明细；操作与指标边界见 `docs/operations/STRUCTURED_OBJECT_QUALITY.md`。
 - 该功能是自动审计入口，不代表公式、表格或图片已经达到人工准确率标准；多出版社真实 Docling 主路径与 Docker E2E 仍保持未完成。
 - 已按 Docling 2.123.0 的 `BoundingBox.to_top_left_origin(page_height)` 契约修复来源框坐标原点；没有页面尺寸的历史或模拟数据保持原值，不猜测坐标。
+- Docker Desktop 4.69 的启动崩溃已定位为 Model Runner 的失效 Windows Unix socket；通过官方设置键 `EnableInference=false` 和可恢复地隔离旧 runtime 目录恢复 Linux engine，未执行恢复出厂、未删除镜像或卷。
+- `docling_models` 已在持久化卷补齐 layout、layout ONNX、TableFormer 与 CodeFormulaV2，backend/worker 内检查均为 `ready=true`；CPU-only 运行时与模型文件数已由 setup 命令实际验证。
+- Docker backend 使用真实 4 页 FLchain PDF 完成 Docling 主路径：`actual_parser=scholar_hierarchical_v4`、21 个章节、32 个 v4 Chunk（21 prose、3 figure、7 equation、1 code），无 fallback；全公式增强 CPU 首次解析约 16 分钟，后续上传必须继续通过队列化 Worker 验收，不能把函数级成功误报为上传 E2E 完成。

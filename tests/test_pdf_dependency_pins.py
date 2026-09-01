@@ -4,6 +4,15 @@ import yaml
 
 
 class PdfDependencyPinsTest(unittest.TestCase):
+    def test_ingestion_images_install_docling_native_runtime_libraries(self) -> None:
+        for dockerfile_name in ("backend", "worker"):
+            dockerfile = Path(f"deploy/Dockerfile.{dockerfile_name}").read_text(encoding="utf-8")
+            with self.subTest(dockerfile=dockerfile_name, setting="base_image"):
+                self.assertIn("FROM python:3.12-slim-trixie", dockerfile)
+            for package in ("libxcb1", "libgl1", "libglib2.0-0t64"):
+                with self.subTest(dockerfile=dockerfile_name, package=package):
+                    self.assertIn(package, dockerfile)
+
     def test_pdf_text_stack_is_pinned_to_verified_versions(self) -> None:
         requirements = Path("requirements.txt").read_text(encoding="utf-8")
         base_path = Path("requirements-base.txt")
