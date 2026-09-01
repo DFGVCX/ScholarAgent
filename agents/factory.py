@@ -10,41 +10,15 @@ from typing import Any
 import aiohttp
 
 from app.config import get_settings
+from app.services.model_configuration import (
+    ANTHROPIC_PROVIDERS,
+    DETERMINISTIC_PROVIDERS,
+    LOCAL_OPENAI_COMPATIBLE_PROVIDERS,
+    OPENAI_COMPATIBLE_PROVIDERS,
+    ModelCandidate,
+)
 from app.services.tracing import now_ms, trace_recorder
 from agents.runtime.token_policy import ModelCallBudget, token_policy
-
-
-OPENAI_COMPATIBLE_PROVIDERS = {
-    "openai-compatible",
-    "openai",
-    "azure-openai",
-    "deepseek",
-    "qwen",
-    "dashscope",
-    "moonshot",
-    "zhipu",
-    "baichuan",
-    "minimax",
-    "stepfun",
-    "yi",
-    "doubao",
-    "volcengine",
-    "siliconflow",
-    "openrouter",
-    "groq",
-    "together",
-    "fireworks",
-    "mistral",
-    "perplexity",
-    "ollama",
-    "vllm",
-    "lmstudio",
-    "gemini",
-    "cohere",
-}
-
-ANTHROPIC_PROVIDERS = {"anthropic", "claude"}
-LOCAL_OPENAI_COMPATIBLE_PROVIDERS = {"ollama", "vllm", "lmstudio"}
 
 
 @dataclass(frozen=True)
@@ -66,6 +40,23 @@ class ModelFactory:
 
     def __init__(self) -> None:
         self._cache: OrderedDict[str, tuple[float, ModelResponse]] = OrderedDict()
+
+    async def probe(self, candidate: ModelCandidate, prompt: str) -> ModelResponse:
+        """Test candidate settings without changing environment or persisted config."""
+        candidate.validate()
+        prepared_prompt, prepared_context, budget, estimated_input = token_policy.prepare(
+            "config_probe",
+            prompt,
+            {"tenant_id": "settings-probe", "user_id": "settings-probe"},
+        )
+        return await self._generate_with_candidate(
+            candidate,
+            "config_probe",
+            prepared_prompt,
+            prepared_context,
+            budget,
+            estimated_input,
+        )
 
     async def generate_text(
         self,
@@ -149,6 +140,48 @@ class ModelFactory:
             f"Provider {provider!r} is configured but no adapter is installed"
         )
 
+    async def _generate_with_candidate(
+        self,
+        candidate: ModelCandidate,
+        purpose: str,
+        prompt: str,
+        context: dict[str, Any],
+        budget: ModelCallBudget,
+        estimated_input: int,
+    ) -> ModelResponse:
+        provider = candidate.provider.strip().lower()
+        if provider in DETERMINISTIC_PROVIDERS:
+            if not get_settings().allow_mock_data:
+                raise RuntimeError("Deterministic model probes are disabled outside tests/demos")
+            content = self._deterministic_response(purpose, prompt, context)
+            return ModelResponse(
+                content=content,
+                provider="deterministic",
+                model="local-template",
+                input_tokens=estimated_input,
+                output_tokens=token_policy.estimate_tokens(content),
+            )
+        if provider in OPENAI_COMPATIBLE_PROVIDERS:
+            return await self._generate_openai_compatible(
+                provider,
+                purpose,
+                prompt,
+                context,
+                budget,
+                estimated_input,
+                candidate=candidate,
+            )
+        if provider in ANTHROPIC_PROVIDERS:
+            return await self._generate_anthropic(
+                purpose,
+                prompt,
+                context,
+                budget,
+                estimated_input,
+                candidate=candidate,
+            )
+        raise RuntimeError(f"Provider {provider!r} is configured but no adapter is installed")
+
     async def _generate_openai_compatible(
         self,
         provider: str,
@@ -157,11 +190,15 @@ class ModelFactory:
         context: dict[str, Any],
         budget: ModelCallBudget,
         estimated_input: int,
+        candidate: ModelCandidate | None = None,
     ) -> ModelResponse:
         settings = get_settings()
-        base_url = (settings.llm_base_url or "https://api.openai.com").rstrip("/")
-        model = settings.llm_model
-        api_key = settings.llm_api_key
+        base_url = (
+            (candidate.base_url if candidate is not None else settings.llm_base_url)
+            or "https://api.openai.com"
+        ).rstrip("/")
+        model = candidate.model if candidate is not None else settings.llm_model
+        api_key = candidate.api_key if candidate is not None else settings.llm_api_key
         if not model:
             raise RuntimeError("SCHOLAR_LLM_MODEL is required for LLM calls")
         if not api_key and provider not in LOCAL_OPENAI_COMPATIBLE_PROVIDERS:
@@ -195,10 +232,15 @@ class ModelFactory:
         if structured_planning:
             payload["response_format"] = {"type": "json_object"}
         timeout = aiohttp.ClientTimeout(total=60)
+        completions_url = (
+            f"{base_url}/chat/completions"
+            if base_url.endswith("/v1")
+            else f"{base_url}/v1/chat/completions"
+        )
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
-                    f"{base_url}/v1/chat/completions",
+                    completions_url,
                     json=payload,
                     headers={
                         **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
@@ -231,11 +273,21 @@ class ModelFactory:
         context: dict[str, Any],
         budget: ModelCallBudget,
         estimated_input: int,
+        candidate: ModelCandidate | None = None,
     ) -> ModelResponse:
         settings = get_settings()
-        base_url = (settings.anthropic_base_url or "https://api.anthropic.com").rstrip("/")
-        model = settings.anthropic_model or settings.llm_model
-        api_key = settings.anthropic_api_key or settings.llm_api_key
+        if candidate is None:
+            base_url = (settings.anthropic_base_url or "https://api.anthropic.com").rstrip("/")
+            model = settings.anthropic_model or settings.llm_model
+            api_key = settings.anthropic_api_key or settings.llm_api_key
+        else:
+            base_url = (
+                candidate.anthropic_base_url
+                or candidate.base_url
+                or "https://api.anthropic.com"
+            ).rstrip("/")
+            model = candidate.anthropic_model or candidate.model
+            api_key = candidate.anthropic_api_key or candidate.api_key
         if not api_key or not model:
             raise RuntimeError("SCHOLAR_ANTHROPIC_API_KEY and SCHOLAR_ANTHROPIC_MODEL are required for Claude calls")
         started = now_ms()

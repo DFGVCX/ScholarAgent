@@ -102,9 +102,27 @@ export interface RagChunk {
 }
 
 export interface RagStats {
-  backend: 'mysql' | 'json';
+  backend: 'pgvector';
   chunk_count: number;
   paper_count: number;
+  embedding_usage?: {
+    call_count: number;
+    successful_calls: number;
+    failed_calls: number;
+    failure_rate: number;
+    provider_request_count: number;
+    successful_provider_requests: number;
+    failed_provider_requests: number;
+    cancelled_provider_requests: number;
+    provider_request_failure_rate: number;
+    reported_tokens: number;
+    usage_reported_requests: number;
+    unreported_successful_requests: number;
+    pricing_configured: boolean;
+    cost_cny_per_million_tokens: number | null;
+    estimated_cost_cny: number | null;
+    token_source: 'provider_usage_only';
+  };
 }
 
 export interface RuntimeConfigItem {

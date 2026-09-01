@@ -4,15 +4,19 @@ import hashlib
 import mimetypes
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 from zipfile import ZipFile
 import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import get_settings
 from app.dependencies import AuthError, authenticate_api_key
+from app.db.session import tenant_transaction
+from app.papers.assets import inventory_from_manifest
+from app.papers.repository import PaperRepository
 from app.services import mysql_store
 from app.services.rag_service import rag_service
 from mcp_server.scholar_mcp.client import ScholarMCPClient
@@ -33,13 +37,98 @@ class KnowledgePaperDTO(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     authors: list[str] = Field(default_factory=list)
     abstract: str = Field(default="", max_length=8000)
-    full_text: str = Field(default="", max_length=50000)
+    full_text: str = Field(default="")
     published_at: str | None = Field(default=None, max_length=40)
     doi: str | None = Field(default=None, max_length=200)
     arxiv_id: str | None = Field(default=None, max_length=120)
     url: str | None = Field(default=None, max_length=500)
     in_knowledge_base: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BibliographyLinksDTO(BaseModel):
+    code: list[str] = Field(default_factory=list)
+    project: list[str] = Field(default_factory=list)
+    dataset: list[str] = Field(default_factory=list)
+    supplement: list[str] = Field(default_factory=list)
+
+
+class PaperMetadataUpdateDTO(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    title_translation: str = Field(default="", max_length=1000)
+    authors: list[str] = Field(default_factory=list)
+    institutions: list[str] = Field(default_factory=list)
+    published_at: str = Field(default="", max_length=40)
+    venue: str = Field(default="", max_length=500)
+    doi: str = Field(default="", max_length=200)
+    arxiv_id: str = Field(default="", max_length=120)
+    links: BibliographyLinksDTO = Field(default_factory=BibliographyLinksDTO)
+    paper_type: str = Field(default="", max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("title is required")
+        return value
+
+
+def _normalized_metadata_value(name: str, value: Any) -> Any:
+    if name in {"authors", "institutions"}:
+        normalized: list[str] = []
+        for item in value or []:
+            text_value = str(item).strip()
+            if text_value and text_value not in normalized:
+                normalized.append(text_value)
+        return normalized
+    if name == "links":
+        raw = getattr(value, "model_dump", lambda: value)()
+        if not isinstance(raw, dict):
+            raw = {}
+        return {
+            kind: _normalized_metadata_value("authors", raw.get(kind, []))
+            for kind in ("code", "project", "dataset", "supplement")
+        }
+    return str(value or "").strip()
+
+
+def _merge_user_bibliography(
+    existing: dict[str, Any], request: PaperMetadataUpdateDTO
+) -> dict[str, dict[str, Any]]:
+    raw = getattr(request, "model_dump", request.dict)()
+    merged: dict[str, dict[str, Any]] = {}
+    for name in (
+        "title",
+        "title_translation",
+        "authors",
+        "institutions",
+        "published_at",
+        "venue",
+        "doi",
+        "arxiv_id",
+        "links",
+        "paper_type",
+    ):
+        value = _normalized_metadata_value(name, raw.get(name))
+        previous = existing.get(name)
+        if isinstance(previous, dict) and previous.get("value") == value:
+            merged[name] = dict(previous)
+        elif not value and not isinstance(previous, dict):
+            merged[name] = {
+                "value": value,
+                "source": "not_generated" if name == "title_translation" else "not_found",
+                "confidence": 0.0,
+                "user_edited": False,
+            }
+        else:
+            merged[name] = {
+                "value": value,
+                "source": "user",
+                "confidence": 1.0,
+                "user_edited": True,
+            }
+    return merged
 
 
 def _stable_paper_id(source: str, title: str) -> str:
@@ -66,7 +155,7 @@ def _extract_docx_text(path: Path) -> str:
             texts = [node.text or "" for node in paragraph.findall(".//w:t", namespace)]
             if "".join(texts).strip():
                 paragraphs.append("".join(texts))
-        return "\n".join(paragraphs).strip()[:50000]
+        return "\n".join(paragraphs).strip()
     except Exception:
         return ""
 
@@ -74,7 +163,7 @@ def _extract_docx_text(path: Path) -> str:
 def _extract_uploaded_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".txt", ".md", ".markdown", ".html", ".htm"}:
-        return path.read_text(encoding="utf-8", errors="ignore")[:50000]
+        return path.read_text(encoding="utf-8", errors="ignore")
     if suffix == ".pdf":
         try:
             from pypdf import PdfReader  # type: ignore
@@ -82,7 +171,7 @@ def _extract_uploaded_text(path: Path) -> str:
             return ""
         try:
             reader = PdfReader(str(path))
-            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()[:50000]
+            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
         except Exception:
             return ""
     if suffix == ".docx":
@@ -133,6 +222,28 @@ def _resolve_tenant_file(file_path: str, user) -> Path:
     return resolved
 
 
+def _resolve_paper_asset(paper: dict[str, Any], asset_name: str) -> Path:
+    if not asset_name or Path(asset_name).name != asset_name or any(
+        part in {".", ".."} for part in Path(asset_name).parts
+    ):
+        raise ValueError("unsafe paper asset name")
+    manifest = dict((paper.get("parsing") or {}).get("manifest") or {})
+    allowed = {item["name"] for item in inventory_from_manifest(manifest)}
+    if asset_name not in allowed:
+        raise ValueError("paper asset is not referenced by the current parse manifest")
+    file_path = str((paper.get("metadata") or {}).get("file_path") or paper.get("file_path") or "")
+    if not file_path:
+        raise ValueError("paper source file is unavailable")
+    source = Path(file_path).expanduser().resolve()
+    root = source.parent / f"{source.stem}_assets"
+    resolved = (root / asset_name).resolve()
+    if resolved.parent != root.resolve():
+        raise ValueError("unsafe paper asset path")
+    if not resolved.is_file():
+        raise FileNotFoundError(asset_name)
+    return resolved
+
+
 def _reject_unconverted_caj(path: Path) -> None:
     if path.suffix.lower() == ".caj":
         raise HTTPException(
@@ -147,7 +258,7 @@ class FileAnnotationDTO(BaseModel):
 
 
 class FileTextUpdateDTO(BaseModel):
-    content: str = Field(..., min_length=1, max_length=50000)
+    content: str = Field(..., min_length=1)
 
 
 @router.get("/recent")
@@ -201,7 +312,7 @@ async def save_knowledge(
     user = _current_user(x_api_key)
     paper = getattr(request, "model_dump", request.dict)()
     paper["paper_id"] = paper["paper_id"] or _stable_paper_id(paper["source"], paper["title"])
-    client = ScholarMCPClient()
+    client = ScholarMCPClient(timeout_seconds=300.0)
     result = await client.call_tool(
         "save_to_knowledge",
         {
@@ -212,6 +323,54 @@ async def save_knowledge(
     )
     stats = await rag_service.stats(user.tenant_id, user.user_id)
     return {"item": result["paper"], "rag": stats}
+
+
+@router.patch("/{paper_id}/metadata")
+async def update_paper_metadata(
+    paper_id: str,
+    request: PaperMetadataUpdateDTO,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    async with tenant_transaction(user.tenant_id, user.user_id) as session:
+        repository = PaperRepository(session)
+        current = await repository.get(user.tenant_id, user.user_id, paper_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="paper not found")
+        metadata = dict(current.metadata)
+        existing = metadata.get("bibliography") or {}
+        bibliography = _merge_user_bibliography(
+            dict(existing) if isinstance(existing, dict) else {},
+            request,
+        )
+        metadata.update(
+            {
+                "bibliography": bibliography,
+                "title_translation": bibliography["title_translation"]["value"],
+                "institutions": bibliography["institutions"]["value"],
+                "venue": bibliography["venue"]["value"],
+                "paper_type": bibliography["paper_type"]["value"],
+            }
+        )
+        updated = await repository.update_bibliography(
+            user.tenant_id,
+            user.user_id,
+            paper_id,
+            title=bibliography["title"]["value"],
+            authors=tuple(bibliography["authors"]["value"]),
+            published_at=bibliography["published_at"]["value"] or None,
+            doi=bibliography["doi"]["value"] or None,
+            arxiv_id=bibliography["arxiv_id"]["value"] or None,
+            metadata=metadata,
+        )
+    if not updated:
+        raise HTTPException(status_code=404, detail="paper not found")
+    return {
+        "saved": True,
+        "paper_id": paper_id,
+        "current_content_version": current.current_content_version,
+        "metadata": metadata,
+    }
 
 
 @router.post("/upload")
@@ -321,6 +480,42 @@ async def get_pdf_info(
         "file_size": resolved.stat().st_size,
         "file_name": resolved.name,
     }
+
+
+@router.get("/files/{paper_id}/assets/{asset_name}")
+async def get_paper_asset(
+    paper_id: str,
+    asset_name: str,
+    api_key: str = "",
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> FileResponse:
+    user = _current_user(x_api_key or api_key)
+    paper = await _find_user_paper(paper_id, user)
+    try:
+        resolved = _resolve_paper_asset(paper, asset_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="paper asset not found") from exc
+    _resolve_tenant_file(str(resolved), user)
+    return FileResponse(resolved, media_type="image/png", filename=resolved.name)
+
+
+@router.get("/{paper_id}/structure")
+async def get_paper_structure(
+    paper_id: str,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    async with tenant_transaction(user.tenant_id, user.user_id) as session:
+        structure = await PaperRepository(session).get_structure(
+            user.tenant_id,
+            user.user_id,
+            paper_id,
+        )
+    if structure is None:
+        raise HTTPException(status_code=404, detail="paper structure not found")
+    return structure
 
 
 @router.get("/files/{paper_id}/annotations")
@@ -484,10 +679,70 @@ async def toggle_knowledge_base(
 async def search_rag(
     query: str = "",
     limit: int = Query(default=10, ge=1, le=50),
+    paper_id: list[str] | None = Query(default=None),
+    year_from: int | None = Query(default=None, ge=1000, le=3000),
+    year_to: int | None = Query(default=None, ge=1000, le=3000),
+    author: str = Query(default="", max_length=200),
+    venue: str = Query(default="", max_length=200),
+    section: list[str] | None = Query(default=None),
+    chunk_type: list[str] | None = Query(default=None),
+    retrieval_mode: str | None = None,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
     user = _current_user(x_api_key)
-    return await rag_service.search(user.tenant_id, user.user_id, query, limit)
+    try:
+        return await rag_service.search(
+            user.tenant_id,
+            user.user_id,
+            query,
+            limit,
+            paper_ids=tuple(paper_id or ()),
+            year_from=year_from,
+            year_to=year_to,
+            author=author,
+            venue=venue,
+            section_ids=tuple(section or ()),
+            chunk_types=tuple(chunk_type or ()),
+            retrieval_mode=retrieval_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/rag/chunks/{chunk_id}/context")
+async def expand_rag_context(
+    chunk_id: UUID,
+    before: int = Query(default=1, ge=0, le=8),
+    after: int = Query(default=1, ge=0, le=8),
+    token_budget: int = Query(default=2048, ge=1, le=32768),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    try:
+        return await rag_service.expand_context(
+            user.tenant_id,
+            user.user_id,
+            str(chunk_id),
+            before,
+            after,
+            token_budget,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/rag/chunks/{chunk_id}/parent")
+async def get_rag_parent_context(
+    chunk_id: UUID,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    try:
+        return await rag_service.parent_context(
+            user.tenant_id, user.user_id, str(chunk_id)
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/rag/stats")

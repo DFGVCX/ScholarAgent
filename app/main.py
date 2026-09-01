@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -25,7 +27,7 @@ app = FastAPI(title=settings.app_name, version="0.1.0")
 
 @app.on_event("startup")
 async def initialize_runtime_database() -> None:
-    mysql_store.initialize_database()
+    await asyncio.to_thread(mysql_store.initialize_database)
 
 
 @app.on_event("shutdown")

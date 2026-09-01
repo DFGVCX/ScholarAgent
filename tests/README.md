@@ -16,3 +16,11 @@ Rules:
 - New MCP tools need registry/safety tests.
 - UI-heavy changes should add or update E2E checks when Playwright infrastructure is available.
 
+Run the deterministic RAG regression (no Docker, live PostgreSQL, browser, or external model API required):
+
+```powershell
+python scripts/run_rag_regression.py
+```
+
+Live PostgreSQL knowledge-base tests and browser E2E are separate gates and must not be reported as covered by this command.
+

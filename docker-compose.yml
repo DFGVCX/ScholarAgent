@@ -9,10 +9,10 @@ services:
     environment:
       - SCHOLAR_ENV=${SCHOLAR_ENV:-production}
       - SCHOLAR_API_KEYS=${SCHOLAR_API_KEYS:-demo-key:tenant_demo:user_demo}
-      - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
+      - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
       - SCHOLAR_REDIS_URL=${SCHOLAR_REDIS_URL:-redis://redis:6379/0}
       - SCHOLAR_TASK_EXECUTION_MODE=queue
-      - SCHOLAR_CHECKPOINT_BACKEND=sqlite
+      - SCHOLAR_CHECKPOINT_BACKEND=postgres
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}
       - SCHOLAR_PRIMARY_MODEL_PROVIDER=${SCHOLAR_PRIMARY_MODEL_PROVIDER:-none}
@@ -23,18 +23,31 @@ services:
       - SCHOLAR_ANTHROPIC_BASE_URL=${SCHOLAR_ANTHROPIC_BASE_URL:-https://api.anthropic.com}
       - SCHOLAR_ANTHROPIC_API_KEY=${SCHOLAR_ANTHROPIC_API_KEY:-}
       - SCHOLAR_ANTHROPIC_MODEL=${SCHOLAR_ANTHROPIC_MODEL:-}
-      - SCHOLAR_RAG_EMBEDDING_PROVIDER=${SCHOLAR_RAG_EMBEDDING_PROVIDER:-lexical}
+      - SCHOLAR_RAG_EMBEDDING_PROVIDER=qwen
+      - SCHOLAR_RAG_EMBEDDING_BASE_URL=${SCHOLAR_RAG_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode}
+      - SCHOLAR_RAG_EMBEDDING_API_KEY=${SCHOLAR_RAG_EMBEDDING_API_KEY:-}
+      - SCHOLAR_RAG_EMBEDDING_MODEL=qwen3.7-text-embedding
+      - SCHOLAR_RAG_EMBEDDING_DIMENSIONS=1024
+      - SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS=${SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS:-0}
+      - SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS=${SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS:-8}
+      - SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER=${SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER:-3}
+      - SCHOLAR_PDF_PARSE_STRATEGY=${SCHOLAR_PDF_PARSE_STRATEGY:-multimodal_aware_v3}
+      - SCHOLAR_RAG_CHUNK_STRATEGY=${SCHOLAR_RAG_CHUNK_STRATEGY:-multimodal_aware_v3}
       - SCHOLAR_MCP_URL=http://mcp_server:8001/mcp/
       - SCHOLAR_MCP_TOKEN=${SCHOLAR_MCP_TOKEN:-}
       - SCHOLAR_BROWSER_WORKER_URL=http://browser_worker:8002
       - SCHOLAR_BROWSER_WORKER_TOKEN=${SCHOLAR_BROWSER_WORKER_TOKEN:-}
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
       - SCHOLAR_UPLOAD_DIR=/app/storage/uploads
+      - HF_HOME=/app/storage/models/huggingface
+      - DOCLING_ARTIFACTS_PATH=/app/storage/models/docling
     volumes:
       - scholar_storage:/app/storage
     networks:
       - scholar_network
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
@@ -55,7 +68,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.frontend
     ports:
-      - "80:80"
+      - "${SCHOLAR_FRONTEND_PORT:-3000}:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -70,10 +83,10 @@ services:
     environment:
       - SCHOLAR_ENV=${SCHOLAR_ENV:-production}
       - SCHOLAR_API_KEYS=${SCHOLAR_API_KEYS:-demo-key:tenant_demo:user_demo}
-      - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
+      - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
       - SCHOLAR_REDIS_URL=${SCHOLAR_REDIS_URL:-redis://redis:6379/0}
       - SCHOLAR_TASK_EXECUTION_MODE=queue
-      - SCHOLAR_CHECKPOINT_BACKEND=sqlite
+      - SCHOLAR_CHECKPOINT_BACKEND=postgres
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}
       - SCHOLAR_PRIMARY_MODEL_PROVIDER=${SCHOLAR_PRIMARY_MODEL_PROVIDER:-none}
@@ -84,9 +97,20 @@ services:
       - SCHOLAR_ANTHROPIC_BASE_URL=${SCHOLAR_ANTHROPIC_BASE_URL:-https://api.anthropic.com}
       - SCHOLAR_ANTHROPIC_API_KEY=${SCHOLAR_ANTHROPIC_API_KEY:-}
       - SCHOLAR_ANTHROPIC_MODEL=${SCHOLAR_ANTHROPIC_MODEL:-}
-      - SCHOLAR_RAG_EMBEDDING_PROVIDER=${SCHOLAR_RAG_EMBEDDING_PROVIDER:-lexical}
+      - SCHOLAR_RAG_EMBEDDING_PROVIDER=qwen
+      - SCHOLAR_RAG_EMBEDDING_BASE_URL=${SCHOLAR_RAG_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode}
+      - SCHOLAR_RAG_EMBEDDING_API_KEY=${SCHOLAR_RAG_EMBEDDING_API_KEY:-}
+      - SCHOLAR_RAG_EMBEDDING_MODEL=qwen3.7-text-embedding
+      - SCHOLAR_RAG_EMBEDDING_DIMENSIONS=1024
+      - SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS=${SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS:-0}
+      - SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS=${SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS:-8}
+      - SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER=${SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER:-3}
+      - SCHOLAR_PDF_PARSE_STRATEGY=${SCHOLAR_PDF_PARSE_STRATEGY:-multimodal_aware_v3}
+      - SCHOLAR_RAG_CHUNK_STRATEGY=${SCHOLAR_RAG_CHUNK_STRATEGY:-multimodal_aware_v3}
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
       - SCHOLAR_UPLOAD_DIR=/app/storage/uploads
+      - HF_HOME=/app/storage/models/huggingface
+      - DOCLING_ARTIFACTS_PATH=/app/storage/models/docling
       - SCHOLAR_MCP_URL=http://mcp_server:8001/mcp/
       - SCHOLAR_MCP_TOKEN=${SCHOLAR_MCP_TOKEN:-}
     volumes:
@@ -94,12 +118,32 @@ services:
     networks:
       - scholar_network
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
       mcp_server:
         condition: service_healthy
+
+  docling_models:
+    profiles: ["setup"]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    command:
+      - python
+      - -m
+      - app.papers.docling_models
+      - prepare
+      - --output-dir
+      - /app/storage/models/docling
+    environment:
+      - HF_HOME=/app/storage/models/huggingface
+      - DOCLING_ARTIFACTS_PATH=/app/storage/models/docling
+    volumes:
+      - scholar_storage:/app/storage
 
   mcp_server:
     restart: unless-stopped
@@ -108,10 +152,12 @@ services:
       dockerfile: deploy/Dockerfile.mcp
     environment:
       - SCHOLAR_ENV=development
-      - SCHOLAR_MYSQL_URL=${SCHOLAR_MYSQL_URL:-mysql://scholar:scholar@db:3306/scholar_agent?charset=utf8mb4}
+      - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
       - SCHOLAR_ALLOW_MOCK_DATA=${SCHOLAR_ALLOW_MOCK_DATA:-false}
       - SCHOLAR_EXTERNAL_SOURCE_PROVIDER=${SCHOLAR_EXTERNAL_SOURCE_PROVIDER:-real}
       - SCHOLAR_STORAGE_DIR=/app/storage/runtime
+      - SCHOLAR_PDF_PARSE_STRATEGY=${SCHOLAR_PDF_PARSE_STRATEGY:-multimodal_aware_v3}
+      - SCHOLAR_RAG_CHUNK_STRATEGY=${SCHOLAR_RAG_CHUNK_STRATEGY:-multimodal_aware_v3}
       - SCHOLAR_MCP_TOKEN=${SCHOLAR_MCP_TOKEN:-}
       - SCHOLAR_MCP_HOST=0.0.0.0
       - SCHOLAR_MCP_PORT=8001
@@ -122,6 +168,8 @@ services:
     networks:
       - scholar_network
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
     healthcheck:
@@ -170,30 +218,41 @@ services:
 
   db:
     restart: unless-stopped
-    image: mysql:8.0
+    image: pgvector/pgvector:0.8.5-pg17-bookworm
     environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-scholar_root}
-      - MYSQL_DATABASE=${MYSQL_DATABASE:-scholar_agent}
-      - MYSQL_USER=${MYSQL_USER:-scholar}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-scholar}
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+      - POSTGRES_DB=${POSTGRES_DB:-scholar_agent}
+      - POSTGRES_USER=${POSTGRES_USER:-scholar}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-scholar}
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - scholar_mysql:/var/lib/mysql
-      - ./deploy/mysql/init.sql:/docker-entrypoint-initdb.d/01-scholar-init.sql:ro
+      - scholar_postgres:/var/lib/postgresql/data
     networks:
       - scholar_network
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 15
       start_period: 30s
 
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      - SCHOLAR_DATABASE_URL=${SCHOLAR_DATABASE_URL:-postgresql+psycopg://scholar:scholar@db:5432/scholar_agent}
+    networks:
+      - scholar_network
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   scholar_storage:
-  scholar_mysql:
+  scholar_postgres:
   scholar_redis:
 
 networks:

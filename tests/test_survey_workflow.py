@@ -88,7 +88,7 @@ class SurveyWorkflowTest(unittest.IsolatedAsyncioTestCase):
                 events.append(event)
 
         task = asyncio.create_task(run_workflow())
-        # Index persistence can take a few seconds on a cold Windows/Chroma start.
+        # Workflow startup can take a few seconds on a cold Windows/PostgreSQL start.
         # Poll with a bounded lifecycle timeout instead of assuming a 2s backend.
         for _ in range(600):
             if any(event["event"] == "outline_required" for event in events):

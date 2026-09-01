@@ -16,16 +16,22 @@ from mcp_server.scholar_mcp.tools import call_tool_with_safety
 class ScholarMCPClient:
     """MCP client with standard HTTP transport and in-process fallback."""
 
-    def __init__(self, url: str | None = None, token: str | None = None) -> None:
+    def __init__(
+        self,
+        url: str | None = None,
+        token: str | None = None,
+        timeout_seconds: float = 60.0,
+    ) -> None:
         self.url = (url if url is not None else os.getenv("SCHOLAR_MCP_URL", "")).strip()
         if self.url and not self.url.endswith("/"):
             self.url = f"{self.url}/"
         self.token = (token if token is not None else os.getenv("SCHOLAR_MCP_TOKEN", "")).strip()
+        self.timeout_seconds = max(1.0, float(timeout_seconds))
 
     async def list_tools(self) -> list[dict[str, Any]]:
         if not self.url:
             return [tool_registry.get_spec(name).to_dict() for name in tool_registry.names()]
-        async with _MCPHttpSession(self.url, self.token) as session:
+        async with _MCPHttpSession(self.url, self.token, self.timeout_seconds) as session:
             result = await session.list_tools()
             return [
                 {
@@ -40,7 +46,7 @@ class ScholarMCPClient:
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if not self.url:
             return await call_tool_with_safety(name, arguments)
-        async with _MCPHttpSession(self.url, self.token) as session:
+        async with _MCPHttpSession(self.url, self.token, self.timeout_seconds) as session:
             result = await session.call_tool(name, arguments=arguments)
             if result.isError:
                 message = next(
@@ -63,16 +69,17 @@ class ScholarMCPClient:
 
 
 class _MCPHttpSession:
-    def __init__(self, url: str, token: str) -> None:
+    def __init__(self, url: str, token: str, timeout_seconds: float = 60.0) -> None:
         self.url = url
         self.token = token
+        self.timeout_seconds = max(1.0, float(timeout_seconds))
         self._http_context = None
         self._transport_context = None
         self._session_context = None
 
     async def __aenter__(self) -> ClientSession:
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
-        self._http_context = httpx.AsyncClient(headers=headers, timeout=60)
+        self._http_context = httpx.AsyncClient(headers=headers, timeout=self.timeout_seconds)
         http_client = await self._http_context.__aenter__()
         self._transport_context = streamable_http_client(self.url, http_client=http_client)
         read_stream, write_stream, _ = await self._transport_context.__aenter__()

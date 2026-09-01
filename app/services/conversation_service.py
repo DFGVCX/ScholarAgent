@@ -158,11 +158,7 @@ class ConversationRepository:
 
     def _mysql_ready(self) -> bool:
         if not mysql_store.is_available():
-            return False
-        if self._mysql_schema_ready:
-            return True
-        for statement in CONVERSATION_SCHEMA_SQL:
-            mysql_store.execute(statement)
+            raise mysql_store.PostgreSQLUnavailable("PostgreSQL is required for conversations")
         self._mysql_schema_ready = True
         return True
 
