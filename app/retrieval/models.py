@@ -306,6 +306,7 @@ class RetrievalResponse:
     ranking_policy: dict[str, Any] | None = None
     merged_contexts: tuple[MergedContext, ...] = ()
     debug: dict[str, Any] | None = None
+    reproducibility: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -320,6 +321,7 @@ class RetrievalResponse:
             "ranking_policy": dict(self.ranking_policy or {}),
             "merged_contexts": [context.to_dict() for context in self.merged_contexts],
             "debug": dict(self.debug or {}),
+            "reproducibility": dict(self.reproducibility or {}),
         }
 
     def to_legacy_dict(self) -> dict[str, Any]:

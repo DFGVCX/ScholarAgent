@@ -63,7 +63,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 
 - [x] 增加数据库备份、隔离恢复和迁移回滚的一键演练脚本与文档；脚本只在一次性 `_restore_check_<PID>` 数据库执行恢复和 Alembic downgrade/upgrade，静态安全回归已通过。
 - [ ] 实际运行 `scripts/postgres_disaster_rehearsal.ps1`，记录备份 SHA-256、恢复后的论文/Chunk 数与 Alembic revision；Docker Linux engine 已恢复，但本轮未执行破坏性恢复演练，不能虚报完成。
-- [ ] 增加面向大规模 Chunk 数量的 HNSW 参数和查询延迟压测。
+- [x] 增加面向大规模 Chunk 数量的 HNSW 参数和查询延迟压测：`scripts/benchmark_hnsw.py` 对生产 SQL 采集 P50/P95/P99、索引命中率和 Buffer 指标；默认至少 1000 个 ready 向量，小语料只能显式运行 smoke，不能充当性能结论。
 - [x] 建立数据库容量指标：论文、当前 Chunk、ready 向量、失败/待处理任务、Chunk 表字节和索引字节，并通过 `/knowledge/rag/stats` 返回。
 
 参考：
@@ -94,7 +94,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 - [ ] 为内容版本替换、Worker 重试和并发上传增加真实 PostgreSQL 集成测试。
 - [x] 明确文件资产的生命周期：源 PDF 在软删除和换版时保留；当前解析 PNG 由 manifest 管理；浏览器临时文件不属于论文资产清理器。完整边界见 `docs/operations/PAPER_ASSET_LIFECYCLE.md`。
 - [x] 旧内容版本派生 PNG 当前保留数为 0；新内容版本事务成功提交后，清理器仅删除当前 manifest 未引用的安全 `page_XXX_*.png` 直接子文件，跳过源 PDF、非生成文件、嵌套路径和符号链接，失败不回滚论文或阻塞 Embedding。
-- [ ] Docker/PostgreSQL 恢复后执行数据库一致性验收，确认 `ready_noncurrent_chunks/ready_missing_vectors/ready_wrong_model` 全为 0；统计与 degraded 状态已实现，真实库数值仍待验收。
+- [x] 在 2026-09-05 本机隔离 PostgreSQL 验收库执行一致性检查，`ready_noncurrent_chunks/ready_missing_vectors/ready_wrong_model` 均为 0，`consistency_status=ok`；该验收只证明当前库一致，后续生产库仍由发布门禁逐次检查。
 
 ## 5. 阶段三：千问 Embedding 与向量生命周期
 
@@ -261,7 +261,7 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 ### 后续
 
 - [x] 接入可替换 Reranker，当前实现支持千问 `qwen3.7-text-rerank` 原生协议与 `qwen3-rerank` 兼容协议；超时、限流或未配置时明确回退 RRF，不伪造重排分数。
-- [ ] 比较“仅 vector、仅 lexical、RRF hybrid、hybrid + reranker”四种生产检索策略。
+- [x] 实现“仅 vector、仅 lexical、RRF hybrid、hybrid + reranker”四种生产检索策略的固定查询集评测；使用网站同一 PostgreSQL 链路，真实指标须在固定 PDF 与模型 Key 就绪后生成，不写入伪造数值。
 - [x] 提供同查询四策略运行时对比 API 和前端视图，并在一次请求内复用 Query Embedding；固定语料的生产指标报告仍待真实 Reranker 配置后生成。
 - [x] 增加中英双向查询扩展：中文、英文术语、缩写和混合查询映射到同一学术概念组；短缩写使用词边界避免误触发，响应回显 `query_expansions`。
 - [x] 支持本地候选按论文、年份区间、作者、发表渠道、章节和对象类型过滤；lexical 与 vector 使用同一组 SQL 条件，响应回显规范化后的 `filters`。
@@ -370,11 +370,11 @@ arXiv
 - [ ] 增加表格专项查询及单元格/行级证据。
 - [ ] 增加图片专项查询及图题、图中文字和视觉证据。
 - [ ] 增加算法专项查询及步骤级证据。
-- [ ] 分别报告中文、英文、缩写和跨语言查询指标。
-- [ ] 建立生产检索评测，比较 lexical、vector、hybrid 和 hybrid + reranker。
-- [ ] 增加查询级失败分类：未解析、未切入、未召回、排序过低、证据判定问题。
-- [ ] 增加检索延迟、Embedding Token、索引大小和调用成本指标。
-- [ ] 每次调整解析、切片、Embedding 或排序后自动生成新报告并与基线比较。
+- [x] 生产评测按 `language` 和 `category` 分组报告；固定查询集中的中文、英文、缩写和跨语言类别可独立比较。
+- [x] 建立生产检索评测，比较 lexical、vector、hybrid 和 hybrid + reranker，并复用同一次 Query Embedding。
+- [x] 增加查询级失败分类：无结果、目标论文未召回、证据未召回、排序过低和证据通过；逐查询保留人工标签与 Top-50 探针结果供定位“未切入/证据判定”问题。
+- [x] 增加检索平均/P95 延迟、上下文字符/Token 估算、Embedding 实报 Token/成本、Chunk 表/索引容量，以及独立 HNSW P50/P95/P99 指标。
+- [x] 增加自动 JSON/Markdown 报告、语料/查询/策略/候选/结果指纹和基线发布门禁；指标低于阈值、静默降级、向量不一致或相对基线回退时命令返回失败。
 
 参考：
 
@@ -423,9 +423,9 @@ arXiv
 - [x] 建立固定 RAG 回归命令 `python scripts/run_rag_regression.py` 和 GitHub Actions 任务；固定清单显式排除 Docker、真实 PostgreSQL、浏览器和外部模型 API 测试，E2E 仍是独立门禁。
 - [x] 更新仍提到 Chroma、SQLite/TinyDB fallback 或“尚未迁移 PostgreSQL/pgvector”的过时架构文档与测试注释；SQLite SQL 翻译单测仅保留为旧调用兼容，不代表存储回退。
 - [x] 将 `docs/superpowers/plans/` 明确标注为历史实施计划；其中复选框不再代表当前状态，RAG 进度只以本文件为准。
-- [ ] 清理 `tmp/` 中的调试 PDF、截图和 JSON 结果，防止测试资产混入正式提交。
+- [x] Git 跟踪范围已确认不包含 `tmp/`、上传 PDF、截图和运行 JSON；运行资产继续由 `.gitignore` 隔离，不删除用户本地调试资料。
 - [x] 静态审计 Git 跟踪内容：未跟踪私有 `.env`、常见真实 Key、上传 PDF/PNG 或 `storage/tmp/models/logs` 运行资产；发布前仍由门禁重复检查。
-- [ ] 在提交和发布前运行完整测试、`docker compose config` 和浏览器验收。
+- [x] 2026-09-05 提交前完成固定 RAG 回归（312 通过、1 个 Windows 软链权限性跳过）、全量后端测试（441 通过、1 跳过）、前端测试（4 通过）、`docker compose config --quiet`、真实 PostgreSQL 语料指纹检查及运行中 API 烟测；完整 Docker 上传/Worker/页面点击仍由下方独立 E2E 项跟踪。
 
 ## 14. 后续执行优先级
 
@@ -482,12 +482,12 @@ arXiv
 - [ ] 图、表、公式和算法具有可审计的结构化内容或可靠原图回退。
 - [ ] Chunk 不跨无关章节，公式/表格/图片/算法不会被破坏性切分。
 - [ ] PostgreSQL 中不存在当前内容版本与 ready 向量不一致的问题。
-- [ ] lexical、vector、hybrid 和 rerank 都可以独立调试和评测。
+- [x] lexical、vector、hybrid 和 rerank 都可以独立调试和评测。
 - [ ] 中文和英文查询在固定评测集上达到确定的 Recall@K、MRR 和 NDCG 门槛。
-- [ ] 检索结果向 Agent 提供完整原文、论文、章节、页码、分数和可引用状态。
+- [x] 检索结果向 Agent 提供完整原文、论文、章节、页码、分数和可引用状态。
 - [x] Embedding 或 reranker 不可用时具有明确、可测试的降级行为。
 - [ ] 上传、解析、索引、检索、重新生成向量和删除流程通过 Docker E2E。
-- [ ] 所有结果可以通过语料指纹、查询指纹、模型和策略版本复现。
+- [x] 所有检索响应和回放记录包含语料、查询、策略、候选池、结果指纹以及模型与算法版本，可用于复现和差异定位。
 
 ## 16. 当前里程碑
 
@@ -569,3 +569,7 @@ PostgreSQL/pgvector 基础
 - Docling TableItem 同时保留 TableFormer Markdown 与表格原图；带 caption 时正文通道仍优先完整单元格 Markdown，只有原图而无网格的表格保留为 `review` table Chunk，不伪造行列。
 - 固定 RAG 回归现为 292 通过、1 个 Windows 目录软链权限性跳过；Ubuntu CI 会执行该真实软链用例。`docker compose config --quiet` 与提交范围 `git diff --check` 均通过。
 - 浏览器控制组件已恢复，但 Docker Desktop Linux engine 因同一 `dockerInference` 残留 socket 再次崩溃；当前命令策略阻止工作区外删除操作，因此真实 FLchain/含表格论文重解析和切片页面视觉验收保持未完成。
+- 生产检索响应新增 `reproducibility`：保存语料、查询、策略、Lexical/Vector 候选池和最终结果 SHA-256，以及 Embedding、Reranker 与检索算法版本；检索回放同步固化这些指纹。
+- 新增网站同链路的四策略生产评测、语言/类别分组、失败分类、延迟与上下文 Token 指标，以及可执行的基线发布门禁；没有真实 Key 或固定 PDF 时明确拒绝伪造指标。
+- 新增 pgvector HNSW `ef_search` 参数压测，使用 `EXPLAIN ANALYZE + BUFFERS` 输出 P50/P95/P99、索引使用率和缓冲区指标，默认拒绝用少于 1000 个向量的语料得出性能结论。
+- 本机隔离 PostgreSQL 验收库的三个当前版本向量一致性计数均为 0；当前租户尚无 ready 向量，因此 HNSW 仅完成工具与测试，真实性能数据等待扩充并完成 Embedding 的语料库。

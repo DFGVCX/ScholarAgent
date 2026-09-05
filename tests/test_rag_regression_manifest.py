@@ -16,6 +16,9 @@ class RagRegressionManifestTest(unittest.TestCase):
             "tests.test_paper_metadata",
             "tests.test_retrieval_service",
             "tests.test_retrieval_evaluation",
+            "tests.test_production_retrieval_evaluation",
+            "tests.test_retrieval_performance",
+            "tests.test_retrieval_reproducibility",
             "tests.test_rag_stats",
             "tests.test_settings_routes",
         }

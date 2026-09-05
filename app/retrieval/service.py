@@ -25,6 +25,10 @@ from app.retrieval.models import (
 )
 from app.retrieval.query_expansion import academic_query_aliases
 from app.retrieval.reranker import RerankResult, RerankUnavailable
+from app.retrieval.reproducibility import (
+    candidate_fingerprint,
+    retrieval_provenance,
+)
 
 
 class RetrievalRepository(Protocol):
@@ -280,31 +284,36 @@ class RetrievalService:
             external = tuple(self._external(item) for item in raw_external)
             external_search_ms = self._elapsed_ms(external_started)
         total_ms = self._elapsed_ms(total_started)
+        filters = request.filters_dict()
+        ranking_policy = {
+            "fusion": "rrf" if requested_mode in {"hybrid", "hybrid_rerank"} else "single_source",
+            "requested_mode": requested_mode,
+            **(
+                {"reranker": self.reranker.model if self.reranker else None}
+                if rerank_requested
+                else {}
+            ),
+            "max_chunks_per_paper": request.max_chunks_per_paper,
+            "backfill_when_insufficient": True,
+            "exact_duplicate_scope": "same_paper",
+            "near_duplicate_prose_threshold": 0.92,
+            "near_duplicate_requires": "shared_source_or_adjacent_section",
+            "adjacent_context_scope": "same_paper_version_section_top_k",
+            "query_type": query_type,
+            "candidate_limit": request.candidate_limit,
+        }
+        corpus_fingerprint = await self._corpus_fingerprint(
+            request, lexical, vector
+        )
         return RetrievalResponse(
             query=request.query,
             mode=mode,
             local_hits=tuple(hits),
             external_candidates=external,
             warnings=tuple(warnings),
-            filters=request.filters_dict(),
+            filters=filters,
             query_expansions=academic_query_aliases(request.query),
-            ranking_policy={
-                "fusion": "rrf" if requested_mode in {"hybrid", "hybrid_rerank"} else "single_source",
-                "requested_mode": requested_mode,
-                **(
-                    {"reranker": self.reranker.model if self.reranker else None}
-                    if rerank_requested
-                    else {}
-                ),
-                "max_chunks_per_paper": request.max_chunks_per_paper,
-                "backfill_when_insufficient": True,
-                "exact_duplicate_scope": "same_paper",
-                "near_duplicate_prose_threshold": 0.92,
-                "near_duplicate_requires": "shared_source_or_adjacent_section",
-                "adjacent_context_scope": "same_paper_version_section_top_k",
-                "query_type": query_type,
-                "candidate_limit": request.candidate_limit,
-            },
+            ranking_policy=ranking_policy,
             merged_contexts=merged_contexts,
             debug={
                 "query_embedding": embedding_debug,
@@ -335,7 +344,37 @@ class RetrievalService:
                     for hit in hits
                 ],
             },
+            reproducibility=retrieval_provenance(
+                query=request.query,
+                filters=filters,
+                requested_mode=requested_mode,
+                effective_mode=mode,
+                candidate_limit=request.candidate_limit,
+                result_limit=request.limit,
+                max_chunks_per_paper=request.max_chunks_per_paper,
+                embedding_model=self.embedding.model,
+                reranker_model=(
+                    self.reranker.model if rerank_requested and self.reranker else None
+                ),
+                corpus_fingerprint=corpus_fingerprint,
+                lexical_candidates=lexical,
+                vector_candidates=vector,
+                hits=hits,
+            ),
         )
+
+    async def _corpus_fingerprint(
+        self,
+        request: RetrievalRequest,
+        lexical: Sequence[RetrievalCandidate],
+        vector: Sequence[RetrievalCandidate],
+    ) -> str:
+        provider = getattr(self.repository, "corpus_fingerprint", None)
+        if callable(provider):
+            value = await provider(request.tenant_id, request.user_id)
+            if value:
+                return str(value)
+        return candidate_fingerprint((*lexical, *vector))
 
     @staticmethod
     def _rerank_document(hit: LocalHit) -> str:

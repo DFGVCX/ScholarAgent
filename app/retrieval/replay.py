@@ -53,7 +53,13 @@ class RetrievalReplayStore:
                 "query": str(response.get("query") or ""),
                 "requested_mode": str((response.get("ranking_policy") or {}).get("requested_mode") or response.get("retrieval_mode") or ""),
                 "effective_mode": str(response.get("retrieval_mode") or ""),
-                "candidates": json.dumps(debug.get("candidate_pools") or {}, ensure_ascii=False),
+                "candidates": json.dumps(
+                    {
+                        "candidate_pools": debug.get("candidate_pools") or {},
+                        "reproducibility": response.get("reproducibility") or {},
+                    },
+                    ensure_ascii=False,
+                ),
                 "contexts": json.dumps(hits, ensure_ascii=False, default=str),
                 "adopted": "[]",
                 "attribution": retrieval_attribution(returned, set()),
@@ -116,7 +122,8 @@ class RetrievalReplayStore:
         result = await session.execute(
             text(
                 "SELECT replay_id,conversation_id,task_id,consumer,query,requested_mode,"
-                "effective_mode,adopted_chunk_ids,attribution,warnings,timings,created_at "
+                "effective_mode,adopted_chunk_ids,attribution,warnings,timings,"
+                "candidate_snapshot->'reproducibility' AS reproducibility,created_at "
                 "FROM rag_retrieval_replays WHERE tenant_id=:tenant_id AND user_id=:user_id "
                 "ORDER BY created_at DESC LIMIT :limit"
             ),

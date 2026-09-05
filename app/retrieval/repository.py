@@ -15,6 +15,7 @@ from app.retrieval.models import (
     RetrievalRequest,
 )
 from app.retrieval.query_expansion import academic_query_aliases
+from app.retrieval.reproducibility import stable_fingerprint
 
 
 def _structured_filters(request: RetrievalRequest) -> tuple[str, dict[str, Any]]:
@@ -56,6 +57,39 @@ def _structured_filters(request: RetrievalRequest) -> tuple[str, dict[str, Any]]
 class PostgresRetrievalRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self._corpus_fingerprint_cache: str | None = None
+
+    async def corpus_fingerprint(self, tenant_id: str, user_id: str) -> str:
+        if self._corpus_fingerprint_cache is not None:
+            return self._corpus_fingerprint_cache
+        result = await self.session.execute(
+            text(
+                """SELECT p.paper_uuid::text AS paper_uuid, p.paper_id,
+                    p.current_content_version, p.updated_at, p.title, p.authors,
+                    p.abstract, p.published_at, p.normalized_doi,
+                    p.normalized_arxiv_id, p.canonical_url,
+                    pc.content_hash, pc.parser_name, pc.parser_version,
+                    pc.chunk_strategy, pc.chunker_version,
+                    (SELECT COUNT(*) FROM paper_chunks fingerprint_chunks
+                        WHERE fingerprint_chunks.tenant_id=p.tenant_id
+                            AND fingerprint_chunks.user_id=p.user_id
+                            AND fingerprint_chunks.paper_uuid=p.paper_uuid
+                            AND fingerprint_chunks.content_version=p.current_content_version
+                    ) AS chunk_count
+                FROM papers p
+                LEFT JOIN paper_contents pc ON pc.tenant_id=p.tenant_id
+                    AND pc.user_id=p.user_id AND pc.paper_uuid=p.paper_uuid
+                    AND pc.content_version=p.current_content_version
+                WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id
+                    AND p.deleted_at IS NULL AND p.in_knowledge_base=true
+                ORDER BY p.paper_uuid"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id},
+        )
+        self._corpus_fingerprint_cache = stable_fingerprint(
+            [dict(row) for row in result.mappings().all()]
+        )
+        return self._corpus_fingerprint_cache
 
     async def parent_context(
         self, request: ParentContextRequest
