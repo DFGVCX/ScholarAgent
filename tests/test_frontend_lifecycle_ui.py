@@ -33,7 +33,8 @@ class FrontendLifecycleUiTests(unittest.TestCase):
             "function toggleAuditPool",
             "audit-pool-expanded",
             "overflow-y: auto;",
-            "grid-auto-rows: 118px;",
+            "grid-auto-rows: var(--audit-paper-row-height, 78px);",
+            "function bindAuditPaperSizing",
             "grid-template-columns: repeat(3, minmax(0, 1fr));",
             "#pageTasks .workflow-panel .lane-step span span",
         ):

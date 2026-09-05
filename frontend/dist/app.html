@@ -6849,13 +6849,13 @@
             max-height: 156px;
             overflow-y: auto;
             overscroll-behavior: contain;
-            grid-auto-rows: 118px;
+            grid-auto-rows: var(--audit-paper-row-height, 78px);
             align-content: start;
             transition: max-height .22s ease;
         }
         #pageAudit .audit-paper-card {
-            height: 118px;
-            min-height: 118px;
+            height: var(--audit-paper-row-height, 78px);
+            min-height: var(--audit-paper-row-height, 78px);
         }
         #pageAudit .audit-paper-head-actions {
             min-width: 0;
@@ -10022,10 +10022,28 @@
                 </section>
             `;
             $('auditPoolToggle')?.addEventListener('click', toggleAuditPool);
+            bindAuditPaperSizing();
             $('referenceCount').textContent = `${references.length}`;
             $('referenceList').innerHTML = references.length
                 ? `<table class="table"><thead><tr><th>#</th><th>参考文献</th></tr></thead><tbody>${references.map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(item)}</td></tr>`).join('')}</tbody></table>`
                 : '<div class="subtle">暂无参考文献</div>';
+        }
+
+        let auditPaperResizeObserver = null;
+
+        function bindAuditPaperSizing() {
+            const list = document.querySelector('#pageAudit .audit-paper-list-modern');
+            auditPaperResizeObserver?.disconnect();
+            if (!list) return;
+            const resize = () => {
+                const rowHeight = Math.round(Math.max(70, Math.min(82, list.clientHeight * .56)));
+                list.style.setProperty('--audit-paper-row-height', `${rowHeight}px`);
+            };
+            resize();
+            if ('ResizeObserver' in window) {
+                auditPaperResizeObserver = new ResizeObserver(resize);
+                auditPaperResizeObserver.observe(list);
+            }
         }
 
         function toggleAuditPool() {
@@ -10036,6 +10054,7 @@
             button.setAttribute('aria-expanded', String(state.auditPoolExpanded));
             const label = button.querySelector('span');
             if (label) label.textContent = state.auditPoolExpanded ? '收起' : '展开';
+            requestAnimationFrame(bindAuditPaperSizing);
         }
 
         mountProfileConfig();
