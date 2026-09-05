@@ -6846,7 +6846,8 @@
         #pageAudit .audit-paper-list-modern {
             height: 100%;
             min-height: 0;
-            max-height: 156px;
+            max-height: none;
+            padding: 4px 8px 6px;
             overflow-y: auto;
             overscroll-behavior: contain;
             grid-auto-rows: var(--audit-paper-row-height, 78px);
@@ -6895,7 +6896,7 @@
             grid-template-rows: minmax(0, 1.68fr) minmax(136px, .32fr);
         }
         #pageAudit.audit-pool-expanded .audit-paper-list-modern {
-            max-height: 430px;
+            max-height: none;
         }
         #pageAudit.audit-pool-expanded .audit-pool-toggle i {
             transform: translateY(2px) rotate(225deg);

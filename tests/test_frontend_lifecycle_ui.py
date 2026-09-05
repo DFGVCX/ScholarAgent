@@ -35,6 +35,7 @@ class FrontendLifecycleUiTests(unittest.TestCase):
             "overflow-y: auto;",
             "grid-auto-rows: var(--audit-paper-row-height, 78px);",
             "function bindAuditPaperSizing",
+            "padding: 4px 8px 6px;",
             "grid-template-columns: repeat(3, minmax(0, 1fr));",
             "#pageTasks .workflow-panel .lane-step span span",
         ):
