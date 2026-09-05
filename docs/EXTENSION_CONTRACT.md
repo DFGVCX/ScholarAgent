@@ -75,6 +75,21 @@ Then register it in `agents/skill_registry.py`:
 
 The final skill result must include `tenant_id`, `user_id`, and enough structured payload for audit, rendering, and persistence.
 
+## Add A Writing Lifecycle Capability
+
+Lifecycle capabilities are executable nodes, not prompt-only advisory agents.
+
+1. Implement an executor with `async execute(state, node) -> (output, quality)` under `agents/specialized/` or the owning Skill package.
+2. Register it in `CAPABILITY_EXECUTORS` and expose the capability to `TaskGraphPlan` validation.
+3. Give every node a stable `node_id`, semantic `capability`, and explicit `version`.
+4. Declare dependencies in `depends_on`; never read an undeclared upstream output.
+5. Persist attempts through `NodeRunStore`. Do not create a second private cache inside the executor.
+6. Return structured quality data. A recoverable failure must include one `retry_target` rather than raising at the quality boundary.
+7. Invalidation includes the target and graph descendants only. Independent completed nodes must remain reusable.
+8. Add tests proving execution counts across a retry, not merely the presence of graph node names.
+
+Node cache identity is computed from capability input plus a stable dependency snapshot. Runtime labels such as `completed` versus `reused` must not change the fingerprint.
+
 ## Add An MCP Tool
 
 1. Add models or adapters under `mcp_server/scholar_mcp/`.

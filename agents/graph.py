@@ -72,14 +72,43 @@ async def _global_review(state: GlobalState) -> dict[str, Any]:
         "percent": 96,
         "payload": review,
     })
-    if not review["passed"]:
-        raise RuntimeError(f"Global review failed: {review['findings']}")
     return {"global_review": review}
 
 
+def _global_review_route(state: GlobalState) -> str:
+    review = dict(state.get("global_review") or {})
+    if review.get("passed"):
+        return "finalize"
+    if int(state.get("global_retry_count") or 0) >= 2:
+        return "finalize"
+    return "prepare_global_retry"
+
+
+async def _prepare_global_retry(state: GlobalState) -> dict[str, Any]:
+    review = dict(state.get("global_review") or {})
+    retry_target = str(review.get("retry_target") or "section_writing")
+    count = int(state.get("global_retry_count") or 0) + 1
+    get_stream_writer()({
+        "event": "progress",
+        "phase": "global_retry",
+        "message": f"Global review routed execution back to {retry_target}",
+        "percent": 95,
+        "payload": {"retry_target": retry_target, "retry_count": count},
+    })
+    return {
+        "retry_target": retry_target,
+        "global_retry_count": count,
+        "skill_result": {},
+        "global_review": {},
+    }
+
+
 async def _finalize(state: GlobalState) -> dict[str, Any]:
+    review = dict(state.get("global_review") or {})
+    if not review.get("passed"):
+        raise RuntimeError(f"Global review failed after targeted retries: {review.get('findings')}")
     result = dict(state.get("skill_result") or {}) | {
-        "global_review": dict(state.get("global_review") or {})
+        "global_review": review
     }
     get_stream_writer()({
         "event": "completed",
@@ -96,11 +125,17 @@ def build_global_graph(checkpointer: Any | None = None):
     builder.add_node("route_task", _route_task)
     builder.add_node("execute_skill", _execute_skill)
     builder.add_node("global_review", _global_review)
+    builder.add_node("prepare_global_retry", _prepare_global_retry)
     builder.add_node("finalize", _finalize)
     builder.add_edge(START, "route_task")
     builder.add_edge("route_task", "execute_skill")
     builder.add_edge("execute_skill", "global_review")
-    builder.add_edge("global_review", "finalize")
+    builder.add_conditional_edges(
+        "global_review",
+        _global_review_route,
+        {"prepare_global_retry": "prepare_global_retry", "finalize": "finalize"},
+    )
+    builder.add_edge("prepare_global_retry", "execute_skill")
     builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer or InMemorySaver())
 

@@ -61,8 +61,21 @@ This file is the source of truth for where new files belong.
 |---|---|
 | `agents/context/` | Conversation compression, event recall and prompt assembly |
 | `agents/specialized/` | Domain Agent coordinators such as the writing Agent |
+| `agents/specialized/writing_lifecycle.py` | Executable retrieval, outline, section-writing, and quality Skill Agents |
 | `agents/orchestrator.py` | Explainable route decision and complex-task delegation |
 | `agents/conversation_tool_loop.py` | Tool discovery, planning, confirmation, observation and continuation |
 | `agents/delegation.py` | Parent/child Agent run lifecycle and result aggregation |
 
 Simple requests should stay in a Tool or Skill path. Subagents are created only when the route decision marks a task as complex or the caller explicitly requests multi-Agent execution.
+
+## Dynamic Writing Lifecycle
+
+The writing path is no longer a monolithic predefined pipeline.
+
+1. `agents/task_graph.py` asks the configured model for a structured `TaskGraphPlan`. The goal, memory, retry state, and discovered `SKILL.md` descriptors are included in planning input. A bounded four-node plan is used only when model planning is unavailable or invalid.
+2. `skills/survey_generation/subgraph.py` compiles that plan into a real LangGraph at runtime. Retrieval, outline generation, section writing, and quality review are separate graph nodes.
+3. `app/services/node_run_store.py` persists every node attempt in `scholar_task_node_runs`, including input, output, node version, quality result, input fingerprint, and dependency snapshot.
+4. Section writing additionally persists one record per `section:<section_id>`. A failed section invalidates only that section, the section aggregator, quality review, and their downstream state.
+5. The Quality Skill Agent must return one explicit `retry_target`: `retrieval`, `outline`, `section_writing`, `quality`, or `section:<section_id>`.
+6. LangGraph conditional edges route back to that target. Completed upstream nodes are reused when their input fingerprint, version, and dependency snapshot still match.
+7. Global review follows the same contract and may re-enter the writing Skill with a targeted retry instead of terminating immediately.

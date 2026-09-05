@@ -16,5 +16,17 @@ class GlobalEvaluator:
         if len(result.get("references", [])) == 0:
             score -= 10
             findings.append("no references generated")
-        return {"score": max(score, 0), "findings": findings, "passed": score >= 85}
+        retry_target = ""
+        if not markdown.strip():
+            retry_target = "section_writing"
+        elif not audit.get("is_valid", False):
+            retry_target = str(result.get("quality_decision", {}).get("retry_target") or "section_writing")
+        elif len(result.get("references", [])) == 0:
+            retry_target = "retrieval"
+        return {
+            "score": max(score, 0),
+            "findings": findings,
+            "passed": score >= 85,
+            "retry_target": retry_target,
+        }
 

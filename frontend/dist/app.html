@@ -3886,6 +3886,47 @@
         #pageTasks .workflow-panel .panel-head .subtle {
             font-size: 11px;
         }
+        #pageTasks .workflow-head-state {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 7px;
+        }
+        #pageTasks .workflow-review-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 20px;
+            padding: 2px 7px;
+            border: 1px solid #dbe4e8;
+            border-radius: 999px;
+            background: #f6f8f9;
+            color: #67757d;
+            font-size: 10px;
+            font-weight: 800;
+            line-height: 1;
+            white-space: nowrap;
+        }
+        #pageTasks .workflow-review-badge[data-state="reviewing"] {
+            border-color: rgba(10,122,112,.28);
+            background: #eef8f6;
+            color: #087168;
+        }
+        #pageTasks .workflow-review-badge[data-state="retry"] {
+            border-color: rgba(180,124,35,.34);
+            background: #fff8e9;
+            color: #936315;
+        }
+        #pageTasks .workflow-review-badge[data-state="passed"] {
+            border-color: rgba(39,132,83,.28);
+            background: #eef8f1;
+            color: #247549;
+        }
+        #pageTasks .workflow-review-badge[data-state="failed"] {
+            border-color: rgba(184,65,65,.25);
+            background: #fff1f1;
+            color: #a43c3c;
+        }
         #pageTasks .workflow-panel .workflow-lane {
             grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 6px;
@@ -3916,6 +3957,17 @@
         }
         #pageTasks .workflow-panel .lane-step span span {
             display: none;
+        }
+        #pageTasks .workflow-panel .lane-step.retry-target {
+            border-color: rgba(180,124,35,.55);
+            background: #fffaf0;
+            box-shadow: inset 0 -2px 0 rgba(180,124,35,.52);
+        }
+        #pageTasks .workflow-panel .lane-step.retry-history {
+            box-shadow: inset 0 -2px 0 rgba(180,124,35,.38);
+        }
+        #pageTasks .workflow-panel .lane-step.review-passed {
+            border-color: rgba(39,132,83,.36);
         }
         #pageTasks .workflow-panel .progress {
             height: 4px;
@@ -6926,7 +6978,13 @@
                                 </label>
                             </div>
                             <div class="panel workflow-panel">
-                                <div class="panel-head"><h2>生成流程</h2><span id="streamState" class="subtle">未连接</span></div>
+                                <div class="panel-head">
+                                    <h2>生成流程</h2>
+                                    <div class="workflow-head-state">
+                                        <span id="reviewState" class="workflow-review-badge" data-state="idle" data-retry-count="0">待审查</span>
+                                        <span id="streamState" class="subtle">未连接</span>
+                                    </div>
+                                </div>
                                 <div id="workflowLane" class="workflow-lane">
                                     <div class="lane-step" data-phase-key="ingest_sources"><i>1</i><span><b>检索</b><span>按主题获取论文</span></span></div>
                                     <div class="lane-step" data-phase-key="search_papers"><i>2</i><span><b>论文池</b><span>扩展去重入库</span></span></div>
@@ -7565,6 +7623,12 @@
         const phaseLabels = {
             queued: '排队中',
             route_task: '任务路由',
+            plan_task_graph: '动态规划',
+            retrieval: '文献检索',
+            outline: '大纲生成',
+            section_writing: '章节写作',
+            quality_review: '质量检查',
+            targeted_retry: '局部回退',
             running: '运行中',
             ingest_sources: '自动检索',
             search_papers: '构建论文池',
@@ -7600,6 +7664,10 @@
         }
         function streamMessage(data) {
             if (data.event === 'queued') return '任务已进入队列，正在准备检索';
+            if (data.phase === 'plan_task_graph') return `任务图已生成，共 ${data.payload?.nodes?.length || 0} 个节点`;
+            if (data.payload?.status === 'reused') return `${phaseLabel(data.phase)}复用已完成版本`;
+            if (data.phase === 'targeted_retry') return `质量检查要求从 ${retryTargetLabel(data.payload?.retry_target)} 局部重试`;
+            if (data.payload?.status === 'completed') return `${phaseLabel(data.phase)}已完成`;
             if (data.event === 'outline_required' && data.payload?.requires_confirmation) return '大纲已生成，等待确认后继续正文写作';
             if (data.phase === 'outline_confirmed') return '大纲已确认，继续生成正文与引用审计';
             if (data.event === 'completed') return '综述、引用审计和参考文献已生成';
@@ -7621,8 +7689,78 @@
             }
             return `任务执行失败：${errorMessage || '请查看运行日志'}`;
         }
+        function retryTargetLabel(target = '') {
+            if (String(target).startsWith('section:')) return `章节 ${String(target).split(':')[1]}`;
+            return ({ retrieval: '文献检索', outline: '大纲生成', section_writing: '章节写作', quality: '质量检查' })[target] || target || '指定节点';
+        }
+        function retryTargetPhase(target = '') {
+            if (target === 'retrieval') return 'ingest_sources';
+            if (target === 'outline') return 'synthesize_outline';
+            if (target === 'quality') return 'citation_guard';
+            return 'write_trial_section';
+        }
+        function setWorkflowReview(stateName = 'idle', label = '待审查', target = '') {
+            const badge = $('reviewState');
+            if (!badge) return;
+            badge.dataset.state = stateName;
+            badge.textContent = label;
+            badge.title = label;
+            const auditStep = document.querySelector('#workflowLane [data-phase-key="citation_guard"]');
+            if (stateName === 'passed') auditStep?.classList.add('review-passed');
+            if (stateName === 'retry') {
+                auditStep?.classList.remove('review-passed');
+                document.querySelector(`#workflowLane [data-phase-key="${retryTargetPhase(target)}"]`)?.classList.add('retry-target');
+            }
+        }
+        function resetWorkflowReview() {
+            const badge = $('reviewState');
+            if (badge) badge.dataset.retryCount = '0';
+            document.querySelectorAll('#workflowLane .lane-step').forEach((step) => {
+                step.classList.remove('retry-target', 'retry-history', 'review-passed');
+            });
+            setWorkflowReview('idle', '待审查');
+        }
+        function completeWorkflowReview() {
+            const badge = $('reviewState');
+            const retryCount = Number(badge?.dataset.retryCount || 0);
+            document.querySelectorAll('#workflowLane .lane-step.retry-target').forEach((step) => {
+                step.classList.remove('retry-target');
+                step.classList.add('retry-history');
+            });
+            setWorkflowReview('passed', retryCount ? `审查通过 · 回溯 ${retryCount}` : '审查通过');
+        }
+        function applyWorkflowEvent(data) {
+            if (data.phase === 'targeted_retry') {
+                const target = String(data.payload?.retry_target || 'section_writing');
+                const badge = $('reviewState');
+                const retryCount = Math.max(Number(data.payload?.retry_count || 0), Number(badge?.dataset.retryCount || 0) + 1);
+                if (badge) badge.dataset.retryCount = String(retryCount);
+                setWorkflowReview('retry', `回溯 ${retryCount} · ${retryTargetLabel(target)}`, target);
+                const phase = retryTargetPhase(target);
+                updateWorkflowLane(phase);
+                return;
+            }
+            const capability = data.payload?.capability;
+            if (capability === 'quality_review' || data.phase === 'quality_review') {
+                const status = data.payload?.status;
+                const retryTarget = String(data.payload?.retry_target || '');
+                if (status === 'running') setWorkflowReview('reviewing', '质量审查中');
+                else if ((status === 'completed' || status === 'reused') && !retryTarget) completeWorkflowReview();
+                else if (retryTarget) setWorkflowReview('reviewing', '发现问题，正在定位');
+            }
+            if (data.event === 'completed') completeWorkflowReview();
+            if (data.event === 'failed') setWorkflowReview('failed', '审查中止');
+            const phase = ({
+                literature_retrieval: data.payload?.status === 'completed' || data.payload?.status === 'reused' ? 'synthesize_outline' : 'ingest_sources',
+                outline_generation: data.payload?.status === 'completed' || data.payload?.status === 'reused' ? 'write_trial_section' : 'synthesize_outline',
+                section_writing: data.payload?.status === 'completed' || data.payload?.status === 'reused' ? 'citation_guard' : 'write_trial_section',
+                quality_review: data.payload?.status === 'completed' || data.payload?.status === 'reused' ? 'citation_format' : 'citation_guard',
+            })[capability];
+            if (phase) updateWorkflowLane(phase);
+        }
         function updateWorkflowLane(phase) {
             const normalized = workflowAliases[phase] || phase;
+            if (!workflowOrder.includes(normalized) && !['completed', 'failed'].includes(phase)) return;
             const activeIndex = phase === 'completed' ? workflowOrder.length : Math.max(0, workflowOrder.indexOf(normalized));
             const failed = phase === 'failed';
             document.querySelector('.workflow-panel')?.classList.toggle('failed', failed);
@@ -8569,6 +8707,7 @@
             setOutlineEditable(false, '');
             renderPaperPool([]);
             $('logs').innerHTML = '';
+            resetWorkflowReview();
             const strategyLabel = { online: '联网检索', local: '本地知识库检索', hybrid: '混合检索' }[state.inputType] || '联网检索';
             setRichContent('outlineResult', `任务已提交，正在执行${strategyLabel}并生成大纲。大纲生成后会显示在这里。`);
             setRichContent('result', '任务已提交，正在检索论文池、入库并准备写作。');
@@ -8606,6 +8745,7 @@
         }
         async function handleStreamEvent(taskId, event) {
             const data = JSON.parse(event.data);
+            applyWorkflowEvent(data);
             $('streamState').textContent = phaseLabel(data.phase || data.event);
             updateProgress(data.percent, data.phase);
             addLog(streamMessage(data));
@@ -8681,6 +8821,15 @@
             if (result.markdown) setRichContent('result', result.markdown, { markdown: true });
             else setRichContent('result', JSON.stringify(data, null, 2));
             setAuditMetric(result.citation_audit);
+            const retryHistory = Array.isArray(result.retry_history) ? result.retry_history : [];
+            const badge = $('reviewState');
+            if (badge) badge.dataset.retryCount = String(retryHistory.length);
+            retryHistory.forEach((item) => {
+                const target = String(item?.retry_target || 'section_writing');
+                document.querySelector(`#workflowLane [data-phase-key="${retryTargetPhase(target)}"]`)?.classList.add('retry-history');
+            });
+            if (result.quality_decision?.passed !== false) completeWorkflowReview();
+            else setWorkflowReview('failed', '质量未通过');
             $('taskMetric').textContent = taskId.slice(0, 8);
             updateProgress(Number(data.percent || 0), data.phase || data.status);
         }

@@ -277,6 +277,17 @@ SCHEMA_SQL: tuple[str, ...] = (
         input_json TEXT, result_json TEXT, error TEXT,
         started_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT)""",
 
+    """CREATE TABLE IF NOT EXISTS scholar_task_node_runs (
+        run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, node_id TEXT NOT NULL, capability TEXT NOT NULL,
+        node_version TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL, input_fingerprint TEXT NOT NULL,
+        input_json TEXT NOT NULL, output_json TEXT, dependency_snapshot_json TEXT,
+        quality_json TEXT, invalidated_by TEXT, reused_from_run_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT)""",
+
     """CREATE TABLE IF NOT EXISTS scholar_knowledge_papers (
         paper_id TEXT NOT NULL, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
         source TEXT NOT NULL, title TEXT NOT NULL, authors_json TEXT,
@@ -419,6 +430,7 @@ _INDEXES_SQL: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_scholar_reflection_logs_task ON scholar_reflection_logs(tenant_id, task_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_memories_recall ON scholar_memories(tenant_id, user_id, status, memory_type, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_trace_events_trace ON scholar_trace_events(trace_id, trace_event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_task_node_runs_lookup ON scholar_task_node_runs(tenant_id, user_id, task_id, node_id, status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_operation_patterns_user ON scholar_operation_patterns(tenant_id, user_id, last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_skill_candidates_user ON scholar_skill_candidates(tenant_id, user_id, status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_institution_profiles_user ON scholar_institution_profiles(tenant_id, user_id, updated_at)",
