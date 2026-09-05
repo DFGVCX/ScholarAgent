@@ -536,6 +536,42 @@ class PaperChunkingTest(unittest.TestCase):
 
         self.assertEqual(figures, [])
 
+    def test_v4_retains_image_only_table_as_reviewable_source_evidence(self) -> None:
+        """Catches source-backed image-only tables being dropped before v4 quality auditing."""
+        table = ParsedBlock(
+            2,
+            "table",
+            "",
+            (10, 20, 500, 300),
+            1,
+            metadata={
+                "block_id": "table-1",
+                "asset_name": "page_002_table_001.png",
+                "source_image_available": True,
+            },
+        )
+        page = ParsedPage(2, "", "hash", 0, "docling", "usable", (table,))
+        section = _section("method", "2 Method", "", page_start=2, page_end=2, kind="method")
+        parsed = ParsedPaper("", (page,), (section,), {}, {}, "ready", 0.9)
+
+        tables = [
+            chunk
+            for chunk in chunking.chunk_hierarchical(parsed)
+            if chunk.chunk_type == "table"
+        ]
+
+        self.assertEqual(len(tables), 1)
+        self.assertEqual(tables[0].content, "Source image: page_002_table_001.png")
+        self.assertEqual(
+            tables[0].metadata["source_metadata"]["asset_name"],
+            "page_002_table_001.png",
+        )
+        self.assertEqual(tables[0].metadata["object_quality"]["status"], "review")
+        self.assertIn(
+            "table_markdown_grid_missing",
+            tables[0].metadata["object_quality"]["reasons"],
+        )
+
     def test_multimodal_visual_blocks_are_atomic_and_keep_provenance(self) -> None:
         body = ParsedBlock(2, "body", "Method prose remains searchable.", (10, 10, 200, 30), 0)
         table_markdown = "| Method | Score |\n| --- | --- |\n" + "\n".join(

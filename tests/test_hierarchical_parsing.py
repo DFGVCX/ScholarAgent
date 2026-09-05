@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import importlib.util
 import os
+import sys
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -62,18 +64,23 @@ class _DoclingItem:
         bbox: tuple[float, float, float, float] = (10.0, 20.0, 300.0, 60.0),
         caption: str = "",
         markdown: str = "",
+        image=None,
     ) -> None:
         self.label = label
         self.text = text
         self.prov = (SimpleNamespace(page_no=page, bbox=bbox),)
         self._caption = caption
         self._markdown = markdown
+        self._image = image
 
     def caption_text(self, _document) -> str:
         return self._caption
 
     def export_to_markdown(self, _document) -> str:
         return self._markdown or self.text
+
+    def get_image(self, _document):
+        return self._image
 
 
 class _DoclingDocument:
@@ -94,6 +101,462 @@ class _Converter:
 
 
 class HierarchicalPdfParsingTest(unittest.TestCase):
+    def test_docling_converter_enables_picture_images_without_enabling_ocr(self) -> None:
+        """Catches a converter regression that omits picture crops or enables OCR."""
+        from app.papers.docling_adapter import _build_converter
+
+        class FakePipelineOptions:
+            def __init__(self, **_kwargs) -> None:
+                self.do_ocr = True
+                self.do_table_structure = False
+                self.do_formula_enrichment = False
+                self.generate_picture_images = False
+                self.generate_page_images = False
+                self.heading_hierarchy_options = SimpleNamespace(enabled=False)
+
+        class FakeDocumentConverter:
+            def __init__(self, *, format_options) -> None:
+                self.format_options = format_options
+
+        fake_modules = {
+            "docling": SimpleNamespace(),
+            "docling.datamodel": SimpleNamespace(),
+            "docling.datamodel.base_models": SimpleNamespace(InputFormat=SimpleNamespace(PDF="pdf")),
+            "docling.datamodel.pipeline_options": SimpleNamespace(PdfPipelineOptions=FakePipelineOptions),
+            "docling.document_converter": SimpleNamespace(
+                DocumentConverter=FakeDocumentConverter,
+                PdfFormatOption=lambda *, pipeline_options: SimpleNamespace(pipeline_options=pipeline_options),
+            ),
+        }
+        with patch.dict(sys.modules, fake_modules):
+            converter = _build_converter()
+
+        options = converter.format_options["pdf"].pipeline_options
+        self.assertTrue(options.generate_picture_images)
+        self.assertTrue(options.generate_page_images)
+        self.assertFalse(options.do_ocr)
+
+    def test_docling_picture_writes_safe_asset_and_removes_image_placeholder(self) -> None:
+        """Catches a picture export regression that leaks Docling placeholders or data URIs."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class Image:
+            def save(self, target, format="PNG") -> None:
+                self.target = Path(target)
+                self.format = format
+                Path(target).write_bytes(b"png-image")
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            image = Image()
+            picture = _DoclingItem(
+                "picture",
+                "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)",
+                caption="Figure 1. Training workflow",
+                markdown="![Figure](data:image/png;base64,AAAA)",
+                image=image,
+            )
+            body = _DoclingItem("text", "The workflow description provides enough searchable content. " * 3)
+            parsed = parse_docling_pdf(pdf, converter=_Converter(_DoclingDocument([(picture, 1), (body, 1)])))
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.block_type, "figure")
+            self.assertEqual(figure.text, "Figure 1. Training workflow")
+            self.assertEqual(figure.metadata["asset_name"], "page_001_figure_001.png")
+            self.assertTrue(figure.metadata["source_image_available"])
+            self.assertNotIn("Image not available", figure.metadata["markdown"])
+            self.assertNotIn("data:image", figure.metadata["markdown"])
+            self.assertEqual((pdf.parent / "paper_assets" / "page_001_figure_001.png").read_bytes(), b"png-image")
+            self.assertEqual(parsed.manifest["asset_directory"], "paper_assets")
+            self.assertEqual(parsed.to_manifest()["asset_inventory"][0]["name"], "page_001_figure_001.png")
+
+    def test_docling_picture_without_image_keeps_caption_without_fake_asset(self) -> None:
+        """Catches a missing-image fallback that invents an asset instead of preserving the caption."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            picture = _DoclingItem(
+                "picture",
+                "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)",
+                caption="Figure 2. Missing crop remains auditable",
+                image=None,
+            )
+            body = _DoclingItem("text", "The associated explanatory paragraph has sufficient searchable text. " * 3)
+            parsed = parse_docling_pdf(pdf, converter=_Converter(_DoclingDocument([(picture, 1), (body, 1)])))
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.text, "Figure 2. Missing crop remains auditable")
+            self.assertFalse(figure.metadata["source_image_available"])
+            self.assertNotIn("asset_name", figure.metadata)
+            self.assertFalse((pdf.parent / "paper_assets").exists())
+
+    def test_docling_image_only_picture_is_saved_and_inventory_backed(self) -> None:
+        """Catches an empty-content gate that drops a real source image before export."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class Image:
+            def save(self, target, format="PNG") -> None:
+                Path(target).write_bytes(b"image-only")
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(_DoclingItem("picture", "", image=Image()), 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.block_type, "figure")
+            self.assertTrue(figure.metadata["source_image_available"])
+            self.assertEqual(figure.metadata["asset_name"], "page_001_figure_001.png")
+            self.assertEqual((pdf.parent / "paper_assets" / figure.metadata["asset_name"]).read_bytes(), b"image-only")
+            self.assertEqual(parsed.to_manifest()["asset_inventory"][0]["name"], figure.metadata["asset_name"])
+
+    def test_docling_picture_comment_placeholder_is_removed_without_stripping_other_comments(self) -> None:
+        """Catches the real Docling HTML placeholder leaving an empty comment in chunks."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        with TemporaryDirectory() as temporary:
+            placeholder = "<!-- 🖼️❌ Image not available. Please use PdfPipelineOptions(generate_picture_images=True) -->"
+            picture = _DoclingItem(
+                "picture",
+                placeholder,
+                caption="Figure 3. Caption survives",
+                markdown=f"<!-- retained audit note -->\n{placeholder}",
+            )
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(_DoclingDocument([(picture, 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.text, "Figure 3. Caption survives")
+            self.assertEqual(figure.metadata["markdown"], "<!-- retained audit note -->")
+
+    def test_docling_picture_placeholder_cleanup_preserves_surrounding_text(self) -> None:
+        """Catches cleanup that removes a diagnostic phrase quoted inside ordinary text/comments."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        phrase = "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)"
+        with TemporaryDirectory() as temporary:
+            picture = _DoclingItem(
+                "picture",
+                f"The manual quotes: {phrase}. Continue reading.",
+                caption="Figure 6. Quoted diagnostic",
+                markdown=f"<!-- audit says {phrase}; retain this note -->",
+            )
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(_DoclingDocument([(picture, 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.text, f"The manual quotes: {phrase}. Continue reading.")
+            self.assertEqual(figure.metadata["markdown"], f"<!-- audit says {phrase}; retain this note -->")
+
+    def test_docling_picture_no_icon_placeholder_comment_is_preserved(self) -> None:
+        """Catches cleanup treating a no-icon comment as Docling's emoji placeholder."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        no_icon_comment = "<!-- Image not available. Please use PdfPipelineOptions(generate_picture_images=True) -->"
+        with TemporaryDirectory() as temporary:
+            picture = _DoclingItem(
+                "picture",
+                no_icon_comment,
+                caption="Figure 7. No-icon note",
+                markdown=no_icon_comment,
+            )
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(_DoclingDocument([(picture, 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.text, no_icon_comment)
+            self.assertEqual(figure.metadata["markdown"], no_icon_comment)
+
+    def test_docling_picture_asset_root_symlink_is_not_followed(self) -> None:
+        """Catches image export writing through a pre-existing assets-directory symlink."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class Image:
+            def save(self, target, format="PNG") -> None:
+                Path(target).write_bytes(b"must-not-write")
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pdf = root / "paper.pdf"
+            external = root / "external"
+            external.mkdir()
+            asset_root = root / "paper_assets"
+            try:
+                asset_root.symlink_to(external, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symlinks unavailable: {exc}")
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(_DoclingItem("picture", "", image=Image()), 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertFalse((external / "page_001_figure_001.png").exists())
+            self.assertEqual(figure.metadata["source_image_error"], "image_write_target_unsafe")
+
+    def test_docling_picture_save_falls_back_to_png_suffix_without_format_argument(self) -> None:
+        """Catches temporary names that prevent extension-driven PNG writers from succeeding."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class ExtensionDrivenImage:
+            def save(self, target, format=None) -> None:
+                if format is not None:
+                    raise TypeError("format keyword unsupported")
+                self.assertEqual(Path(target).suffix, ".png")
+                Path(target).write_bytes(b"extension-png")
+
+            def assertEqual(self, actual, expected) -> None:
+                if actual != expected:
+                    raise AssertionError(f"{actual!r} != {expected!r}")
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(_DoclingItem("picture", "", image=ExtensionDrivenImage()), 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertTrue(figure.metadata["source_image_available"])
+            self.assertEqual((pdf.parent / "paper_assets" / figure.metadata["asset_name"]).read_bytes(), b"extension-png")
+
+    def test_docling_picture_save_failure_preserves_existing_asset(self) -> None:
+        """Catches a failed write deleting or corrupting the prior deterministic asset."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class FailingImage:
+            def save(self, target, format="PNG") -> None:
+                Path(target).write_bytes(b"partial-new-bytes")
+                raise OSError("disk write failed")
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            asset = pdf.parent / "paper_assets" / "page_001_figure_001.png"
+            asset.parent.mkdir()
+            asset.write_bytes(b"previous-asset")
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(_DoclingItem("picture", "", image=FailingImage()), 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(asset.read_bytes(), b"previous-asset")
+            self.assertFalse(figure.metadata["source_image_available"])
+            self.assertEqual(figure.metadata["source_image_error"], "image_write_failed")
+
+    def test_docling_picture_extraction_error_is_auditable_but_missing_image_is_not_error(self) -> None:
+        """Catches image extraction failures being silently conflated with an absent image."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class BrokenPicture(_DoclingItem):
+            def get_image(self, _document):
+                raise RuntimeError("private source path must not leak")
+
+        with TemporaryDirectory() as temporary:
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(
+                    _DoclingDocument(
+                        [
+                            (BrokenPicture("picture", "", caption="Figure 4. Broken source"), 1),
+                            (_DoclingItem("picture", "", caption="Figure 5. No image"), 1),
+                        ]
+                    )
+                ),
+            )
+
+            extraction_error, no_image = parsed.pages[0].blocks
+            self.assertEqual(extraction_error.metadata["source_image_error"], "image_extraction_failed")
+            self.assertNotIn("private source path", str(extraction_error.metadata))
+            self.assertNotIn("source_image_error", no_image.metadata)
+
+    def test_docling_table_preserves_tableformer_markdown_and_writes_source_asset(self) -> None:
+        """Catches tables losing exact TableFormer cells or their source-image fallback."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class Image:
+            def save(self, target, format="PNG") -> None:
+                Path(target).write_bytes(b"table-image")
+
+        markdown = "\n| Method | Score |\n| --- | --- |\n| Scholar | 0.91 |\n"
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            table = _DoclingItem("table", "", markdown=markdown, image=Image())
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(table, 1)])),
+            )
+
+            block = parsed.pages[0].blocks[0]
+            self.assertEqual(block.block_type, "table")
+            self.assertEqual(block.text, markdown)
+            self.assertEqual(block.metadata["markdown"], markdown)
+            self.assertEqual(block.metadata["asset_name"], "page_001_table_001.png")
+            self.assertTrue(block.metadata["source_image_available"])
+            self.assertEqual(
+                (pdf.parent / "paper_assets" / "page_001_table_001.png").read_bytes(),
+                b"table-image",
+            )
+            inventory = parsed.to_manifest()["asset_inventory"]
+            self.assertEqual(len(inventory), 1)
+            self.assertEqual(inventory[0]["name"], "page_001_table_001.png")
+            self.assertEqual(inventory[0]["type"], "table")
+            self.assertEqual(inventory[0]["page_number"], 1)
+
+    def test_docling_table_without_image_keeps_markdown_without_fake_asset(self) -> None:
+        """Catches a no-crop table fallback that discards cells or invents an asset."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        markdown = "| Metric | Value |\n| --- | --- |\n| F1 | 0.88 |"
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(
+                    _DoclingDocument([(_DoclingItem("table", "", markdown=markdown), 1)])
+                ),
+            )
+
+            block = parsed.pages[0].blocks[0]
+            self.assertEqual(block.text, markdown)
+            self.assertEqual(block.metadata["markdown"], markdown)
+            self.assertFalse(block.metadata["source_image_available"])
+            self.assertNotIn("asset_name", block.metadata)
+            self.assertFalse((pdf.parent / "paper_assets").exists())
+
+    def test_docling_table_prefers_exact_markdown_over_caption_and_retains_caption_label(self) -> None:
+        """Catches TableFormer cells being replaced by a common TableItem caption."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        markdown = "\n| Method | Score |\n| --- | --- |\n| Scholar | 0.91 |\n"
+        with TemporaryDirectory() as temporary:
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(
+                    _DoclingDocument(
+                        [
+                            (
+                                _DoclingItem(
+                                    "table",
+                                    "",
+                                    caption="Table 1. Main results",
+                                    markdown=markdown,
+                                ),
+                                1,
+                            )
+                        ]
+                    )
+                ),
+            )
+
+            table = parsed.pages[0].blocks[0]
+            self.assertEqual(table.text, markdown)
+            self.assertEqual(table.metadata["markdown"], markdown)
+            self.assertEqual(table.metadata["caption"], "Table 1. Main results")
+            self.assertEqual(table.metadata["label"], "Table 1. Main results")
+
+    def test_docling_non_table_markdown_remains_trimmed(self) -> None:
+        """Catches byte-preservation for tables leaking into other Docling export types."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        parsed = parse_docling_pdf(
+            Path("paper.pdf"),
+            converter=_Converter(
+                _DoclingDocument(
+                    [(_DoclingItem("equation", "", markdown="\n  $$x = y$$  \n"), 1)]
+                )
+            ),
+        )
+
+        equation = parsed.pages[0].blocks[0]
+        self.assertEqual(equation.text, "$$x = y$$")
+        self.assertEqual(equation.metadata["markdown"], "$$x = y$$")
+
+    def test_docling_table_image_extraction_and_write_failures_are_auditable(self) -> None:
+        """Catches table crop failures becoming sensitive exceptions or silent success."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class BrokenTable(_DoclingItem):
+            def get_image(self, _document):
+                raise RuntimeError("private source path must not leak")
+
+        class FailingImage:
+            def save(self, _target, format="PNG") -> None:
+                raise OSError("private target path must not leak")
+
+        markdown = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+        with TemporaryDirectory() as temporary:
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(
+                    _DoclingDocument(
+                        [
+                            (BrokenTable("table", "", markdown=markdown), 1),
+                            (_DoclingItem("table", "", markdown=markdown, image=FailingImage()), 1),
+                        ]
+                    )
+                ),
+            )
+
+            extraction_error, write_error = parsed.pages[0].blocks
+            self.assertEqual(extraction_error.metadata["source_image_error"], "image_extraction_failed")
+            self.assertEqual(write_error.metadata["source_image_error"], "image_write_failed")
+            self.assertFalse(extraction_error.metadata["source_image_available"])
+            self.assertFalse(write_error.metadata["source_image_available"])
+            self.assertNotIn("private source path", str(extraction_error.metadata))
+            self.assertNotIn("private target path", str(write_error.metadata))
+
+    def test_docling_prose_algorithm_mention_does_not_retype_following_code(self) -> None:
+        """Catches prose mentions of Algorithm N being treated as adjacent algorithm headings."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        parsed = parse_docling_pdf(
+            Path("paper.pdf"),
+            converter=_Converter(
+                _DoclingDocument(
+                    [
+                        (_DoclingItem("text", "We compare with Algorithm 1 in the related work."), 1),
+                        (_DoclingItem("code", "return baseline_result"), 1),
+                    ]
+                )
+            ),
+        )
+
+        self.assertEqual(parsed.pages[0].blocks[1].block_type, "code")
+
+    def test_docling_adjacent_algorithm_heading_classifies_only_following_code(self) -> None:
+        """Catches a classifier that misses adjacent algorithm titles or upgrades distant code."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        document = _DoclingDocument(
+            [
+                (_DoclingItem("section_header", "Algorithm 1: Federated training"), 1),
+                (_DoclingItem("code", "1: Initialize model\n2: Train clients\n3: Aggregate updates"), 1),
+                (_DoclingItem("text", "The following source fragment is ordinary implementation code."), 1),
+                (_DoclingItem("code", "return model_state"), 1),
+            ]
+        )
+
+        parsed = parse_docling_pdf(Path("paper.pdf"), converter=_Converter(document))
+
+        algorithm, ordinary_code = [
+            block for block in parsed.pages[0].blocks if block.block_type in {"algorithm", "code"}
+        ]
+        self.assertEqual(algorithm.metadata["label"], "Algorithm 1: Federated training")
+        self.assertEqual(algorithm.metadata["caption"], "Algorithm 1: Federated training")
+        self.assertEqual(algorithm.text, "1: Initialize model\n2: Train clients\n3: Aggregate updates")
+        self.assertEqual(ordinary_code.block_type, "code")
+        self.assertEqual(ordinary_code.text, "return model_state")
+
     def test_docling_bottom_left_bbox_is_normalized_to_top_left(self) -> None:
         from app.papers.docling_adapter import parse_docling_pdf
 

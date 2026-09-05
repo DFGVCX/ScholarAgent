@@ -438,14 +438,17 @@ arXiv
 - [ ] 直接使用“切片”视图逐篇检查边界质量，记录过长、过短、跨章节、上下文不足、重复和乱码 Chunk。
 - [ ] 修复公式 Markdown、表格结构、图片裁剪和算法步骤的剩余质量问题。
   - [ ] Docling 图片资产导出：开启 `generate_picture_images`，将 PictureItem 原图保存到当前内容版本的 `_assets` 目录，写入 `asset_name`/页码/来源框；前端显示原图，Chunk 中移除 `Image not available` 占位符，不嵌入 Base64。
+    - [x] Adapter 单元测试已验证图片选项保持 OCR 关闭、可用（含纯图片）PictureItem 原图以原子替换保存为白名单资产、占位符/data URI 被移除，以及缺原图时保留图题但不伪造资产；提取/写入失败以无敏感错误码审计且不会覆盖旧资产；真实 PDF 与网页验收仍待执行。
   - [ ] Docling 算法上下文分类：当前 FLchain 的 Algorithm 1 已完整提取 20 步，但标题是前置 heading、正文被标成 code；根据相邻 `Algorithm N` 标题将正文归类为 algorithm，并恢复逐行步骤、标题和质量诊断。
+    - [x] Adapter 单元测试已验证仅紧邻 heading/caption `Algorithm 1` 标题的 code 继承标题并归类为 algorithm，间隔普通文本或正文提及后的 code 保持 code；真实 PDF 验收仍待执行。
   - [ ] Docling 表格双通道：优先保存 TableFormer Markdown 单元格，同时保存原图回退；结构不可靠时标记 `review` 而不伪造单元格。FLchain 本身无表格，继续使用包含真实表格的论文验收。
+    - [x] Adapter/质量诊断单元测试已验证保持 TableFormer Markdown 原样、在 `generate_page_images` 且 OCR 关闭时以原子替换保存可用表格原图并登记白名单资产；无原图不伪造资产，提取/写入失败使用无敏感错误码审计，缺少表头分隔行的原文维持 `review`。真实含表格 PDF 与网页验收仍待执行。
   - [ ] 上述修复完成后重新解析 FLchain，并使用另一篇含 8 个表格/6 个算法的论文完成网页“切片”视图验收。
 - [ ] 完成上传 → 解析 → v4 切片 → Embedding → 切片浏览的 Docker 端到端回归。
   - [x] 网站上传在 1 秒内返回 `parsing`，MCP 仅登记论文/资产/任务，Docling 重依赖由 Worker 执行。
   - [x] Worker 对真实 4 页 FLchain PDF 完成 Docling v4：21 节、32 Chunk、无 fallback，32 个千问向量全部 ready。
   - [x] 结构 API 返回按序 32 个完整 Chunk；中文“联邦学习是什么” hybrid 检索返回 8 个 Chunk，Top 3 来自当前 v4 内容且同时具有 lexical/vector 排名。
-  - [ ] Codex 浏览器运行时初始化失败，尚未在 UI 中视觉点击“切片”视图；不能用 API 验收替代这一项。
+  - [ ] Codex 浏览器控制已可正常初始化；本轮打开 `http://127.0.0.1:3000/` 返回 `ERR_CONNECTION_REFUSED`，根因是 Docker Desktop 4.69 再次被失效的 `%LOCALAPPDATA%\Docker\run\dockerInference` socket 触发启动崩溃。当前执行策略不允许清理工作区外 socket，故仍未完成 UI 视觉点击；恢复命令见 `docs/operations/STARTUP_CN.md` 10.7，不能用 API 验收替代这一项。
 - [ ] 主路径稳定后再决定是否把 `scholar_hierarchical_v4` 设为默认策略。
 
 ### P1：提高 Top-1 和上下文质量
@@ -556,3 +559,12 @@ PostgreSQL/pgvector 基础
 - Alembic 已升级到 `20260901_0010`；真实 PostgreSQL 事务冒烟完成 enqueue → claim → 当前资产加载 → lease refresh → fenced complete 并 rollback，数据库最终活跃 PDF 任务为 0。
 - 内容提交按 ingestion generation 建立唯一约束，Worker 崩溃重试可直接恢复同代 32 个 Chunk/向量而不重复解析；恢复读取严格绑定目标 `content_uuid`，所有并发路径统一按 paper → job 加锁，新上传、旧任务失败与 lease 校验不会形成反向锁序。
 - `/knowledge/rag/stats` 当前仍为 `degraded`：`ready_missing_vectors=0`、`ready_wrong_model=0`，但历史非当前版本仍有 1240 个 ready Chunk；清理/降级历史向量状态后才能把一致性归零项标记完成。
+
+### 2026-09-05 Goal 续跑记录
+
+- Docling 适配器已启用图片和页面图生成且继续关闭 OCR；PictureItem 原图使用确定性白名单文件名、同目录临时 PNG 和原子替换保存到当前 `_assets` 目录，拒绝预存资产目录/目标软链，失败不删除旧资产。
+- 图片占位符与 data URI 不再进入 Chunk；纯图片对象仍保留资产和 provenance，正常缺图与提取/写入失败分别处理，失败只暴露有界、无敏感信息的诊断码。
+- 只有紧邻 heading/caption `Algorithm N` 的 code 才继承标题并归类为 algorithm；正文中提及算法编号不会污染后续代码分类。
+- Docling TableItem 同时保留 TableFormer Markdown 与表格原图；带 caption 时正文通道仍优先完整单元格 Markdown，只有原图而无网格的表格保留为 `review` table Chunk，不伪造行列。
+- 固定 RAG 回归现为 292 通过、1 个 Windows 目录软链权限性跳过；Ubuntu CI 会执行该真实软链用例。`docker compose config --quiet` 与提交范围 `git diff --check` 均通过。
+- 浏览器控制组件已恢复，但 Docker Desktop Linux engine 因同一 `dockerInference` 残留 socket 再次崩溃；当前命令策略阻止工作区外删除操作，因此真实 FLchain/含表格论文重解析和切片页面视觉验收保持未完成。

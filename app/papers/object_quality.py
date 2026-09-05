@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
@@ -32,6 +33,11 @@ def _valid_bbox(bbox: Sequence[float] | None) -> bool:
     except (TypeError, ValueError):
         return False
     return x1 > x0 and y1 > y0
+
+
+def _safe_asset_name(value: object) -> str:
+    name = str(value or "").strip()
+    return name if name and Path(name).name == name and name not in {".", ".."} else ""
 
 
 def _balanced_math(value: str) -> bool:
@@ -105,7 +111,9 @@ def assess_object_quality(
     markdown = str(source.get("markdown") or "").strip()
     diagnostic_text = markdown or raw
     caption = str(source.get("caption") or source.get("label") or "").strip()
-    source_image_available = bool(source.get("source_image_available") or source.get("asset_name"))
+    source_image_available = bool(
+        source.get("source_image_available") or _safe_asset_name(source.get("asset_name"))
+    )
     equation_delimited = kind == "equation" and raw.startswith("$$") and raw.endswith("$$")
     structured_content_available = bool(
         source.get("structured_content_available") or markdown or equation_delimited
@@ -135,7 +143,7 @@ def assess_object_quality(
         reasons.append("low_extraction_confidence")
 
     auditable_source = bool(diagnostic_text) or (
-        kind == "figure" and (bool(caption) or source_image_available)
+        kind in {"figure", "table"} and (bool(caption) or source_image_available)
     )
     if not auditable_source:
         reasons.append("empty_content")
