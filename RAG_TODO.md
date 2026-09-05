@@ -442,6 +442,7 @@ arXiv
   - [ ] Docling 算法上下文分类：当前 FLchain 的 Algorithm 1 已完整提取 20 步，但标题是前置 heading、正文被标成 code；根据相邻 `Algorithm N` 标题将正文归类为 algorithm，并恢复逐行步骤、标题和质量诊断。
     - [x] Adapter 单元测试已验证仅紧邻 heading/caption `Algorithm 1` 标题的 code 继承标题并归类为 algorithm，间隔普通文本或正文提及后的 code 保持 code；真实 PDF 验收仍待执行。
   - [ ] Docling 表格双通道：优先保存 TableFormer Markdown 单元格，同时保存原图回退；结构不可靠时标记 `review` 而不伪造单元格。FLchain 本身无表格，继续使用包含真实表格的论文验收。
+    - [x] Adapter/质量诊断单元测试已验证保持 TableFormer Markdown 原样、在 `generate_page_images` 且 OCR 关闭时以原子替换保存可用表格原图并登记白名单资产；无原图不伪造资产，提取/写入失败使用无敏感错误码审计，缺少表头分隔行的原文维持 `review`。真实含表格 PDF 与网页验收仍待执行。
   - [ ] 上述修复完成后重新解析 FLchain，并使用另一篇含 8 个表格/6 个算法的论文完成网页“切片”视图验收。
 - [ ] 完成上传 → 解析 → v4 切片 → Embedding → 切片浏览的 Docker 端到端回归。
   - [x] 网站上传在 1 秒内返回 `parsing`，MCP 仅登记论文/资产/任务，Docling 重依赖由 Worker 执行。

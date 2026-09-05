@@ -6,6 +6,21 @@ from app.papers.object_quality import assess_object_quality
 
 
 class ObjectQualityTest(unittest.TestCase):
+    def test_invalid_tableformer_markdown_remains_review_without_invented_grid(self) -> None:
+        """Catches the v4 quality path upgrading malformed source into fabricated cells."""
+        markdown = "| Method | Score |\n| Scholar | 0.91 |"
+
+        quality = assess_object_quality(
+            "table",
+            markdown,
+            {"markdown": markdown, "source_image_available": True},
+            (10.0, 20.0, 300.0, 180.0),
+        )
+
+        self.assertEqual(quality["status"], "review")
+        self.assertIn("table_markdown_grid_missing", quality["reasons"])
+        self.assertFalse(quality["checks"]["markdown_grid"])
+
     def test_complete_table_reports_row_column_integrity(self) -> None:
         markdown = "\n".join(
             (

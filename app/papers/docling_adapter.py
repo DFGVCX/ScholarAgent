@@ -74,7 +74,7 @@ def _call_export(item: Any, name: str, document: Any) -> str:
         return ""
     for args, kwargs in (((document,), {}), ((), {"doc": document}), ((), {})):
         try:
-            return str(method(*args, **kwargs) or "").strip()
+            return str(method(*args, **kwargs) or "")
         except TypeError:
             continue
     return ""
@@ -131,7 +131,7 @@ def _provenance(
 
 def _item_text(item: Any, document: Any, block_type: str) -> tuple[str, str, str]:
     raw_text = str(getattr(item, "text", "") or "").strip()
-    caption = _call_export(item, "caption_text", document)
+    caption = _call_export(item, "caption_text", document).strip()
     markdown = _call_export(item, "export_to_markdown", document)
     if block_type == "equation" and markdown:
         raw_text = raw_text or markdown
@@ -148,7 +148,7 @@ def _clean_picture_text(value: str) -> str:
     return _DATA_URI_RE.sub("", without_placeholder).strip()
 
 
-def _get_picture_image(item: Any, document: Any) -> tuple[Any | None, str | None]:
+def _get_source_image(item: Any, document: Any) -> tuple[Any | None, str | None]:
     method = getattr(item, "get_image", None)
     if not callable(method):
         return None, None
@@ -165,18 +165,19 @@ def _get_picture_image(item: Any, document: Any) -> tuple[Any | None, str | None
     return None, "image_extraction_failed"
 
 
-def _save_picture_asset(
+def _save_visual_asset(
     item: Any,
     document: Any,
     path: Path,
     page_number: int,
-    figure_number: int,
+    asset_type: str,
+    asset_number: int,
 ) -> tuple[str | None, str | None]:
-    image, extraction_error = _get_picture_image(item, document)
+    image, extraction_error = _get_source_image(item, document)
     if image is None:
         return None, extraction_error
     asset_root = path.parent / f"{path.stem}_assets"
-    asset_name = f"page_{page_number:03}_figure_{figure_number:03}.png"
+    asset_name = f"page_{page_number:03}_{asset_type}_{asset_number:03}.png"
     target = asset_root / asset_name
     temporary_target: Path | None = None
     try:
@@ -236,6 +237,8 @@ def _build_converter() -> Any:
     options.do_ocr = False
     if hasattr(options, "generate_picture_images"):
         options.generate_picture_images = True
+    if hasattr(options, "generate_page_images"):
+        options.generate_page_images = True
     if hasattr(options, "do_table_structure"):
         options.do_table_structure = True
     if hasattr(options, "do_formula_enrichment"):
@@ -409,13 +412,14 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
     by_page: dict[int, list[ParsedBlock]] = defaultdict(list)
     source_items = 0
     figure_counts: Counter[int] = Counter()
+    table_counts: Counter[int] = Counter()
     previous_algorithm_title: str | None = None
 
     for source_items, entry in enumerate(document.iterate_items(), start=1):
         item, level = entry if isinstance(entry, tuple) else (entry, 0)
         source_label = _label(getattr(item, "label", "text"))
         raw_title = str(getattr(item, "text", "") or "").strip()
-        title_caption = _call_export(item, "caption_text", document)
+        title_caption = _call_export(item, "caption_text", document).strip()
         algorithm_title = next(
             (
                 value
@@ -456,10 +460,17 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
             "caption": caption,
             "markdown": markdown,
         }
-        if block_type == "figure":
-            figure_counts[page_number] += 1
-            asset_name, image_error = _save_picture_asset(
-                item, document, path, page_number, figure_counts[page_number]
+        if block_type in {"figure", "table"}:
+            if block_type == "figure":
+                figure_counts[page_number] += 1
+                asset_type = "figure"
+                asset_number = figure_counts[page_number]
+            else:
+                table_counts[page_number] += 1
+                asset_type = "table"
+                asset_number = table_counts[page_number]
+            asset_name, image_error = _save_visual_asset(
+                item, document, path, page_number, asset_type, asset_number
             )
             metadata["source_image_available"] = bool(asset_name)
             if asset_name:
@@ -467,7 +478,8 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
             if image_error:
                 metadata["source_image_error"] = image_error
         if not text and not markdown and not (
-            block_type == "figure" and (metadata.get("asset_name") or metadata.get("source_image_error"))
+            block_type in {"figure", "table"}
+            and (metadata.get("asset_name") or metadata.get("source_image_error"))
         ):
             previous_algorithm_title = algorithm_title
             continue

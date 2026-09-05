@@ -111,6 +111,7 @@ class HierarchicalPdfParsingTest(unittest.TestCase):
                 self.do_table_structure = False
                 self.do_formula_enrichment = False
                 self.generate_picture_images = False
+                self.generate_page_images = False
                 self.heading_hierarchy_options = SimpleNamespace(enabled=False)
 
         class FakeDocumentConverter:
@@ -132,6 +133,7 @@ class HierarchicalPdfParsingTest(unittest.TestCase):
 
         options = converter.format_options["pdf"].pipeline_options
         self.assertTrue(options.generate_picture_images)
+        self.assertTrue(options.generate_page_images)
         self.assertFalse(options.do_ocr)
 
     def test_docling_picture_writes_safe_asset_and_removes_image_placeholder(self) -> None:
@@ -376,6 +378,94 @@ class HierarchicalPdfParsingTest(unittest.TestCase):
             self.assertEqual(extraction_error.metadata["source_image_error"], "image_extraction_failed")
             self.assertNotIn("private source path", str(extraction_error.metadata))
             self.assertNotIn("source_image_error", no_image.metadata)
+
+    def test_docling_table_preserves_tableformer_markdown_and_writes_source_asset(self) -> None:
+        """Catches tables losing exact TableFormer cells or their source-image fallback."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class Image:
+            def save(self, target, format="PNG") -> None:
+                Path(target).write_bytes(b"table-image")
+
+        markdown = "\n| Method | Score |\n| --- | --- |\n| Scholar | 0.91 |\n"
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            table = _DoclingItem("table", "", markdown=markdown, image=Image())
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(table, 1)])),
+            )
+
+            block = parsed.pages[0].blocks[0]
+            self.assertEqual(block.block_type, "table")
+            self.assertEqual(block.text, markdown)
+            self.assertEqual(block.metadata["markdown"], markdown)
+            self.assertEqual(block.metadata["asset_name"], "page_001_table_001.png")
+            self.assertTrue(block.metadata["source_image_available"])
+            self.assertEqual(
+                (pdf.parent / "paper_assets" / "page_001_table_001.png").read_bytes(),
+                b"table-image",
+            )
+            inventory = parsed.to_manifest()["asset_inventory"]
+            self.assertEqual(len(inventory), 1)
+            self.assertEqual(inventory[0]["name"], "page_001_table_001.png")
+            self.assertEqual(inventory[0]["type"], "table")
+            self.assertEqual(inventory[0]["page_number"], 1)
+
+    def test_docling_table_without_image_keeps_markdown_without_fake_asset(self) -> None:
+        """Catches a no-crop table fallback that discards cells or invents an asset."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        markdown = "| Metric | Value |\n| --- | --- |\n| F1 | 0.88 |"
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(
+                    _DoclingDocument([(_DoclingItem("table", "", markdown=markdown), 1)])
+                ),
+            )
+
+            block = parsed.pages[0].blocks[0]
+            self.assertEqual(block.text, markdown)
+            self.assertEqual(block.metadata["markdown"], markdown)
+            self.assertFalse(block.metadata["source_image_available"])
+            self.assertNotIn("asset_name", block.metadata)
+            self.assertFalse((pdf.parent / "paper_assets").exists())
+
+    def test_docling_table_image_extraction_and_write_failures_are_auditable(self) -> None:
+        """Catches table crop failures becoming sensitive exceptions or silent success."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class BrokenTable(_DoclingItem):
+            def get_image(self, _document):
+                raise RuntimeError("private source path must not leak")
+
+        class FailingImage:
+            def save(self, _target, format="PNG") -> None:
+                raise OSError("private target path must not leak")
+
+        markdown = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+        with TemporaryDirectory() as temporary:
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(
+                    _DoclingDocument(
+                        [
+                            (BrokenTable("table", "", markdown=markdown), 1),
+                            (_DoclingItem("table", "", markdown=markdown, image=FailingImage()), 1),
+                        ]
+                    )
+                ),
+            )
+
+            extraction_error, write_error = parsed.pages[0].blocks
+            self.assertEqual(extraction_error.metadata["source_image_error"], "image_extraction_failed")
+            self.assertEqual(write_error.metadata["source_image_error"], "image_write_failed")
+            self.assertFalse(extraction_error.metadata["source_image_available"])
+            self.assertFalse(write_error.metadata["source_image_available"])
+            self.assertNotIn("private source path", str(extraction_error.metadata))
+            self.assertNotIn("private target path", str(write_error.metadata))
 
     def test_docling_prose_algorithm_mention_does_not_retype_following_code(self) -> None:
         """Catches prose mentions of Algorithm N being treated as adjacent algorithm headings."""
