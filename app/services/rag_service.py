@@ -22,6 +22,8 @@ from app.retrieval.models import (
     RetrievalRequest,
 )
 from app.retrieval.repository import PostgresRetrievalRepository
+from app.retrieval.reranker import QwenRerankerClient
+from app.retrieval.replay import retrieval_replay_store
 from app.retrieval.service import RetrievalService
 from app.retrieval.usage import persist_embedding_usage
 
@@ -171,9 +173,13 @@ class RagService:
         section_ids: tuple[str, ...] = (),
         chunk_types: tuple[str, ...] = (),
         retrieval_mode: str | None = None,
+        consumer: str = "api",
+        conversation_id: str = "",
+        task_id: str = "",
     ) -> dict[str, Any]:
         settings = get_settings()
         configured_mode = {
+            "hybrid_rerank": "hybrid_rerank",
             "hybrid_rrf": "hybrid",
             "hybrid": "hybrid",
             "lexical": "lexical",
@@ -186,6 +192,11 @@ class RagService:
                     PostgresRetrievalRepository(session),
                     embedding,
                     semantic_timeout_seconds=settings.rag_semantic_timeout_seconds,
+                    reranker=(
+                        QwenRerankerClient.from_settings()
+                        if settings.rag_reranker_provider == "qwen"
+                        else None
+                    ),
                 )
                 response = await retrieval.search(
                     RetrievalRequest(
@@ -205,11 +216,81 @@ class RagService:
                         retrieval_mode=retrieval_mode or configured_mode,
                     )
                 )
+                payload = response.to_legacy_dict()
+            try:
+                async with tenant_transaction(tenant_id, user_id) as replay_session:
+                    replay_id = await retrieval_replay_store.record(
+                        replay_session,
+                        tenant_id,
+                        user_id,
+                        payload,
+                        consumer=consumer,
+                        conversation_id=conversation_id,
+                        task_id=task_id,
+                    )
+            except Exception:
+                replay_id = ""
+                payload["warnings"] = [
+                    *(payload.get("warnings") or []),
+                    "retrieval replay could not be persisted",
+                ]
         finally:
             await persist_embedding_usage(
                 tenant_id, user_id, embedding, operation="retrieval"
             )
-        return response.to_legacy_dict()
+        payload["replay_id"] = replay_id
+        return payload
+
+    async def compare(
+        self,
+        tenant_id: str,
+        user_id: str,
+        query: str,
+        limit: int = 6,
+        **filters: Any,
+    ) -> dict[str, Any]:
+        """Compare production strategies while reusing one query embedding."""
+        settings = get_settings()
+        embedding = QwenEmbeddingClient.from_settings()
+        cached_embedding = _CachedEmbeddingClient(embedding)
+        modes = ("lexical", "vector", "hybrid", "hybrid_rerank")
+        results: dict[str, Any] = {}
+        try:
+            async with tenant_transaction(tenant_id, user_id) as session:
+                retrieval = RetrievalService(
+                    PostgresRetrievalRepository(session),
+                    cached_embedding,
+                    semantic_timeout_seconds=settings.rag_semantic_timeout_seconds,
+                    reranker=(
+                        QwenRerankerClient.from_settings()
+                        if settings.rag_reranker_provider == "qwen"
+                        else None
+                    ),
+                )
+                for mode in modes:
+                    response = await retrieval.search(
+                        RetrievalRequest(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            query=query,
+                            limit=limit,
+                            candidate_limit=settings.rag_candidate_limit,
+                            max_chunks_per_paper=settings.rag_max_chunks_per_paper,
+                            retrieval_mode=mode,
+                            **filters,
+                        )
+                    )
+                    results[mode] = response.to_legacy_dict()
+        finally:
+            await persist_embedding_usage(
+                tenant_id, user_id, embedding, operation="retrieval"
+            )
+        return {
+            "query": query.strip(),
+            "strategies": results,
+            "embedding_requests": cached_embedding.cache_misses,
+            "strategy_order": list(modes),
+        }
 
     async def expand_context(
         self,
@@ -251,6 +332,26 @@ class RagService:
                 )
             )
         return response.to_dict()
+
+    async def mark_adoption(
+        self,
+        tenant_id: str,
+        user_id: str,
+        replay_id: str,
+        chunk_ids: list[str],
+    ) -> dict[str, Any]:
+        async with tenant_transaction(tenant_id, user_id) as session:
+            return await retrieval_replay_store.mark_adoption(
+                session, tenant_id, user_id, replay_id, chunk_ids
+            )
+
+    async def recent_replays(
+        self, tenant_id: str, user_id: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        async with tenant_transaction(tenant_id, user_id) as session:
+            return await retrieval_replay_store.recent(
+                session, tenant_id, user_id, limit
+            )
 
     async def stats(self, tenant_id: str, user_id: str) -> dict[str, Any]:
         settings = get_settings()
@@ -326,3 +427,27 @@ class RagService:
 
 
 rag_service = RagService()
+
+
+class _CachedEmbeddingClient:
+    """Request-local cache used only by the four-strategy comparison endpoint."""
+
+    def __init__(self, client: QwenEmbeddingClient) -> None:
+        self.client = client
+        self.model = client.model
+        self._cache: dict[tuple[str, ...], list[list[float]]] = {}
+        self._errors: dict[tuple[str, ...], Exception] = {}
+        self.cache_misses = 0
+
+    async def embed(self, texts: Any) -> list[list[float]]:
+        key = tuple(str(value) for value in texts)
+        if key in self._errors:
+            raise self._errors[key]
+        if key not in self._cache:
+            self.cache_misses += 1
+            try:
+                self._cache[key] = await self.client.embed(key)
+            except Exception as exc:
+                self._errors[key] = exc
+                raise
+        return [list(vector) for vector in self._cache[key]]

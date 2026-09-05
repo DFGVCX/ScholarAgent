@@ -73,5 +73,9 @@ async def persist_embedding_usage(
         task.cancel()
         raise
     except Exception as exc:
-        logger.warning("Embedding usage telemetry write failed: %s", type(exc).__name__)
+        logger.warning(
+            "Embedding usage telemetry write failed: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
         return False

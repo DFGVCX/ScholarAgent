@@ -24,6 +24,7 @@ from app.retrieval.models import (
     RetrievalResponse,
 )
 from app.retrieval.query_expansion import academic_query_aliases
+from app.retrieval.reranker import RerankResult, RerankUnavailable
 
 
 class RetrievalRepository(Protocol):
@@ -38,6 +39,14 @@ class RetrievalRepository(Protocol):
     async def vector_candidates(
         self, request: RetrievalRequest, embedding: Sequence[float], embedding_model: str
     ) -> list[RetrievalCandidate]: ...
+
+
+class Reranker(Protocol):
+    model: str
+
+    async def rerank(
+        self, query: str, documents: Sequence[str], *, top_n: int
+    ) -> list[RerankResult]: ...
 
 
 def reciprocal_rank_fusion(
@@ -145,18 +154,20 @@ class RetrievalService:
         external_search: Callable[[str, int], Awaitable[Sequence[ExternalCandidate | dict[str, Any]]]] | None = None,
         *,
         semantic_timeout_seconds: float = 8.0,
+        reranker: Reranker | None = None,
     ) -> None:
         self.repository = repository
         self.embedding = embedding
         self.external_search = external_search
         self.semantic_timeout_seconds = max(0.001, float(semantic_timeout_seconds))
+        self.reranker = reranker
 
     async def search(self, request: RetrievalRequest) -> RetrievalResponse:
         total_started = time.perf_counter()
         request, query_type = _adapt_candidate_pool(request)
         requested_mode = request.retrieval_mode
-        use_lexical = requested_mode in {"lexical", "hybrid"}
-        use_vector = bool(request.query) and requested_mode in {"vector", "hybrid"}
+        use_lexical = requested_mode in {"lexical", "hybrid", "hybrid_rerank"}
+        use_vector = bool(request.query) and requested_mode in {"vector", "hybrid", "hybrid_rerank"}
         lexical_sql_ms: float | None = None
         if use_lexical:
             lexical_started = time.perf_counter()
@@ -198,7 +209,7 @@ class RetrievalService:
                     "semantic retrieval timed out after "
                     f"{self.semantic_timeout_seconds:g}s; {suffix}"
                 )
-                if requested_mode == "hybrid":
+                if requested_mode in {"hybrid", "hybrid_rerank"}:
                     mode = "lexical"
             except EmbeddingUnavailable as exc:
                 embedding_debug = {
@@ -207,18 +218,58 @@ class RetrievalService:
                     "reason": str(exc),
                 }
                 warnings.append(f"semantic retrieval unavailable: {exc}")
-                if requested_mode == "hybrid":
+                if requested_mode in {"hybrid", "hybrid_rerank"}:
                     mode = "lexical"
             finally:
                 semantic_total_ms = self._elapsed_ms(semantic_started)
 
         postprocess_started = time.perf_counter()
+        rerank_requested = requested_mode == "hybrid_rerank"
+        pool_limit = (
+            min(request.candidate_limit, max(request.limit * 4, 20))
+            if rerank_requested
+            else request.limit
+        )
         hits = self._fuse(
             lexical,
             vector,
-            request.limit,
+            pool_limit,
             max_chunks_per_paper=request.max_chunks_per_paper,
         )
+        rerank_ms: float | None = None
+        rerank_debug: dict[str, Any] = {"status": "not_requested"}
+        if rerank_requested:
+            rerank_started = time.perf_counter()
+            if self.reranker is None:
+                rerank_debug = {"status": "unavailable", "reason": "reranker is not configured"}
+                warnings.append("reranker unavailable: reranker is not configured; RRF order was preserved")
+                mode = "hybrid" if mode == "hybrid_rerank" else mode
+                hits = hits[: request.limit]
+            else:
+                try:
+                    ranked = await self.reranker.rerank(
+                        request.query,
+                        [self._rerank_document(hit) for hit in hits],
+                        top_n=min(request.limit, len(hits)),
+                    )
+                    hits = self._apply_rerank(hits, ranked, request.limit)
+                    rerank_debug = {
+                        "status": "ready",
+                        "model": self.reranker.model,
+                        "candidate_count": pool_limit,
+                        "returned_count": len(ranked),
+                    }
+                except RerankUnavailable as exc:
+                    rerank_debug = {
+                        "status": "unavailable",
+                        "model": self.reranker.model,
+                        "reason": str(exc),
+                    }
+                    warnings.append(f"reranker unavailable: {exc}; RRF order was preserved")
+                    mode = "hybrid" if mode == "hybrid_rerank" else mode
+                    hits = hits[: request.limit]
+                finally:
+                    rerank_ms = self._elapsed_ms(rerank_started)
         merged_contexts = tuple(self._merge_adjacent_hits(hits))
         fusion_context_ms = self._elapsed_ms(postprocess_started)
         external: tuple[ExternalCandidate, ...] = ()
@@ -238,8 +289,13 @@ class RetrievalService:
             filters=request.filters_dict(),
             query_expansions=academic_query_aliases(request.query),
             ranking_policy={
-                "fusion": "rrf" if requested_mode == "hybrid" else "single_source",
+                "fusion": "rrf" if requested_mode in {"hybrid", "hybrid_rerank"} else "single_source",
                 "requested_mode": requested_mode,
+                **(
+                    {"reranker": self.reranker.model if self.reranker else None}
+                    if rerank_requested
+                    else {}
+                ),
                 "max_chunks_per_paper": request.max_chunks_per_paper,
                 "backfill_when_insufficient": True,
                 "exact_duplicate_scope": "same_paper",
@@ -257,6 +313,7 @@ class RetrievalService:
                     "query_embedding_ms": query_embedding_ms,
                     "vector_sql_ms": vector_sql_ms,
                     "semantic_total_ms": semantic_total_ms,
+                    "rerank_ms": rerank_ms,
                     "fusion_context_ms": fusion_context_ms,
                     "external_search_ms": external_search_ms,
                     "total_ms": total_ms,
@@ -265,6 +322,7 @@ class RetrievalService:
                     "lexical": self._candidate_pool_debug(lexical),
                     "vector": self._candidate_pool_debug(vector),
                 },
+                "reranker": rerank_debug,
                 "ranking": [
                     {
                         "chunk_id": hit.chunk_id,
@@ -278,6 +336,30 @@ class RetrievalService:
                 ],
             },
         )
+
+    @staticmethod
+    def _rerank_document(hit: LocalHit) -> str:
+        heading = " · ".join(
+            value for value in (hit.title, hit.section_path or "") if value
+        )
+        return f"{heading}\n{hit.snippet}" if heading else hit.snippet
+
+    @staticmethod
+    def _apply_rerank(
+        hits: Sequence[LocalHit], ranked: Sequence[RerankResult], limit: int
+    ) -> list[LocalHit]:
+        selected: list[LocalHit] = []
+        seen: set[int] = set()
+        for item in ranked:
+            if item.index in seen or item.index < 0 or item.index >= len(hits):
+                continue
+            seen.add(item.index)
+            selected.append(replace(hits[item.index], rerank_score=item.score))
+            if len(selected) >= limit:
+                break
+        if len(selected) < limit:
+            selected.extend(hit for index, hit in enumerate(hits) if index not in seen)
+        return [replace(hit, final_rank=rank) for rank, hit in enumerate(selected[:limit], 1)]
 
     async def _semantic_candidates(
         self, request: RetrievalRequest

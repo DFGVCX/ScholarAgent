@@ -395,7 +395,24 @@ class ConversationRepository:
         if tool_outcome is not None:
             return tool_outcome.content, tool_outcome.metadata
         if skill_id == "knowledge_base":
-            results = await rag_service.search(user.tenant_id, user.user_id, content, 5)
+            results = await rag_service.search(
+                user.tenant_id,
+                user.user_id,
+                content,
+                5,
+                consumer="agent",
+                conversation_id=conversation_id,
+            )
+            replay_id = str(results.get("replay_id") or "")
+            adopted = [
+                str(item.get("chunk_id"))
+                for item in (results.get("items") or [])
+                if item.get("chunk_id")
+            ]
+            if replay_id:
+                results["retrieval_attribution"] = await rag_service.mark_adoption(
+                    user.tenant_id, user.user_id, replay_id, adopted
+                )
             count = len(results.get("items") or [])
             return (
                 f"已在个人知识库中检索到 {count} 条相关片段。右侧知识库工作台可以继续查看原文、解析正文和批注。",

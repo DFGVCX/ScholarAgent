@@ -260,8 +260,9 @@ Agent 负责理解意图、决定何时检索、调用检索接口、组织证�
 
 ### 后续
 
-- [ ] 接入千问 reranker 或可替换的交叉编码 reranker。
+- [x] 接入可替换 Reranker，当前实现支持千问 `qwen3.7-text-rerank` 原生协议与 `qwen3-rerank` 兼容协议；超时、限流或未配置时明确回退 RRF，不伪造重排分数。
 - [ ] 比较“仅 vector、仅 lexical、RRF hybrid、hybrid + reranker”四种生产检索策略。
+- [x] 提供同查询四策略运行时对比 API 和前端视图，并在一次请求内复用 Query Embedding；固定语料的生产指标报告仍待真实 Reranker 配置后生成。
 - [x] 增加中英双向查询扩展：中文、英文术语、缩写和混合查询映射到同一学术概念组；短缩写使用词边界避免误触发，响应回显 `query_expansions`。
 - [x] 支持本地候选按论文、年份区间、作者、发表渠道、章节和对象类型过滤；lexical 与 vector 使用同一组 SQL 条件，响应回显规范化后的 `filters`。
 - [x] 为不同查询类型设置候选池大小：普通概念保持 80，短缩写/代码类扩大到 120，公式/表格/图片/算法扩大到 160，多对象筛选扩大到 180；调用方显式指定时不覆盖，响应回显 `query_type/candidate_limit`。
@@ -335,7 +336,7 @@ arXiv
 
 - [x] 增加单次查询调试抽屉：展示 query embedding 状态、模型、维度、L2 范数和前 8 维，lexical/vector 候选数量与 Top-20 ID/原始分，以及最终 lexical/vector/RRF/rerank/final 排名；同时展示查询扩展、过滤器、排名策略和合并上下文。
 - [x] RAG 检索验证支持每次查询选择 Hybrid（RRF）、Lexical 或 Vector，便于隔离判断“词面没召回”还是“向量没召回”；Vector 失败时明确不执行关键词回退。
-- [ ] 增加策略切换，允许在相同查询下并排比较 vector、lexical、hybrid 和 rerank。
+- [x] 增加策略切换，允许在相同查询下并排比较 vector、lexical、hybrid 和 hybrid + reranker。
 - [x] 增加 Chunk 父子关系、相邻 Chunk 和连续上下文预览；结构接口返回父章节、前后稳定 Chunk ID 与原子块解释上下文，切片视图在不替换完整原文的前提下按需展开前一/当前/后一 Chunk。
 - [ ] 增加低置信度公式、表格、图片和算法的人工修正入口。
 - [x] 增加论文元数据完整度和待修正字段提示；论文信息页显示完整字段数量，并将缺失或置信度低于 0.7 的字段列为待修正。
@@ -396,8 +397,8 @@ arXiv
 - [x] 为 Agent 提供稳定的父级上下文展开接口；嵌套小节优先返回父章节，否则返回当前章节，且只读当前 content version。
 - [x] 为 Agent 提供按 token budget 选择完整相邻 Chunk 的能力；中心 Chunk 始终完整保留，任何存储 Chunk 都不会被截断。
 - [x] 为每个可引用检索 hit 提供 `citation` locator：稳定 key、paper ID、content version、Chunk UUID、页码范围、章节 ID/路径；回答层是否采用该引用仍属于 Agent 责任。
-- [ ] 增加 Agent 调用场景的检索回放：保存查询、策略、候选和最终上下文。
-- [ ] 建立“RAG 已正确返回证据，但 Agent 未采用”与“RAG 未返回证据”的错误归因。
+- [x] 增加 Agent 调用场景的检索回放：按租户保存查询、请求/生效策略、候选快照、最终上下文、耗时、警告与 Agent 采用的 Chunk。
+- [x] 建立“RAG 未返回证据”“RAG 已返回但 Agent 未采用”“证据已采用”三类错误归因，并在会话 Tool Loop 中登记实际采用结果。
 
 ### 不属于 RAG 的工作
 
@@ -453,7 +454,7 @@ arXiv
 
 ### P1：提高 Top-1 和上下文质量
 
-- [ ] 接入 reranker。
+- [x] 接入可配置千问 Reranker，并提供独立连通性探测与可测试降级。
 - [x] 实现父子 Chunk、相邻合并和重复结果去重；统一检索返回父章节/邻接关系及独立 `merged_contexts`，切片工作台可展开连续上下文，去重策略保留跨论文和不同结构对象证据。
 - [x] 增加中文/英文术语与缩写的双向查询扩展，并为无 Embedding/超时降级建立 lexical 回归测试。
 - [ ] 重点观察 Recall@1、MRR、NDCG@3 和下游上下文 Token。
@@ -484,7 +485,7 @@ arXiv
 - [ ] lexical、vector、hybrid 和 rerank 都可以独立调试和评测。
 - [ ] 中文和英文查询在固定评测集上达到确定的 Recall@K、MRR 和 NDCG 门槛。
 - [ ] 检索结果向 Agent 提供完整原文、论文、章节、页码、分数和可引用状态。
-- [ ] Embedding 或 reranker 不可用时具有明确、可测试的降级行为。
+- [x] Embedding 或 reranker 不可用时具有明确、可测试的降级行为。
 - [ ] 上传、解析、索引、检索、重新生成向量和删除流程通过 Docker E2E。
 - [ ] 所有结果可以通过语料指纹、查询指纹、模型和策略版本复现。
 

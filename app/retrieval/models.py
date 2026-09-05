@@ -40,7 +40,7 @@ class RetrievalRequest:
         object.__setattr__(self, "author", self.author.strip())
         object.__setattr__(self, "venue", self.venue.strip())
         retrieval_mode = str(self.retrieval_mode or "hybrid").strip().lower()
-        if retrieval_mode not in {"lexical", "vector", "hybrid"}:
+        if retrieval_mode not in {"lexical", "vector", "hybrid", "hybrid_rerank"}:
             raise ValueError(f"unsupported retrieval mode: {retrieval_mode}")
         object.__setattr__(self, "retrieval_mode", retrieval_mode)
         object.__setattr__(

@@ -10,6 +10,7 @@ from agents.evolution import skill_evolution_service
 from app.schemas import UserContext
 from app.services.conversation_tool_store import conversation_tool_call_store
 from app.services.conversation_state_service import conversation_state_service
+from app.services.rag_service import rag_service
 from mcp_server.scholar_mcp.client import ScholarMCPClient
 
 
@@ -163,6 +164,8 @@ class ConversationToolLoop:
         arguments = dict(plan.get("arguments") or {})
         arguments["tenant_id"] = user.tenant_id
         arguments["user_id"] = user.user_id
+        if tool_name == "search_papers":
+            arguments["conversation_id"] = conversation_id
         route_state = conversation_state_service.record_route(
             user, conversation_id,
             intent=str(plan.get("intent") or "tool_action"),
@@ -173,6 +176,18 @@ class ConversationToolLoop:
             planned_steps=[tool_name],
         )
         outcome = await self._execute(user, conversation_id, tool_name, arguments)
+        if tool_name == "search_papers":
+            result = outcome.metadata.get("result") or {}
+            replay_id = str(result.get("replay_id") or "")
+            adopted = [
+                str(item.get("chunk_id"))
+                for item in (result.get("local_hits") or [])[:5]
+                if item.get("chunk_id")
+            ]
+            if replay_id:
+                result["retrieval_attribution"] = await rag_service.mark_adoption(
+                    user.tenant_id, user.user_id, replay_id, adopted
+                )
         return ToolLoopOutcome(
             outcome.content,
             {

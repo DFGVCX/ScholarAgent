@@ -34,6 +34,11 @@ class Settings:
     rag_embedding_dimensions: int = 1024
     rag_embedding_cost_cny_per_million_tokens: float = 0.0
     rag_semantic_timeout_seconds: float = 8.0
+    rag_reranker_provider: str = "qwen"
+    rag_reranker_endpoint: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    rag_reranker_api_key: str = ""
+    rag_reranker_model: str = "qwen3.7-text-rerank"
+    rag_reranker_timeout_seconds: float = 8.0
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 120
     rag_chunk_strategy: str = "multimodal_aware_v3"
@@ -175,6 +180,24 @@ def get_settings() -> Settings:
         rag_semantic_timeout_seconds=max(
             0.1,
             _setting_float(overrides, "SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS", 8.0),
+        ),
+        rag_reranker_provider=_setting_value(
+            overrides, "SCHOLAR_RAG_RERANKER_PROVIDER", "qwen"
+        ).strip().lower(),
+        rag_reranker_endpoint=_setting_value(
+            overrides,
+            "SCHOLAR_RAG_RERANKER_ENDPOINT",
+            "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+        ).strip(),
+        rag_reranker_api_key=_setting_value(
+            overrides, "SCHOLAR_RAG_RERANKER_API_KEY", ""
+        ).strip(),
+        rag_reranker_model=_setting_value(
+            overrides, "SCHOLAR_RAG_RERANKER_MODEL", "qwen3.7-text-rerank"
+        ).strip(),
+        rag_reranker_timeout_seconds=max(
+            0.1,
+            _setting_float(overrides, "SCHOLAR_RAG_RERANKER_TIMEOUT_SECONDS", 8.0),
         ),
         rag_chunk_size=max(200, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_SIZE", 900)),
         rag_chunk_overlap=max(0, _setting_int(overrides, "SCHOLAR_RAG_CHUNK_OVERLAP", 120)),

@@ -228,6 +228,7 @@ async def search_papers(
     source: str = "all",
     limit: int = 12,
     persist_results: bool = False,
+    conversation_id: str = "",
 ) -> dict[str, Any]:
     local_hits: list[dict[str, Any]] = []
     external_candidates: list[dict[str, Any]] = []
@@ -238,9 +239,18 @@ async def search_papers(
     ranking_policy: dict[str, Any] = {}
     query_expansions: list[str] = []
     retrieval_debug: dict[str, Any] = {}
+    replay_id = ""
     if source in {"all", "local"}:
         if query.strip():
-            retrieval = await rag_service.search(tenant_id, user_id, query, limit)
+            retrieval = await rag_service.search(
+                tenant_id,
+                user_id,
+                query,
+                limit,
+                consumer="agent",
+                conversation_id=conversation_id,
+            )
+            replay_id = str(retrieval.get("replay_id") or "")
             retrieval_mode = str(retrieval.get("retrieval_mode") or "lexical")
             merged_contexts = list(retrieval.get("merged_contexts") or [])
             retrieval_warnings = list(retrieval.get("warnings") or [])
@@ -298,6 +308,7 @@ async def search_papers(
         "ranking_policy": ranking_policy,
         "query_expansions": query_expansions,
         "debug": retrieval_debug,
+        "replay_id": replay_id,
         "has_more": False,
         "next_cursor": None,
         "external_error": external_error,

@@ -665,6 +665,10 @@ class ToggleKbDTO(BaseModel):
     in_knowledge_base: bool
 
 
+class RetrievalAdoptionDTO(BaseModel):
+    chunk_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
 @router.put("/{paper_id}/toggle-kb")
 async def toggle_knowledge_base(
     paper_id: str,
@@ -716,6 +720,66 @@ async def search_rag(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/rag/compare")
+async def compare_rag_strategies(
+    query: str = Query(min_length=1, max_length=2000),
+    limit: int = Query(default=6, ge=1, le=20),
+    paper_id: list[str] | None = Query(default=None),
+    year_from: int | None = Query(default=None, ge=1000, le=3000),
+    year_to: int | None = Query(default=None, ge=1000, le=3000),
+    author: str = Query(default="", max_length=200),
+    venue: str = Query(default="", max_length=200),
+    section: list[str] | None = Query(default=None),
+    chunk_type: list[str] | None = Query(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    try:
+        return await rag_service.compare(
+            user.tenant_id,
+            user.user_id,
+            query,
+            limit,
+            paper_ids=tuple(paper_id or ()),
+            year_from=year_from,
+            year_to=year_to,
+            author=author,
+            venue=venue,
+            section_ids=tuple(section or ()),
+            chunk_types=tuple(chunk_type or ()),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/rag/replays")
+async def recent_rag_replays(
+    limit: int = Query(default=20, ge=1, le=100),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    return {
+        "items": await rag_service.recent_replays(
+            user.tenant_id, user.user_id, limit
+        )
+    }
+
+
+@router.put("/rag/replays/{replay_id}/adoption")
+async def mark_rag_replay_adoption(
+    replay_id: str,
+    request: RetrievalAdoptionDTO,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    user = _current_user(x_api_key)
+    try:
+        return await rag_service.mark_adoption(
+            user.tenant_id, user.user_id, replay_id, request.chunk_ids
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/rag/chunks/{chunk_id}/context")

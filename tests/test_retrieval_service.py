@@ -14,6 +14,7 @@ from app.retrieval.models import (
     RetrievalRequest,
 )
 from app.retrieval.service import RetrievalService, reciprocal_rank_fusion
+from app.retrieval.reranker import RerankResult, RerankUnavailable
 
 
 def _candidate(
@@ -68,6 +69,20 @@ class _SlowEmbedding:
     async def embed(self, texts):
         await asyncio.sleep(0.05)
         return [[1.0] + [0.0] * 1023]
+
+
+class _Reranker:
+    model = "qwen3.7-text-rerank"
+
+    async def rerank(self, query, documents, *, top_n):
+        return [RerankResult(2, 0.98), RerankResult(0, 0.72)][:top_n]
+
+
+class _BrokenReranker:
+    model = "qwen3.7-text-rerank"
+
+    async def rerank(self, query, documents, *, top_n):
+        raise RerankUnavailable("offline")
 
 
 class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -441,6 +456,36 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(timings["total_ms"], timings["lexical_sql_ms"])
         self.assertGreaterEqual(timings["total_ms"], timings["semantic_total_ms"])
         self.assertIsNone(timings["external_search_ms"])
+
+    async def test_hybrid_rerank_reorders_rrf_pool_and_exposes_scores(self) -> None:
+        response = await RetrievalService(
+            _Repository(), _Embedding(), reranker=_Reranker()
+        ).search(
+            RetrievalRequest(
+                "t", "u", "retrieval", limit=2, retrieval_mode="hybrid_rerank"
+            )
+        )
+
+        self.assertEqual(response.mode, "hybrid_rerank")
+        self.assertEqual([hit.chunk_id for hit in response.local_hits], ["c", "b"])
+        self.assertEqual([hit.final_rank for hit in response.local_hits], [1, 2])
+        self.assertAlmostEqual(response.local_hits[0].rerank_score, 0.98)
+        self.assertEqual(response.debug["reranker"]["status"], "ready")
+        self.assertIsNotNone(response.debug["timings_ms"]["rerank_ms"])
+
+    async def test_hybrid_rerank_failure_preserves_rrf_with_warning(self) -> None:
+        response = await RetrievalService(
+            _Repository(), _Embedding(), reranker=_BrokenReranker()
+        ).search(
+            RetrievalRequest(
+                "t", "u", "retrieval", limit=2, retrieval_mode="hybrid_rerank"
+            )
+        )
+
+        self.assertEqual(response.mode, "hybrid")
+        self.assertEqual([hit.chunk_id for hit in response.local_hits], ["b", "a"])
+        self.assertIn("RRF order was preserved", response.warnings[-1])
+        self.assertEqual(response.debug["reranker"]["status"], "unavailable")
 
     async def test_lexical_mode_skips_embedding_and_vector_candidates(self) -> None:
         class _LexicalOnlyRepository(_Repository):

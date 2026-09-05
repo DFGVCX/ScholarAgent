@@ -12,6 +12,7 @@ from app.dependencies import AuthError, authenticate_api_key
 from app.papers.reembedding import embedding_reindex_service
 from app.papers.repository import PaperRepository
 from app.retrieval.embedding import QwenEmbeddingClient
+from app.retrieval.reranker import QwenRerankerClient
 from app.retrieval.usage import persist_embedding_usage
 from app.services.auth_service import auth_service
 from app.services.model_configuration import resolve_embedding_candidate, resolve_model_candidate
@@ -57,6 +58,13 @@ class EmbeddingProbeDTO(BaseModel):
     api_key: str = ""
     model: str = ""
     dimensions: int = 1024
+
+
+class RerankerProbeDTO(BaseModel):
+    endpoint: str = ""
+    api_key: str = ""
+    model: str = ""
+    query: str = Field(default="联邦学习如何保护数据隐私", max_length=1000)
 
 
 def _require_tenant_admin(api_key: str | None) -> dict[str, Any]:
@@ -304,3 +312,46 @@ async def reindex_embeddings(
         str(profile["tenant_id"]), str(profile["user_id"])
     )
     return {"status": "queued", "profile": profile, **queued}
+
+
+@router.post("/reranker/probe")
+async def probe_reranker(
+    request: RerankerProbeDTO,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    profile = _require_tenant_admin(x_api_key)
+    current = get_settings()
+    api_key = (
+        request.api_key.strip()
+        or current.rag_reranker_api_key
+        or current.rag_embedding_api_key
+    )
+    client = QwenRerankerClient(
+        endpoint=request.endpoint.strip() or current.rag_reranker_endpoint,
+        api_key=api_key,
+        model=request.model.strip() or current.rag_reranker_model,
+        timeout_seconds=current.rag_reranker_timeout_seconds,
+    )
+    try:
+        results = await client.rerank(
+            request.query,
+            [
+                "联邦学习让参与方在不交换原始数据的情况下协同训练模型。",
+                "量子计算使用量子比特完成特定计算任务。",
+            ],
+            top_n=2,
+        )
+    except Exception as exc:
+        detail = str(exc).replace(api_key, "***") if api_key else str(exc)
+        raise HTTPException(status_code=502, detail=detail[:1000]) from exc
+    return {
+        "status": "ok",
+        "profile": profile,
+        "provider": "qwen",
+        "model": client.model,
+        "scores": [item.score for item in results],
+        "usage": {
+            "reported_tokens": client.last_usage.reported_tokens if client.last_usage else 0,
+            "duration_ms": client.last_usage.duration_ms if client.last_usage else 0,
+        },
+    }

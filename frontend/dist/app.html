@@ -3766,6 +3766,52 @@
             white-space: normal;
             overflow-wrap: anywhere;
         }
+        .rag-compare-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .rag-compare-lane {
+            min-width: 0;
+            border: 1px solid #d5e0e7;
+            border-top: 3px solid #1a817a;
+            border-radius: 6px;
+            background: #fff;
+            padding: 12px;
+        }
+        .rag-compare-lane:nth-child(2) { border-top-color: #3268b8; }
+        .rag-compare-lane:nth-child(3) { border-top-color: #7b5b31; }
+        .rag-compare-lane:nth-child(4) { border-top-color: #9c4860; }
+        .rag-compare-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .rag-compare-head strong { font-size: 14px; }
+        .rag-compare-head span { color: #72808d; font-size: 12px; white-space: nowrap; }
+        .rag-compare-hit {
+            padding: 8px 0;
+            border-top: 1px solid #edf1f4;
+        }
+        .rag-compare-hit b {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 13px;
+        }
+        .rag-compare-hit span {
+            display: block;
+            color: #667481;
+            font-size: 11px;
+            margin-top: 3px;
+        }
+        @media (max-width: 1280px) {
+            .rag-compare-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
 
         /* Chat final polish: calmer typography, stronger message hierarchy, mature composer */
         #pageChat .chat-workbench {
@@ -7758,7 +7804,9 @@
                                     <div>
                                         <label for="cfgRagRetrievalMode">召回模式</label>
                                         <select id="cfgRagRetrievalMode" data-config-key="SCHOLAR_RAG_RETRIEVAL_MODE">
+                                            <option value="hybrid_rerank">混合召回 + 千问重排</option>
                                             <option value="hybrid_rrf">混合召回（RRF）</option>
+                                            <option value="vector">向量召回</option>
                                             <option value="lexical">关键词召回</option>
                                         </select>
                                     </div>
@@ -7785,6 +7833,29 @@
                                     <div class="span-2">
                                         <label for="cfgRagEmbeddingApiKey">Embedding API Key</label>
                                         <input id="cfgRagEmbeddingApiKey" type="password" data-config-key="SCHOLAR_RAG_EMBEDDING_API_KEY" placeholder="留空保持现有密钥">
+                                    </div>
+                                    <div>
+                                        <label for="cfgRagRerankerProvider">重排服务</label>
+                                        <select id="cfgRagRerankerProvider" data-config-key="SCHOLAR_RAG_RERANKER_PROVIDER">
+                                            <option value="qwen">通义千问 Reranker</option>
+                                            <option value="none">停用重排</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label for="cfgRagRerankerModel">重排模型</label>
+                                        <input id="cfgRagRerankerModel" data-config-key="SCHOLAR_RAG_RERANKER_MODEL" placeholder="qwen3.7-text-rerank">
+                                    </div>
+                                    <div class="span-2">
+                                        <label for="cfgRagRerankerEndpoint">重排 API 地址</label>
+                                        <input id="cfgRagRerankerEndpoint" data-config-key="SCHOLAR_RAG_RERANKER_ENDPOINT" placeholder="https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank">
+                                    </div>
+                                    <div class="span-2">
+                                        <label for="cfgRagRerankerApiKey">Reranker API Key</label>
+                                        <input id="cfgRagRerankerApiKey" type="password" data-config-key="SCHOLAR_RAG_RERANKER_API_KEY" placeholder="留空时复用 Embedding 密钥">
+                                    </div>
+                                    <div>
+                                        <label for="cfgRagRerankerTimeout">重排超时（秒）</label>
+                                        <input id="cfgRagRerankerTimeout" type="number" min="1" step="0.5" data-config-key="SCHOLAR_RAG_RERANKER_TIMEOUT_SECONDS" placeholder="8">
                                     </div>
                                     <div>
                                         <label for="cfgRagEmbeddingDimensions">向量维度</label>
@@ -7859,12 +7930,22 @@
                                 </div>
                                 <div class="ops-console">
                                     <div class="ops-console-head">
+                                        <div><strong>Reranker 连通性</strong><span>使用两段固定学术文本验证排序方向和调用耗时。</span></div>
+                                        <button id="rerankerProbeBtn" class="plain" type="button">测试 Reranker</button>
+                                    </div>
+                                    <div id="rerankerProbeResult" class="ops-result">等待测试。</div>
+                                </div>
+                                <div class="ops-console">
+                                    <div class="ops-console-head">
                                         <div><strong>RAG 检索验证</strong><span>查询当前租户知识库索引，确认切分和召回效果。</span></div>
-                                        <button id="profileRagSearchBtn" class="plain" type="button">检索</button>
+                                        <div class="config-actions">
+                                            <button id="profileRagCompareBtn" class="plain" type="button">四策略对比</button>
+                                            <button id="profileRagSearchBtn" class="secondary" type="button">检索</button>
+                                        </div>
                                     </div>
                                     <div class="inline-grid">
                                         <div><label for="profileRagQuery">查询</label><input id="profileRagQuery" placeholder="输入关键词，例如 LLM healthcare reliability"></div>
-                                        <div><label for="profileRagRetrievalMode">召回策略</label><select id="profileRagRetrievalMode"><option value="hybrid" selected>Hybrid（RRF）</option><option value="lexical">Lexical（关键词）</option><option value="vector">Vector（向量）</option></select></div>
+                                        <div><label for="profileRagRetrievalMode">召回策略</label><select id="profileRagRetrievalMode"><option value="hybrid_rerank">Hybrid + Reranker</option><option value="hybrid" selected>Hybrid（RRF）</option><option value="lexical">Lexical（关键词）</option><option value="vector">Vector（向量）</option></select></div>
                                     </div>
                                     <div id="profileRagResult" class="ops-result ops-result-large">等待检索。</div>
                                 </div>
@@ -8769,6 +8850,28 @@
                 $('embeddingProbeBtn').disabled = false;
             }
         }
+        async function probeReranker() {
+            $('rerankerProbeBtn').disabled = true;
+            $('rerankerProbeResult').textContent = '正在测试千问 Reranker...';
+            try {
+                const data = await api('/settings/reranker/probe', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        endpoint: $('cfgRagRerankerEndpoint')?.value.trim() || '',
+                        api_key: $('cfgRagRerankerApiKey')?.value.trim() || '',
+                        model: $('cfgRagRerankerModel')?.value.trim() || '',
+                    }),
+                });
+                const scores = (data.scores || []).map((value) => Number(value).toFixed(4)).join(' / ');
+                $('rerankerProbeResult').textContent = `${data.model} / ${data.usage?.duration_ms ?? '-'} ms / 相关度 ${scores || '-'}`;
+                toast('Reranker 测试成功', 'ok');
+            } catch (error) {
+                $('rerankerProbeResult').textContent = `测试失败：${error.message}`;
+                toast(error.message, 'bad');
+            } finally {
+                $('rerankerProbeBtn').disabled = false;
+            }
+        }
         async function reindexEmbeddings() {
             $('reindexEmbeddingsBtn').disabled = true;
             $('embeddingReindexStatus').textContent = '正在创建重建任务...';
@@ -8832,7 +8935,7 @@
                         : '<div class="alert" style="margin-bottom:10px;">向量检索暂不可用，当前结果来自关键词与中英文学术术语兜底。请在模型配置中重新测试 Embedding。</div>')
                     : '';
                 const results = items.length
-                    ? `<table class="rag-verify-table"><thead><tr><th>Chunk</th><th>命中片段</th><th>来源论文</th><th>融合分</th><th>关键词排名</th><th>向量排名</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Chunk #${Number(item.chunk_index ?? 0)}</strong><div class="row-meta">${escapeHtml(item.chunk_id || '-')}</div></td><td><div class="rag-verify-snippet">${escapeHtml(item.snippet || '')}</div></td><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id || '-')}</div><div class="row-meta">${ragChunkProvenance(item)}</div></td><td>${Number(item.score || 0).toFixed(6)}</td><td>${item.lexical_rank ?? '-'}</td><td>${item.vector_rank ?? '-'}</td></tr>`).join('')}</tbody></table>`
+                    ? `<table class="rag-verify-table"><thead><tr><th>Chunk</th><th>命中片段</th><th>来源论文</th><th>融合分</th><th>关键词排名</th><th>向量排名</th><th>重排分</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Chunk #${Number(item.chunk_index ?? 0)}</strong><div class="row-meta">${escapeHtml(item.chunk_id || '-')}</div></td><td><div class="rag-verify-snippet">${escapeHtml(item.snippet || '')}</div></td><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id || '-')}</div><div class="row-meta">${ragChunkProvenance(item)}</div></td><td>${Number(item.score || 0).toFixed(6)}</td><td>${item.lexical_rank ?? '-'}</td><td>${item.vector_rank ?? '-'}</td><td>${item.rerank_score == null ? '-' : Number(item.rerank_score).toFixed(4)}</td></tr>`).join('')}</tbody></table>`
                     : '<div class="subtle">查询成功，没有返回 chunk。</div>';
                 $('profileRagResult').innerHTML = summary + fallbackNotice + renderRagDebug(data) + results;
             } catch (error) {
@@ -8840,6 +8943,49 @@
                 toast(error.message, 'bad');
             } finally {
                 $('profileRagSearchBtn').disabled = false;
+            }
+        }
+        function renderRagComparison(data) {
+            const labels = {
+                lexical: '关键词',
+                vector: '向量',
+                hybrid: 'RRF 混合',
+                hybrid_rerank: '混合 + 重排',
+            };
+            const lanes = (data.strategy_order || Object.keys(data.strategies || {})).map((mode) => {
+                const result = data.strategies?.[mode] || {};
+                const items = result.items || [];
+                const elapsed = result.debug?.timings_ms?.total_ms;
+                const warning = (result.warnings || [])[0] || '';
+                const hits = items.slice(0, 3).map((item, index) => `
+                    <div class="rag-compare-hit">
+                        <b>${index + 1}. ${escapeHtml(item.title || item.paper_id || '未命名论文')}</b>
+                        <span>Chunk ${Number(item.chunk_index ?? 0)} · ${item.rerank_score == null ? `RRF ${Number(item.rrf_score || 0).toFixed(4)}` : `重排 ${Number(item.rerank_score).toFixed(4)}`}</span>
+                    </div>`).join('') || '<div class="subtle">没有命中</div>';
+                return `<section class="rag-compare-lane">
+                    <div class="rag-compare-head"><strong>${labels[mode] || escapeHtml(mode)}</strong><span>${elapsed == null ? '-' : `${Number(elapsed).toFixed(1)} ms`}</span></div>
+                    ${warning ? `<div class="row-meta" title="${escapeHtml(warning)}">已降级：${escapeHtml(result.retrieval_mode || '-')}</div>` : ''}
+                    ${hits}
+                </section>`;
+            }).join('');
+            return `<div class="subtle">四种策略共享同一次查询向量，本次 Embedding 请求 ${Number(data.embedding_requests || 0)} 次。</div><div class="rag-compare-grid">${lanes}</div>`;
+        }
+        async function compareProfileRag() {
+            const query = $('profileRagQuery')?.value.trim() || '';
+            if (!query) {
+                toast('请先输入检索问题', 'bad');
+                return;
+            }
+            $('profileRagCompareBtn').disabled = true;
+            $('profileRagResult').textContent = '正在运行四种检索策略...';
+            try {
+                const data = await api(`/knowledge/rag/compare?query=${encodeURIComponent(query)}&limit=6`);
+                $('profileRagResult').innerHTML = renderRagComparison(data);
+            } catch (error) {
+                $('profileRagResult').textContent = `对比失败：${error.message}`;
+                toast(error.message, 'bad');
+            } finally {
+                $('profileRagCompareBtn').disabled = false;
             }
         }
         function institutionStatusText(status) {
@@ -10822,10 +10968,12 @@
         $('resetConfigFormBtn').addEventListener('click', loadRuntimeConfig);
         $('modelProbeBtn')?.addEventListener('click', probeModel);
         $('embeddingProbeBtn')?.addEventListener('click', probeEmbedding);
+        $('rerankerProbeBtn')?.addEventListener('click', probeReranker);
         $('reindexEmbeddingsBtn')?.addEventListener('click', reindexEmbeddings);
         $('cfgRagEmbeddingModel')?.addEventListener('input', updateEmbeddingChangeWarning);
         $('cfgRagEmbeddingBaseUrl')?.addEventListener('input', updateEmbeddingChangeWarning);
         $('profileRagSearchBtn')?.addEventListener('click', searchProfileRag);
+        $('profileRagCompareBtn')?.addEventListener('click', compareProfileRag);
         $('saveInstitutionBtn')?.addEventListener('click', saveInstitutionProfile);
         $('connectInstitutionBtn')?.addEventListener('click', connectInstitution);
         $('browserLoginDoneBtn')?.addEventListener('click', completeBrowserLogin);

@@ -26,7 +26,16 @@ class AlembicRevisionGraphTest(unittest.TestCase):
 
         parents = {parent for parent in revisions.values() if parent is not None}
         heads = set(revisions) - parents
-        self.assertEqual(heads, {"20260905_0011"})
+        self.assertEqual(heads, {"20260905_0012"})
+
+    def test_retrieval_replays_follow_task_node_runs(self) -> None:
+        migration = Path(
+            "alembic/versions/20260905_0012_retrieval_replays.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('down_revision = "20260905_0011"', migration)
+        self.assertIn("CREATE TABLE IF NOT EXISTS rag_retrieval_replays", migration)
+        self.assertIn("rag_retrieval_replays_tenant_user_policy", migration)
 
     def test_task_node_runs_follow_pdf_content_generation(self) -> None:
         migration = Path(
