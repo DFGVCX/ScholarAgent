@@ -232,6 +232,80 @@ class HierarchicalPdfParsingTest(unittest.TestCase):
             self.assertEqual(figure.text, "Figure 3. Caption survives")
             self.assertEqual(figure.metadata["markdown"], "<!-- retained audit note -->")
 
+    def test_docling_picture_placeholder_cleanup_preserves_surrounding_text(self) -> None:
+        """Catches cleanup that removes a diagnostic phrase quoted inside ordinary text/comments."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        phrase = "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)"
+        with TemporaryDirectory() as temporary:
+            picture = _DoclingItem(
+                "picture",
+                f"The manual quotes: {phrase}. Continue reading.",
+                caption="Figure 6. Quoted diagnostic",
+                markdown=f"<!-- audit says {phrase}; retain this note -->",
+            )
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(_DoclingDocument([(picture, 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.text, f"The manual quotes: {phrase}. Continue reading.")
+            self.assertEqual(figure.metadata["markdown"], f"<!-- audit says {phrase}; retain this note -->")
+
+    def test_docling_picture_asset_root_symlink_is_not_followed(self) -> None:
+        """Catches image export writing through a pre-existing assets-directory symlink."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class Image:
+            def save(self, target, format="PNG") -> None:
+                Path(target).write_bytes(b"must-not-write")
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pdf = root / "paper.pdf"
+            external = root / "external"
+            external.mkdir()
+            asset_root = root / "paper_assets"
+            try:
+                asset_root.symlink_to(external, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symlinks unavailable: {exc}")
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(_DoclingItem("picture", "", image=Image()), 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertFalse((external / "page_001_figure_001.png").exists())
+            self.assertEqual(figure.metadata["source_image_error"], "image_write_target_unsafe")
+
+    def test_docling_picture_save_falls_back_to_png_suffix_without_format_argument(self) -> None:
+        """Catches temporary names that prevent extension-driven PNG writers from succeeding."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class ExtensionDrivenImage:
+            def save(self, target, format=None) -> None:
+                if format is not None:
+                    raise TypeError("format keyword unsupported")
+                self.assertEqual(Path(target).suffix, ".png")
+                Path(target).write_bytes(b"extension-png")
+
+            def assertEqual(self, actual, expected) -> None:
+                if actual != expected:
+                    raise AssertionError(f"{actual!r} != {expected!r}")
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(_DoclingItem("picture", "", image=ExtensionDrivenImage()), 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertTrue(figure.metadata["source_image_available"])
+            self.assertEqual((pdf.parent / "paper_assets" / figure.metadata["asset_name"]).read_bytes(), b"extension-png")
+
     def test_docling_picture_save_failure_preserves_existing_asset(self) -> None:
         """Catches a failed write deleting or corrupting the prior deterministic asset."""
         from app.papers.docling_adapter import parse_docling_pdf

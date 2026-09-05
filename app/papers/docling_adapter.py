@@ -142,8 +142,10 @@ def _item_text(item: Any, document: Any, block_type: str) -> tuple[str, str, str
 
 def _clean_picture_text(value: str) -> str:
     """Remove Docling's unavailable-image diagnostic and inline image payloads."""
+    if value.strip() == _PICTURE_PLACEHOLDER:
+        return ""
     without_placeholder = _PICTURE_PLACEHOLDER_COMMENT_RE.sub("", value)
-    return _DATA_URI_RE.sub("", without_placeholder.replace(_PICTURE_PLACEHOLDER, "")).strip()
+    return _DATA_URI_RE.sub("", without_placeholder).strip()
 
 
 def _get_picture_image(item: Any, document: Any) -> tuple[Any | None, str | None]:
@@ -178,13 +180,15 @@ def _save_picture_asset(
     target = asset_root / asset_name
     temporary_target: Path | None = None
     try:
+        if asset_root.is_symlink():
+            return None, "image_write_target_unsafe"
         asset_root.mkdir(parents=True, exist_ok=True)
         if target.is_symlink():
             return None, "image_write_target_unsafe"
         with tempfile.NamedTemporaryFile(
             dir=asset_root,
             prefix=f".{asset_name}.",
-            suffix=".tmp",
+            suffix=".png",
             delete=False,
         ) as temporary_file:
             temporary_target = Path(temporary_file.name)
