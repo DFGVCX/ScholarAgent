@@ -7,7 +7,13 @@ from app.asyncio_compat import configure_psycopg_event_loop_policy
 
 def main() -> None:
     configure_psycopg_event_loop_policy()
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run(
+        "app.main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=False,
+        loop="app.asyncio_compat:new_psycopg_compatible_event_loop",
+    )
 
 
 if __name__ == "__main__":

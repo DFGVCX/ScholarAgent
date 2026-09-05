@@ -17,3 +17,10 @@ def configure_psycopg_event_loop_policy() -> None:
         current_policy = asyncio.get_event_loop_policy()
         if not isinstance(current_policy, selector_policy_type):
             asyncio.set_event_loop_policy(selector_policy_type())
+
+
+def new_psycopg_compatible_event_loop() -> asyncio.AbstractEventLoop:
+    """Create the loop explicitly so Uvicorn cannot replace it with Proactor."""
+    if sys.platform == "win32":
+        return asyncio.SelectorEventLoop()
+    return asyncio.new_event_loop()
