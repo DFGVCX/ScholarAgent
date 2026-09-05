@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import importlib.util
 import os
+import sys
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -62,18 +64,23 @@ class _DoclingItem:
         bbox: tuple[float, float, float, float] = (10.0, 20.0, 300.0, 60.0),
         caption: str = "",
         markdown: str = "",
+        image=None,
     ) -> None:
         self.label = label
         self.text = text
         self.prov = (SimpleNamespace(page_no=page, bbox=bbox),)
         self._caption = caption
         self._markdown = markdown
+        self._image = image
 
     def caption_text(self, _document) -> str:
         return self._caption
 
     def export_to_markdown(self, _document) -> str:
         return self._markdown or self.text
+
+    def get_image(self, _document):
+        return self._image
 
 
 class _DoclingDocument:
@@ -94,6 +101,118 @@ class _Converter:
 
 
 class HierarchicalPdfParsingTest(unittest.TestCase):
+    def test_docling_converter_enables_picture_images_without_enabling_ocr(self) -> None:
+        """Catches a converter regression that omits picture crops or enables OCR."""
+        from app.papers.docling_adapter import _build_converter
+
+        class FakePipelineOptions:
+            def __init__(self, **_kwargs) -> None:
+                self.do_ocr = True
+                self.do_table_structure = False
+                self.do_formula_enrichment = False
+                self.generate_picture_images = False
+                self.heading_hierarchy_options = SimpleNamespace(enabled=False)
+
+        class FakeDocumentConverter:
+            def __init__(self, *, format_options) -> None:
+                self.format_options = format_options
+
+        fake_modules = {
+            "docling": SimpleNamespace(),
+            "docling.datamodel": SimpleNamespace(),
+            "docling.datamodel.base_models": SimpleNamespace(InputFormat=SimpleNamespace(PDF="pdf")),
+            "docling.datamodel.pipeline_options": SimpleNamespace(PdfPipelineOptions=FakePipelineOptions),
+            "docling.document_converter": SimpleNamespace(
+                DocumentConverter=FakeDocumentConverter,
+                PdfFormatOption=lambda *, pipeline_options: SimpleNamespace(pipeline_options=pipeline_options),
+            ),
+        }
+        with patch.dict(sys.modules, fake_modules):
+            converter = _build_converter()
+
+        options = converter.format_options["pdf"].pipeline_options
+        self.assertTrue(options.generate_picture_images)
+        self.assertFalse(options.do_ocr)
+
+    def test_docling_picture_writes_safe_asset_and_removes_image_placeholder(self) -> None:
+        """Catches a picture export regression that leaks Docling placeholders or data URIs."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class Image:
+            def save(self, target, format="PNG") -> None:
+                self.target = Path(target)
+                self.format = format
+                Path(target).write_bytes(b"png-image")
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            image = Image()
+            picture = _DoclingItem(
+                "picture",
+                "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)",
+                caption="Figure 1. Training workflow",
+                markdown="![Figure](data:image/png;base64,AAAA)",
+                image=image,
+            )
+            body = _DoclingItem("text", "The workflow description provides enough searchable content. " * 3)
+            parsed = parse_docling_pdf(pdf, converter=_Converter(_DoclingDocument([(picture, 1), (body, 1)])))
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.block_type, "figure")
+            self.assertEqual(figure.text, "Figure 1. Training workflow")
+            self.assertEqual(figure.metadata["asset_name"], "page_001_figure_001.png")
+            self.assertTrue(figure.metadata["source_image_available"])
+            self.assertNotIn("Image not available", figure.metadata["markdown"])
+            self.assertNotIn("data:image", figure.metadata["markdown"])
+            self.assertEqual((pdf.parent / "paper_assets" / "page_001_figure_001.png").read_bytes(), b"png-image")
+            self.assertEqual(parsed.manifest["asset_directory"], "paper_assets")
+            self.assertEqual(parsed.to_manifest()["asset_inventory"][0]["name"], "page_001_figure_001.png")
+
+    def test_docling_picture_without_image_keeps_caption_without_fake_asset(self) -> None:
+        """Catches a missing-image fallback that invents an asset instead of preserving the caption."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            picture = _DoclingItem(
+                "picture",
+                "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)",
+                caption="Figure 2. Missing crop remains auditable",
+                image=None,
+            )
+            body = _DoclingItem("text", "The associated explanatory paragraph has sufficient searchable text. " * 3)
+            parsed = parse_docling_pdf(pdf, converter=_Converter(_DoclingDocument([(picture, 1), (body, 1)])))
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.text, "Figure 2. Missing crop remains auditable")
+            self.assertFalse(figure.metadata["source_image_available"])
+            self.assertNotIn("asset_name", figure.metadata)
+            self.assertFalse((pdf.parent / "paper_assets").exists())
+
+    def test_docling_adjacent_algorithm_heading_classifies_only_following_code(self) -> None:
+        """Catches a classifier that misses adjacent algorithm titles or upgrades distant code."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        document = _DoclingDocument(
+            [
+                (_DoclingItem("section_header", "Algorithm 1: Federated training"), 1),
+                (_DoclingItem("code", "1: Initialize model\n2: Train clients\n3: Aggregate updates"), 1),
+                (_DoclingItem("text", "The following source fragment is ordinary implementation code."), 1),
+                (_DoclingItem("code", "return model_state"), 1),
+            ]
+        )
+
+        parsed = parse_docling_pdf(Path("paper.pdf"), converter=_Converter(document))
+
+        algorithm, ordinary_code = [
+            block for block in parsed.pages[0].blocks if block.block_type in {"algorithm", "code"}
+        ]
+        self.assertEqual(algorithm.metadata["label"], "Algorithm 1: Federated training")
+        self.assertEqual(algorithm.metadata["caption"], "Algorithm 1: Federated training")
+        self.assertEqual(algorithm.text, "1: Initialize model\n2: Train clients\n3: Aggregate updates")
+        self.assertEqual(ordinary_code.block_type, "code")
+        self.assertEqual(ordinary_code.text, "return model_state")
+
     def test_docling_bottom_left_bbox_is_normalized_to_top_left(self) -> None:
         from app.papers.docling_adapter import parse_docling_pdf
 

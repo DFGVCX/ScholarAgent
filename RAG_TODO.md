@@ -438,7 +438,9 @@ arXiv
 - [ ] 直接使用“切片”视图逐篇检查边界质量，记录过长、过短、跨章节、上下文不足、重复和乱码 Chunk。
 - [ ] 修复公式 Markdown、表格结构、图片裁剪和算法步骤的剩余质量问题。
   - [ ] Docling 图片资产导出：开启 `generate_picture_images`，将 PictureItem 原图保存到当前内容版本的 `_assets` 目录，写入 `asset_name`/页码/来源框；前端显示原图，Chunk 中移除 `Image not available` 占位符，不嵌入 Base64。
+    - [x] Adapter 单元测试已验证图片选项保持 OCR 关闭、可用 PictureItem 原图保存为白名单资产、占位符/data URI 被移除，以及缺原图时保留图题但不伪造资产；真实 PDF 与网页验收仍待执行。
   - [ ] Docling 算法上下文分类：当前 FLchain 的 Algorithm 1 已完整提取 20 步，但标题是前置 heading、正文被标成 code；根据相邻 `Algorithm N` 标题将正文归类为 algorithm，并恢复逐行步骤、标题和质量诊断。
+    - [x] Adapter 单元测试已验证紧邻 `Algorithm 1` 标题的 code 继承标题并归类为 algorithm，间隔普通文本后的 code 保持 code；真实 PDF 验收仍待执行。
   - [ ] Docling 表格双通道：优先保存 TableFormer Markdown 单元格，同时保存原图回退；结构不可靠时标记 `review` 而不伪造单元格。FLchain 本身无表格，继续使用包含真实表格的论文验收。
   - [ ] 上述修复完成后重新解析 FLchain，并使用另一篇含 8 个表格/6 个算法的论文完成网页“切片”视图验收。
 - [ ] 完成上传 → 解析 → v4 切片 → Embedding → 切片浏览的 Docker 端到端回归。

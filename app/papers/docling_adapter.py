@@ -41,6 +41,11 @@ _DROP_LABELS = {
     "reference",
     "form",
 }
+_PICTURE_PLACEHOLDER = (
+    "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)"
+)
+_DATA_URI_RE = re.compile(r"data:image/[^\s)\]}>]+", re.IGNORECASE)
+_ALGORITHM_HEADING_RE = re.compile(r"(?i)\balgorithm\s+\d+\b")
 
 _CONVERTER_CACHE: dict[str, Any] = {}
 _CONVERTER_CACHE_LOCK = threading.Lock()
@@ -129,6 +134,56 @@ def _item_text(item: Any, document: Any, block_type: str) -> tuple[str, str, str
     return raw_text, caption, markdown
 
 
+def _clean_picture_text(value: str) -> str:
+    """Remove Docling's unavailable-image diagnostic and inline image payloads."""
+    return _DATA_URI_RE.sub("", value.replace(_PICTURE_PLACEHOLDER, "")).strip()
+
+
+def _get_picture_image(item: Any, document: Any) -> Any | None:
+    method = getattr(item, "get_image", None)
+    if not callable(method):
+        return None
+    for args, kwargs in (((document,), {}), ((), {"doc": document}), ((), {})):
+        try:
+            image = method(*args, **kwargs)
+        except TypeError:
+            continue
+        except Exception:
+            return None
+        if image is not None:
+            return image
+    return None
+
+
+def _save_picture_asset(
+    item: Any,
+    document: Any,
+    path: Path,
+    page_number: int,
+    figure_number: int,
+) -> str | None:
+    image = _get_picture_image(item, document)
+    if image is None:
+        return None
+    asset_root = path.parent / f"{path.stem}_assets"
+    asset_name = f"page_{page_number:03}_figure_{figure_number:03}.png"
+    target = asset_root / asset_name
+    try:
+        asset_root.mkdir(parents=True, exist_ok=True)
+        try:
+            image.save(target, format="PNG")
+        except TypeError:
+            image.save(target)
+    except Exception:
+        try:
+            if target.is_file():
+                target.unlink()
+        except OSError:
+            pass
+        return None
+    return asset_name if target.is_file() else None
+
+
 def _build_converter() -> Any:
     artifacts_path = _configured_artifacts_path()
     if artifacts_path is not None:
@@ -154,6 +209,8 @@ def _build_converter() -> Any:
         else PdfPipelineOptions()
     )
     options.do_ocr = False
+    if hasattr(options, "generate_picture_images"):
+        options.generate_picture_images = True
     if hasattr(options, "do_table_structure"):
         options.do_table_structure = True
     if hasattr(options, "do_formula_enrichment"):
@@ -326,21 +383,38 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
     document = result.document
     by_page: dict[int, list[ParsedBlock]] = defaultdict(list)
     source_items = 0
+    figure_counts: Counter[int] = Counter()
+    previous_algorithm_title: str | None = None
 
     for source_items, entry in enumerate(document.iterate_items(), start=1):
         item, level = entry if isinstance(entry, tuple) else (entry, 0)
         source_label = _label(getattr(item, "label", "text"))
+        raw_title = str(getattr(item, "text", "") or "").strip()
+        title_caption = _call_export(item, "caption_text", document)
+        algorithm_title = next(
+            (
+                value
+                for value in (title_caption, raw_title)
+                if _ALGORITHM_HEADING_RE.search(value)
+            ),
+            None,
+        )
         if source_label in _DROP_LABELS:
+            previous_algorithm_title = algorithm_title
             continue
         block_type = _LABEL_TYPES.get(source_label, "body")
         text, caption, markdown = _item_text(item, document, block_type)
-        if block_type == "code" and re.search(
-            r"(?i)\balgorithm\s+\d+\b", "\n".join(part for part in (caption, text) if part)
-        ):
+        if block_type == "figure":
+            caption = _clean_picture_text(caption)
+            text = _clean_picture_text(text) or caption
+            markdown = _clean_picture_text(markdown)
+        if block_type == "code" and previous_algorithm_title:
             block_type = "algorithm"
+            caption = previous_algorithm_title
         if source_label in _HEADING_LABELS:
             block_type = "heading"
         if not text and not markdown:
+            previous_algorithm_title = algorithm_title
             continue
         page_number, bbox = _provenance(item, document)
         reading_order = len(by_page[page_number])
@@ -360,6 +434,14 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
             "caption": caption,
             "markdown": markdown,
         }
+        if block_type == "figure":
+            figure_counts[page_number] += 1
+            asset_name = _save_picture_asset(
+                item, document, path, page_number, figure_counts[page_number]
+            )
+            metadata["source_image_available"] = bool(asset_name)
+            if asset_name:
+                metadata["asset_name"] = asset_name
         label_text = caption or text
         if block_type in {"equation", "table", "figure", "algorithm"}:
             metadata["label"] = label_text.splitlines()[0][:160]
@@ -374,6 +456,7 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
                 metadata=metadata,
             )
         )
+        previous_algorithm_title = algorithm_title
 
     pages: list[ParsedPage] = []
     for page_number in _document_page_numbers(document, by_page):
@@ -418,6 +501,12 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
         "language": metadata["language"],
         "ocr_enabled": False,
     }
+    if any(
+        block.metadata.get("asset_name")
+        for blocks in by_page.values()
+        for block in blocks
+    ):
+        manifest["asset_directory"] = f"{path.stem}_assets"
     usable_ratio = (len(pages) - low_text_pages) / max(1, len(pages))
     quality_score = round(usable_ratio * min(1.0, total_chars / 1000.0), 6)
     return ParsedPaper(
