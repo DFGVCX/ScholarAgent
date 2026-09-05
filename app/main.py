@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+import os
 
 from app.config import get_settings
 from app.routes.auth import router as auth_router
@@ -61,6 +62,7 @@ app.include_router(translations_router)
 app.include_router(institutional_access_router)
 
 try:
-    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
+    frontend_dir = os.getenv("SCHOLAR_FRONTEND_DIR", "frontend/dist")
+    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 except RuntimeError:
     pass

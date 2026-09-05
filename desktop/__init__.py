@@ -1,0 +1,1 @@
+"""Windows desktop distribution support."""

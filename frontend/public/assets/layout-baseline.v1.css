@@ -1,0 +1,266 @@
+/*
+ * ScholarAgent layout baseline v1.
+ *
+ * This file owns structural geometry only: columns, rows, overflow and stable
+ * component dimensions. Visual details remain in each feature's stylesheet.
+ * Change the baseline version deliberately when the application shell changes.
+ */
+
+body[data-layout-baseline="v1"] {
+    --layout-module-rail: minmax(268px, 302px);
+    --layout-module-gap: 14px;
+    --layout-panel-radius: 8px;
+}
+
+body[data-layout-baseline="v1"] #pageChat,
+body[data-layout-baseline="v1"] #pageTasks,
+body[data-layout-baseline="v1"] #pageAudit,
+body[data-layout-baseline="v1"] #pageKnowledge,
+body[data-layout-baseline="v1"] #pageProfile,
+body[data-layout-baseline="v1"] #pageReader {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    isolation: isolate;
+}
+
+@media (min-width: 1121px) {
+    body[data-layout-baseline="v1"] #pageChat .chat-workbench,
+    body[data-layout-baseline="v1"] #pageTasks .survey-workbench,
+    body[data-layout-baseline="v1"] #pageAudit .audit-grid,
+    body[data-layout-baseline="v1"] #pageKnowledge .knowledge-grid {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: var(--layout-module-rail) minmax(0, 1fr) !important;
+        gap: var(--layout-module-gap) !important;
+        align-items: stretch;
+        overflow: hidden !important;
+    }
+
+    body[data-layout-baseline="v1"] #pageChat .chat-workbench > *,
+    body[data-layout-baseline="v1"] #pageTasks .survey-workbench > *,
+    body[data-layout-baseline="v1"] #pageAudit .audit-grid > *,
+    body[data-layout-baseline="v1"] #pageKnowledge .knowledge-grid > * {
+        min-width: 0;
+        min-height: 0;
+    }
+
+    body[data-layout-baseline="v1"] #pageChat .conversation-rail,
+    body[data-layout-baseline="v1"] #pageChat .chat-stage {
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageTasks .survey-brief {
+        width: auto;
+        height: 100%;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+    }
+
+    body[data-layout-baseline="v1"] #pageTasks .task-stage.survey-output {
+        width: auto;
+        height: 100%;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) !important;
+        grid-template-rows: minmax(0, 1fr) minmax(174px, .34fr) !important;
+        gap: var(--layout-module-gap) !important;
+        overflow: hidden !important;
+    }
+
+    body[data-layout-baseline="v1"] #pageTasks .result-panel {
+        grid-column: 1 !important;
+        grid-row: 1 !important;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageTasks .outline-panel {
+        grid-column: 1 !important;
+        grid-row: 2 !important;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageTasks .survey-brief .workflow-panel {
+        flex: 0 0 160px;
+        width: auto;
+        height: 160px;
+        min-height: 160px;
+        overflow: hidden !important;
+    }
+
+    body[data-layout-baseline="v1"] #pageTasks .workflow-panel .workflow-lane {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
+        gap: 6px !important;
+        overflow: hidden !important;
+    }
+
+    body[data-layout-baseline="v1"] #pageTasks .workflow-panel .lane-step {
+        width: auto;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit .audit-grid > .panel:first-child {
+        height: 100%;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit #auditTaskList {
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit .audit-grid > section:not(.panel) {
+        min-height: 0;
+        display: grid;
+        grid-template-rows: minmax(0, 1.2fr) minmax(0, .8fr) !important;
+        gap: var(--layout-module-gap) !important;
+        overflow: hidden !important;
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit.audit-pool-expanded .audit-grid > section:not(.panel) {
+        grid-template-rows: minmax(0, 1.68fr) minmax(136px, .32fr) !important;
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit .audit-grid > section:not(.panel) > .panel {
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit #auditDetail.table-wrap,
+    body[data-layout-baseline="v1"] #pageAudit .audit-paper-board {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit .audit-paper-board {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit .audit-paper-list-modern {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        max-height: none !important;
+        padding: 4px 8px 6px;
+        display: grid;
+        grid-auto-rows: var(--audit-paper-row-height, 78px);
+        align-content: start;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    body[data-layout-baseline="v1"] #pageAudit .audit-paper-card {
+        height: var(--audit-paper-row-height, 78px);
+        min-height: var(--audit-paper-row-height, 78px);
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageKnowledge .knowledge-left {
+        width: auto;
+        height: 100%;
+        min-height: 0;
+        padding: 14px;
+        display: grid;
+        grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+        gap: 10px;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageKnowledge .knowledge-results {
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    body[data-layout-baseline="v1"] #pageKnowledge .reader-shell {
+        width: auto;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageProfile .profile-home.account-console {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: 54px minmax(0, 1fr) !important;
+        overflow: hidden !important;
+    }
+
+    body[data-layout-baseline="v1"] #pageProfile .profile-config-shell,
+    body[data-layout-baseline="v1"] #pageProfile .profile-config-mount {
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageProfile .profile-config-mount .settings-overview {
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    body[data-layout-baseline="v1"] #pageProfile .profile-config-mount .config-menu {
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    body[data-layout-baseline="v1"] #pageReader .research-reader {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: 56px minmax(0, 1fr) !important;
+        overflow: hidden;
+    }
+
+    body[data-layout-baseline="v1"] #pageReader .research-reader__body {
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 224px minmax(440px, 1fr) 360px !important;
+        overflow: hidden;
+    }
+}
+
+@media (max-width: 1120px) {
+    body[data-layout-baseline="v1"] #pageChat,
+    body[data-layout-baseline="v1"] #pageTasks,
+    body[data-layout-baseline="v1"] #pageAudit,
+    body[data-layout-baseline="v1"] #pageKnowledge,
+    body[data-layout-baseline="v1"] #pageProfile {
+        height: auto;
+        min-height: 100%;
+        overflow: visible;
+    }
+}

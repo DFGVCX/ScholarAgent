@@ -60,21 +60,28 @@ class Settings:
 
 
 def _setting_value(overrides: dict[str, str], name: str, default: str = "") -> str:
+    environment_value = os.getenv(name)
+    if environment_value is not None:
+        return environment_value
     value = overrides.get(name)
     if value is not None:
         return value
-    return os.getenv(name, default)
+    return default
 
 
 def _setting_bool(overrides: dict[str, str], name: str, default: bool = False) -> bool:
-    raw = overrides.get(name, os.getenv(name))
+    raw = os.getenv(name)
+    if raw is None:
+        raw = overrides.get(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _setting_float(overrides: dict[str, str], name: str, default: float) -> float:
-    raw = overrides.get(name, os.getenv(name))
+    raw = os.getenv(name)
+    if raw is None:
+        raw = overrides.get(name)
     if raw is None:
         return default
     try:
@@ -84,7 +91,9 @@ def _setting_float(overrides: dict[str, str], name: str, default: float) -> floa
 
 
 def _setting_int(overrides: dict[str, str], name: str, default: int) -> int:
-    raw = overrides.get(name, os.getenv(name))
+    raw = os.getenv(name)
+    if raw is None:
+        raw = overrides.get(name)
     if raw is None:
         return default
     try:
@@ -97,6 +106,11 @@ def get_settings() -> Settings:
     overrides = read_runtime_config()
     storage_dir = Path(_setting_value(overrides, "SCHOLAR_STORAGE_DIR", "storage/runtime"))
     upload_dir = Path(_setting_value(overrides, "SCHOLAR_UPLOAD_DIR", "storage/uploads"))
+    cors_origins = tuple(
+        value.strip()
+        for value in _setting_value(overrides, "SCHOLAR_CORS_ALLOW_ORIGINS", "*").split(",")
+        if value.strip()
+    )
     return Settings(
         env=_setting_value(overrides, "SCHOLAR_ENV", "development"),
         api_keys=_setting_value(overrides, "SCHOLAR_API_KEYS", "demo-key:tenant_demo:user_demo"),
@@ -144,4 +158,5 @@ def get_settings() -> Settings:
         task_max_attempts=max(1, _setting_int(overrides, "SCHOLAR_TASK_MAX_ATTEMPTS", 3)),
         storage_dir=storage_dir,
         upload_dir=upload_dir,
+        cors_allow_origins=cors_origins or ("*",),
     )

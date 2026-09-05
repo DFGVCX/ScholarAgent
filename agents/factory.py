@@ -167,7 +167,7 @@ class ModelFactory:
         if not api_key and provider not in LOCAL_OPENAI_COMPATIBLE_PROVIDERS:
             raise RuntimeError("SCHOLAR_LLM_API_KEY is required for remote LLM calls")
         started = now_ms()
-        structured_planning = purpose in {"intent_planning", "tool_planning"}
+        structured_planning = purpose in {"intent_planning", "tool_planning", "task_graph_planning"}
         system = (
             "You are ScholarAgent's coordinator agent. Resolve the user's semantic goal from "
             "conversation state and return only the requested JSON object. Never mix command words "
@@ -239,7 +239,7 @@ class ModelFactory:
         if not api_key or not model:
             raise RuntimeError("SCHOLAR_ANTHROPIC_API_KEY and SCHOLAR_ANTHROPIC_MODEL are required for Claude calls")
         started = now_ms()
-        structured_planning = purpose in {"intent_planning", "tool_planning"}
+        structured_planning = purpose in {"intent_planning", "tool_planning", "task_graph_planning"}
         system = (
             "You are ScholarAgent's coordinator agent. Resolve the user's semantic goal from "
             "conversation state and return only one valid JSON object. Never mix command words "
@@ -361,6 +361,43 @@ class ModelFactory:
 
     def _deterministic_response(self, purpose: str, prompt: str, context: dict[str, Any]) -> str:
         topic = context.get("topic") or "the selected research topic"
+        if purpose == "task_graph_planning":
+            return json.dumps(
+                {
+                    "rationale": ["Complete evidence-bound writing lifecycle"],
+                    "nodes": [
+                        {
+                            "node_id": "retrieval",
+                            "capability": "literature_retrieval",
+                            "instruction": "Retrieve, deduplicate and rank evidence for the goal.",
+                            "depends_on": [],
+                            "version": "1.0.0",
+                        },
+                        {
+                            "node_id": "outline",
+                            "capability": "outline_generation",
+                            "instruction": "Create an editable evidence-bound outline.",
+                            "depends_on": ["retrieval"],
+                            "version": "1.0.0",
+                        },
+                        {
+                            "node_id": "section_writing",
+                            "capability": "section_writing",
+                            "instruction": "Write independently recoverable source-bound sections.",
+                            "depends_on": ["outline"],
+                            "version": "1.0.0",
+                        },
+                        {
+                            "node_id": "quality_review",
+                            "capability": "quality_review",
+                            "instruction": "Return a concrete retry target when quality fails.",
+                            "depends_on": ["section_writing"],
+                            "version": "1.0.0",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
         if purpose == "outline":
             return (
                 f"# Survey Outline: {topic}\n"

@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import AsyncMock, patch
 
-from agents.task_graph import DynamicTaskPlanner, TaskGraphExecutor, TaskGraphPlan, TaskNode
+from agents.factory import ModelResponse
+from agents.task_graph import (
+    LIFECYCLE_CAPABILITIES,
+    DynamicTaskPlanner,
+    TaskGraphExecutor,
+    TaskGraphPlan,
+    TaskNode,
+)
 
 
 class DynamicTaskGraphTests(unittest.IsolatedAsyncioTestCase):
@@ -12,8 +20,28 @@ class DynamicTaskGraphTests(unittest.IsolatedAsyncioTestCase):
             {"citation_style": "IEEE", "max_papers": 20},
         )
         nodes = {item.node_id: item for item in plan.nodes}
-        self.assertEqual(nodes["argument_structure"].depends_on, ("research_scope",))
-        self.assertIn("citation_policy", nodes)
+        self.assertEqual(nodes["outline"].depends_on, ("retrieval",))
+        self.assertEqual(nodes["section_writing"].depends_on, ("outline",))
+        self.assertEqual(nodes["quality_review"].depends_on, ("section_writing",))
+        self.assertEqual({node.capability for node in plan.nodes}, set(LIFECYCLE_CAPABILITIES))
+
+    async def test_model_planner_returns_structured_dynamic_plan(self) -> None:
+        response = ModelResponse(
+            content='{"rationale":["history-aware"],"nodes":['
+            '{"node_id":"find_evidence","capability":"literature_retrieval","depends_on":[]},'
+            '{"node_id":"shape_outline","capability":"outline_generation","depends_on":["find_evidence"]},'
+            '{"node_id":"draft_sections","capability":"section_writing","depends_on":["shape_outline"]},'
+            '{"node_id":"review_quality","capability":"quality_review","depends_on":["draft_sections"]}'
+            ']}',
+            provider="test",
+            model="planner",
+        )
+        with patch("agents.task_graph.model_factory.generate_text", AsyncMock(return_value=response)):
+            plan = await DynamicTaskPlanner().plan_writing_with_model(
+                "goal", {"memory_context": {"style": "concise"}}, [{"name": "survey_generation"}]
+            )
+        self.assertEqual(plan.planner, "model:test/planner")
+        self.assertEqual(plan.nodes[0].node_id, "find_evidence")
 
     async def test_executor_runs_dependency_waves(self) -> None:
         plan = TaskGraphPlan("goal", (

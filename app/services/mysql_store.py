@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 import sqlite3
+import os
+import secrets
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -275,6 +277,17 @@ SCHEMA_SQL: tuple[str, ...] = (
         input_json TEXT, result_json TEXT, error TEXT,
         started_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT)""",
 
+    """CREATE TABLE IF NOT EXISTS scholar_task_node_runs (
+        run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, node_id TEXT NOT NULL, capability TEXT NOT NULL,
+        node_version TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL, input_fingerprint TEXT NOT NULL,
+        input_json TEXT NOT NULL, output_json TEXT, dependency_snapshot_json TEXT,
+        quality_json TEXT, invalidated_by TEXT, reused_from_run_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT)""",
+
     """CREATE TABLE IF NOT EXISTS scholar_knowledge_papers (
         paper_id TEXT NOT NULL, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
         source TEXT NOT NULL, title TEXT NOT NULL, authors_json TEXT,
@@ -417,6 +430,7 @@ _INDEXES_SQL: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_scholar_reflection_logs_task ON scholar_reflection_logs(tenant_id, task_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_memories_recall ON scholar_memories(tenant_id, user_id, status, memory_type, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_scholar_trace_events_trace ON scholar_trace_events(trace_id, trace_event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_task_node_runs_lookup ON scholar_task_node_runs(tenant_id, user_id, task_id, node_id, status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_operation_patterns_user ON scholar_operation_patterns(tenant_id, user_id, last_seen_at)",
     "CREATE INDEX IF NOT EXISTS idx_skill_candidates_user ON scholar_skill_candidates(tenant_id, user_id, status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_institution_profiles_user ON scholar_institution_profiles(tenant_id, user_id, updated_at)",
@@ -444,6 +458,9 @@ def initialize_database(create_database: bool = True) -> dict[str, Any]:
 
 
 def seed_demo_data() -> None:
+    if os.getenv("SCHOLAR_DESKTOP_MODE", "").strip().lower() in {"1", "true", "yes"}:
+        _seed_desktop_account()
+        return
     tenants = (
         ("tenant_demo", "Scholar Demo Lab", {"plan": "demo"}),
         ("tenant_acme", "Acme AI Research", {"plan": "team"}),
@@ -466,6 +483,35 @@ def seed_demo_data() -> None:
             "(user_id, tenant_id, username, password_hash, display_name, roles_json, api_key) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (*u[:5], json.dumps(u[5], ensure_ascii=False), u[6]),
+        )
+    conn.commit()
+
+
+def _seed_desktop_account() -> None:
+    """Create one private local tenant without embedding a reusable API key."""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO scholar_tenants (tenant_id, name, metadata_json) VALUES (?, ?, ?)",
+        ("tenant_local", "ScholarAgent Local", json.dumps({"plan": "desktop"})),
+    )
+    existing = conn.execute(
+        "SELECT user_id FROM scholar_users WHERE tenant_id = ? AND username = ?",
+        ("tenant_local", "scholar"),
+    ).fetchone()
+    if existing is None:
+        conn.execute(
+            "INSERT INTO scholar_users "
+            "(user_id, tenant_id, username, password_hash, display_name, roles_json, api_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "user_local",
+                "tenant_local",
+                "scholar",
+                password_hash("scholar123"),
+                "Local Researcher",
+                json.dumps(["tenant_admin", "researcher"]),
+                secrets.token_urlsafe(32),
+            ),
         )
     conn.commit()
 

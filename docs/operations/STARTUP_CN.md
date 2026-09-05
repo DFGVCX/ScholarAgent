@@ -7,7 +7,7 @@
 请先进入项目根目录：
 
 ```powershell
-cd D:\研究生生活\2603~2\成长报告\实习\Agent实习求职\Program\ScholarAgent
+cd <ScholarAgent 项目目录>
 ```
 
 确认当前目录下存在这些文件和目录：

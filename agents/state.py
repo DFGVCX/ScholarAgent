@@ -24,7 +24,24 @@ class GlobalState(TypedDict, total=False):
     global_review: dict[str, Any]
     quality_gate: dict[str, Any]
     quality_retry_count: int
+    global_retry_count: int
+    retry_target: str
+    retry_history: list[dict[str, Any]]
     task_graph: dict[str, Any]
+    task_graph_plan: dict[str, Any]
+    node_snapshots: dict[str, Any]
+    node_runs: list[dict[str, Any]]
+    memory_context: dict[str, Any]
+    historical_preferences: dict[str, Any]
+    papers: list[dict[str, Any]]
+    chunks: list[list[dict[str, Any]]]
+    outline: list[dict[str, Any]]
+    outline_markdown: str
+    outline_node_id: str
+    sections: list[dict[str, Any]]
+    section_reviews: list[dict[str, Any]]
+    quality_decision: dict[str, Any]
+    citation_audit: dict[str, Any]
     final_result: dict[str, Any]
     final_report: str
     reflection_logs: list[dict[str, Any]]
