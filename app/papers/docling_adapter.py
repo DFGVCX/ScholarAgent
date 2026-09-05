@@ -68,13 +68,20 @@ def _label(value: Any) -> str:
     return str(raw or "text").strip().lower().replace("-", "_")
 
 
-def _call_export(item: Any, name: str, document: Any) -> str:
+def _call_export(
+    item: Any,
+    name: str,
+    document: Any,
+    *,
+    preserve_whitespace: bool = False,
+) -> str:
     method = getattr(item, name, None)
     if not callable(method):
         return ""
     for args, kwargs in (((document,), {}), ((), {"doc": document}), ((), {})):
         try:
-            return str(method(*args, **kwargs) or "")
+            exported = str(method(*args, **kwargs) or "")
+            return exported if preserve_whitespace else exported.strip()
         except TypeError:
             continue
     return ""
@@ -131,11 +138,18 @@ def _provenance(
 
 def _item_text(item: Any, document: Any, block_type: str) -> tuple[str, str, str]:
     raw_text = str(getattr(item, "text", "") or "").strip()
-    caption = _call_export(item, "caption_text", document).strip()
-    markdown = _call_export(item, "export_to_markdown", document)
+    caption = _call_export(item, "caption_text", document)
+    markdown = _call_export(
+        item,
+        "export_to_markdown",
+        document,
+        preserve_whitespace=block_type == "table",
+    )
     if block_type == "equation" and markdown:
         raw_text = raw_text or markdown
-    elif block_type in {"table", "figure", "algorithm"}:
+    elif block_type == "table":
+        raw_text = markdown or raw_text or caption
+    elif block_type in {"figure", "algorithm"}:
         raw_text = raw_text or caption or markdown
     return raw_text, caption, markdown
 

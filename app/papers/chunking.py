@@ -496,7 +496,12 @@ def _table_pieces(metadata: Mapping[str, Any], raw_text: str, max_tokens: int) -
     table_lines = [line for line in lines if line.startswith("|") and line.endswith("|")]
     if len(table_lines) < 3:
         content = "\n\n".join(part for part in (caption, markdown) if part)
-        return [content] if content else []
+        if content:
+            return [content]
+        asset_name = str(metadata.get("asset_name") or "").strip()
+        if asset_name:
+            return [f"Source image: {asset_name}"]
+        return ["Source image available"] if metadata.get("source_image_available") else []
 
     header = table_lines[:2]
     rows = table_lines[2:]

@@ -433,6 +433,54 @@ class HierarchicalPdfParsingTest(unittest.TestCase):
             self.assertNotIn("asset_name", block.metadata)
             self.assertFalse((pdf.parent / "paper_assets").exists())
 
+    def test_docling_table_prefers_exact_markdown_over_caption_and_retains_caption_label(self) -> None:
+        """Catches TableFormer cells being replaced by a common TableItem caption."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        markdown = "\n| Method | Score |\n| --- | --- |\n| Scholar | 0.91 |\n"
+        with TemporaryDirectory() as temporary:
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(
+                    _DoclingDocument(
+                        [
+                            (
+                                _DoclingItem(
+                                    "table",
+                                    "",
+                                    caption="Table 1. Main results",
+                                    markdown=markdown,
+                                ),
+                                1,
+                            )
+                        ]
+                    )
+                ),
+            )
+
+            table = parsed.pages[0].blocks[0]
+            self.assertEqual(table.text, markdown)
+            self.assertEqual(table.metadata["markdown"], markdown)
+            self.assertEqual(table.metadata["caption"], "Table 1. Main results")
+            self.assertEqual(table.metadata["label"], "Table 1. Main results")
+
+    def test_docling_non_table_markdown_remains_trimmed(self) -> None:
+        """Catches byte-preservation for tables leaking into other Docling export types."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        parsed = parse_docling_pdf(
+            Path("paper.pdf"),
+            converter=_Converter(
+                _DoclingDocument(
+                    [(_DoclingItem("equation", "", markdown="\n  $$x = y$$  \n"), 1)]
+                )
+            ),
+        )
+
+        equation = parsed.pages[0].blocks[0]
+        self.assertEqual(equation.text, "$$x = y$$")
+        self.assertEqual(equation.metadata["markdown"], "$$x = y$$")
+
     def test_docling_table_image_extraction_and_write_failures_are_auditable(self) -> None:
         """Catches table crop failures becoming sensitive exceptions or silent success."""
         from app.papers.docling_adapter import parse_docling_pdf
