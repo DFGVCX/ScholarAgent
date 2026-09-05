@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 import os
 from pathlib import Path
 import re
+import tempfile
 import threading
 from typing import Any
 
@@ -43,6 +44,11 @@ _DROP_LABELS = {
 }
 _PICTURE_PLACEHOLDER = (
     "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)"
+)
+_PICTURE_PLACEHOLDER_COMMENT_RE = re.compile(
+    r"<!--\s*(?:🖼️?\s*)?(?:❌\s*)?"
+    + re.escape(_PICTURE_PLACEHOLDER)
+    + r"\s*-->",
 )
 _DATA_URI_RE = re.compile(r"data:image/[^\s)\]}>]+", re.IGNORECASE)
 _ALGORITHM_HEADING_RE = re.compile(r"(?i)\balgorithm\s+\d+\b")
@@ -136,23 +142,25 @@ def _item_text(item: Any, document: Any, block_type: str) -> tuple[str, str, str
 
 def _clean_picture_text(value: str) -> str:
     """Remove Docling's unavailable-image diagnostic and inline image payloads."""
-    return _DATA_URI_RE.sub("", value.replace(_PICTURE_PLACEHOLDER, "")).strip()
+    without_placeholder = _PICTURE_PLACEHOLDER_COMMENT_RE.sub("", value)
+    return _DATA_URI_RE.sub("", without_placeholder.replace(_PICTURE_PLACEHOLDER, "")).strip()
 
 
-def _get_picture_image(item: Any, document: Any) -> Any | None:
+def _get_picture_image(item: Any, document: Any) -> tuple[Any | None, str | None]:
     method = getattr(item, "get_image", None)
     if not callable(method):
-        return None
+        return None, None
     for args, kwargs in (((document,), {}), ((), {"doc": document}), ((), {})):
         try:
             image = method(*args, **kwargs)
         except TypeError:
             continue
         except Exception:
-            return None
+            return None, "image_extraction_failed"
         if image is not None:
-            return image
-    return None
+            return image, None
+        return None, None
+    return None, "image_extraction_failed"
 
 
 def _save_picture_asset(
@@ -161,27 +169,40 @@ def _save_picture_asset(
     path: Path,
     page_number: int,
     figure_number: int,
-) -> str | None:
-    image = _get_picture_image(item, document)
+) -> tuple[str | None, str | None]:
+    image, extraction_error = _get_picture_image(item, document)
     if image is None:
-        return None
+        return None, extraction_error
     asset_root = path.parent / f"{path.stem}_assets"
     asset_name = f"page_{page_number:03}_figure_{figure_number:03}.png"
     target = asset_root / asset_name
+    temporary_target: Path | None = None
     try:
         asset_root.mkdir(parents=True, exist_ok=True)
+        if target.is_symlink():
+            return None, "image_write_target_unsafe"
+        with tempfile.NamedTemporaryFile(
+            dir=asset_root,
+            prefix=f".{asset_name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_target = Path(temporary_file.name)
         try:
-            image.save(target, format="PNG")
+            image.save(temporary_target, format="PNG")
         except TypeError:
-            image.save(target)
+            image.save(temporary_target)
+        if not temporary_target.is_file():
+            return None, "image_write_failed"
+        os.replace(temporary_target, target)
     except Exception:
         try:
-            if target.is_file():
-                target.unlink()
+            if temporary_target is not None and temporary_target.is_file():
+                temporary_target.unlink()
         except OSError:
             pass
-        return None
-    return asset_name if target.is_file() else None
+        return None, "image_write_failed"
+    return (asset_name, None) if target.is_file() else (None, "image_write_failed")
 
 
 def _build_converter() -> Any:
@@ -398,7 +419,7 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
                 if _ALGORITHM_HEADING_RE.search(value)
             ),
             None,
-        )
+        ) if source_label in _HEADING_LABELS or source_label == "caption" else None
         if source_label in _DROP_LABELS:
             previous_algorithm_title = algorithm_title
             continue
@@ -413,9 +434,6 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
             caption = previous_algorithm_title
         if source_label in _HEADING_LABELS:
             block_type = "heading"
-        if not text and not markdown:
-            previous_algorithm_title = algorithm_title
-            continue
         page_number, bbox = _provenance(item, document)
         reading_order = len(by_page[page_number])
         metadata = {
@@ -436,15 +454,22 @@ def parse_docling_pdf(path: Path, *, converter: Any | None = None) -> ParsedPape
         }
         if block_type == "figure":
             figure_counts[page_number] += 1
-            asset_name = _save_picture_asset(
+            asset_name, image_error = _save_picture_asset(
                 item, document, path, page_number, figure_counts[page_number]
             )
             metadata["source_image_available"] = bool(asset_name)
             if asset_name:
                 metadata["asset_name"] = asset_name
+            if image_error:
+                metadata["source_image_error"] = image_error
+        if not text and not markdown and not (
+            block_type == "figure" and (metadata.get("asset_name") or metadata.get("source_image_error"))
+        ):
+            previous_algorithm_title = algorithm_title
+            continue
         label_text = caption or text
         if block_type in {"equation", "table", "figure", "algorithm"}:
-            metadata["label"] = label_text.splitlines()[0][:160]
+            metadata["label"] = label_text.splitlines()[0][:160] if label_text else ""
         by_page[page_number].append(
             ParsedBlock(
                 page_number=page_number,

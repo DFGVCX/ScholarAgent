@@ -189,6 +189,117 @@ class HierarchicalPdfParsingTest(unittest.TestCase):
             self.assertNotIn("asset_name", figure.metadata)
             self.assertFalse((pdf.parent / "paper_assets").exists())
 
+    def test_docling_image_only_picture_is_saved_and_inventory_backed(self) -> None:
+        """Catches an empty-content gate that drops a real source image before export."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class Image:
+            def save(self, target, format="PNG") -> None:
+                Path(target).write_bytes(b"image-only")
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(_DoclingItem("picture", "", image=Image()), 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.block_type, "figure")
+            self.assertTrue(figure.metadata["source_image_available"])
+            self.assertEqual(figure.metadata["asset_name"], "page_001_figure_001.png")
+            self.assertEqual((pdf.parent / "paper_assets" / figure.metadata["asset_name"]).read_bytes(), b"image-only")
+            self.assertEqual(parsed.to_manifest()["asset_inventory"][0]["name"], figure.metadata["asset_name"])
+
+    def test_docling_picture_comment_placeholder_is_removed_without_stripping_other_comments(self) -> None:
+        """Catches the real Docling HTML placeholder leaving an empty comment in chunks."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        with TemporaryDirectory() as temporary:
+            placeholder = "<!-- 🖼️❌ Image not available. Please use PdfPipelineOptions(generate_picture_images=True) -->"
+            picture = _DoclingItem(
+                "picture",
+                placeholder,
+                caption="Figure 3. Caption survives",
+                markdown=f"<!-- retained audit note -->\n{placeholder}",
+            )
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(_DoclingDocument([(picture, 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.text, "Figure 3. Caption survives")
+            self.assertEqual(figure.metadata["markdown"], "<!-- retained audit note -->")
+
+    def test_docling_picture_save_failure_preserves_existing_asset(self) -> None:
+        """Catches a failed write deleting or corrupting the prior deterministic asset."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class FailingImage:
+            def save(self, target, format="PNG") -> None:
+                Path(target).write_bytes(b"partial-new-bytes")
+                raise OSError("disk write failed")
+
+        with TemporaryDirectory() as temporary:
+            pdf = Path(temporary) / "paper.pdf"
+            asset = pdf.parent / "paper_assets" / "page_001_figure_001.png"
+            asset.parent.mkdir()
+            asset.write_bytes(b"previous-asset")
+            parsed = parse_docling_pdf(
+                pdf,
+                converter=_Converter(_DoclingDocument([(_DoclingItem("picture", "", image=FailingImage()), 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(asset.read_bytes(), b"previous-asset")
+            self.assertFalse(figure.metadata["source_image_available"])
+            self.assertEqual(figure.metadata["source_image_error"], "image_write_failed")
+
+    def test_docling_picture_extraction_error_is_auditable_but_missing_image_is_not_error(self) -> None:
+        """Catches image extraction failures being silently conflated with an absent image."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        class BrokenPicture(_DoclingItem):
+            def get_image(self, _document):
+                raise RuntimeError("private source path must not leak")
+
+        with TemporaryDirectory() as temporary:
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(
+                    _DoclingDocument(
+                        [
+                            (BrokenPicture("picture", "", caption="Figure 4. Broken source"), 1),
+                            (_DoclingItem("picture", "", caption="Figure 5. No image"), 1),
+                        ]
+                    )
+                ),
+            )
+
+            extraction_error, no_image = parsed.pages[0].blocks
+            self.assertEqual(extraction_error.metadata["source_image_error"], "image_extraction_failed")
+            self.assertNotIn("private source path", str(extraction_error.metadata))
+            self.assertNotIn("source_image_error", no_image.metadata)
+
+    def test_docling_prose_algorithm_mention_does_not_retype_following_code(self) -> None:
+        """Catches prose mentions of Algorithm N being treated as adjacent algorithm headings."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        parsed = parse_docling_pdf(
+            Path("paper.pdf"),
+            converter=_Converter(
+                _DoclingDocument(
+                    [
+                        (_DoclingItem("text", "We compare with Algorithm 1 in the related work."), 1),
+                        (_DoclingItem("code", "return baseline_result"), 1),
+                    ]
+                )
+            ),
+        )
+
+        self.assertEqual(parsed.pages[0].blocks[1].block_type, "code")
+
     def test_docling_adjacent_algorithm_heading_classifies_only_following_code(self) -> None:
         """Catches a classifier that misses adjacent algorithm titles or upgrades distant code."""
         from app.papers.docling_adapter import parse_docling_pdf
