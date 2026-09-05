@@ -6831,6 +6831,169 @@
         .highlight-tooltip button:hover { background: var(--hover); }
         .highlight-tooltip .color-btn { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; }
         .highlight-tooltip .color-btn.active { border-color: var(--accent); }
+
+        /* Final viewport fixes: bounded audit pool, scrollable settings rail, compact writing flow. */
+        #pageAudit #auditDetail.table-wrap {
+            min-height: 0;
+            overflow: hidden;
+        }
+        #pageAudit .audit-paper-board {
+            height: 100%;
+            min-height: 0;
+            display: grid;
+            grid-template-rows: auto minmax(0, 1fr);
+        }
+        #pageAudit .audit-paper-list-modern {
+            height: 100%;
+            min-height: 0;
+            max-height: 156px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            transition: max-height .22s ease;
+        }
+        #pageAudit .audit-paper-head-actions {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        #pageAudit .audit-pool-toggle {
+            flex: 0 0 auto;
+            min-height: 28px;
+            padding: 0 10px;
+            border: 1px solid #d5e1e7;
+            border-radius: 6px;
+            background: #fff;
+            color: #40545e;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 11px;
+            font-weight: 900;
+            box-shadow: 0 4px 12px rgba(23,32,40,.04);
+        }
+        #pageAudit .audit-pool-toggle:hover {
+            border-color: rgba(10,122,112,.42);
+            color: #087168;
+        }
+        #pageAudit .audit-pool-toggle i {
+            width: 7px;
+            height: 7px;
+            border-right: 1.5px solid currentColor;
+            border-bottom: 1.5px solid currentColor;
+            transform: translateY(-2px) rotate(45deg);
+            transition: transform .18s ease;
+        }
+        #pageAudit.audit-pool-expanded .audit-grid > section:not(.panel) {
+            grid-template-rows: minmax(0, 1.68fr) minmax(136px, .32fr);
+        }
+        #pageAudit.audit-pool-expanded .audit-paper-list-modern {
+            max-height: 430px;
+        }
+        #pageAudit.audit-pool-expanded .audit-pool-toggle i {
+            transform: translateY(2px) rotate(225deg);
+        }
+
+        #pageProfile .profile-config-mount .settings-overview {
+            display: grid;
+            grid-template-rows: auto minmax(0, 1fr);
+        }
+        #pageProfile .profile-config-mount .config-menu {
+            min-height: 0;
+            align-content: start;
+            overflow-y: auto;
+            overflow-x: hidden;
+            overscroll-behavior: contain;
+            padding: 0 5px 10px 0;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(220,236,234,.42) transparent;
+        }
+        #pageProfile .profile-config-mount .config-menu::-webkit-scrollbar {
+            width: 6px;
+        }
+        #pageProfile .profile-config-mount .config-menu::-webkit-scrollbar-thumb {
+            border-radius: 999px;
+            background: rgba(220,236,234,.42);
+        }
+
+        @media (min-width: 1121px) {
+            #pageTasks .writing-brief-hero {
+                flex-basis: 132px;
+                min-height: 132px;
+            }
+            #pageTasks .writing-brief-hero textarea {
+                height: 82px;
+                min-height: 82px;
+                max-height: 82px;
+            }
+            #pageTasks .survey-brief .workflow-panel {
+                flex: 0 0 160px;
+                height: 160px;
+                min-height: 160px;
+                padding: 8px 9px;
+                grid-template-rows: auto minmax(0, 1fr) 4px 36px;
+                gap: 5px;
+                overflow: hidden !important;
+                background: linear-gradient(180deg, #ffffff, #f7faf9);
+            }
+            #pageTasks .workflow-panel .workflow-lane {
+                min-height: 0;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                grid-template-rows: repeat(2, minmax(0, 1fr));
+                gap: 6px;
+                overflow: hidden !important;
+                align-content: stretch;
+            }
+            #pageTasks .workflow-panel .lane-step {
+                min-height: 0;
+                height: 100%;
+                padding: 5px 6px;
+                grid-template-columns: 19px minmax(0, 1fr);
+                gap: 6px;
+                align-items: center;
+                border-color: #dce6ea;
+                background: rgba(255,255,255,.92);
+                box-shadow: 0 4px 12px rgba(23,32,40,.025);
+            }
+            #pageTasks .workflow-panel .lane-step i {
+                width: 19px;
+                height: 19px;
+                font-size: 10px;
+            }
+            #pageTasks .workflow-panel .lane-step b {
+                font-size: 10.5px;
+            }
+            #pageTasks .workflow-panel .lane-step span span {
+                display: block;
+                margin-top: 1px;
+                color: #788890;
+                font-size: 9px;
+                line-height: 1.05;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            #pageTasks .workflow-panel .log {
+                display: block;
+                height: 36px;
+                min-height: 36px;
+                padding: 5px 7px;
+                overflow-y: auto !important;
+                font-size: 10px;
+                line-height: 1.25;
+            }
+            #pageTasks .workflow-panel .log-entry,
+            #pageTasks .workflow-panel .log-empty {
+                min-height: 17px;
+                grid-template-columns: 51px minmax(0, 1fr);
+                gap: 7px;
+            }
+            #pageTasks .survey-brief .full {
+                margin-top: 6px;
+                margin-bottom: 8px;
+            }
+        }
         @media (max-width: 900px) {
           .reader-sidebar { width: 160px; }
           .reader-sidebar.right { width: 220px; }
@@ -7488,7 +7651,7 @@
         const desktopMode = new URLSearchParams(window.location.search).get('desktop') === '1';
         const storageKey = desktopMode ? 'scholar.desktop.session.v1' : 'scholar.session.v1';
         const sidebarStorageKey = 'scholar.sidebar.collapsed.v1';
-        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null };
+        const state = { session: null, route: 'chat', inputType: 'online', eventSource: null, currentTaskId: null, currentOutlineMarkdown: '', tasks: [], knowledge: [], selectedPaperId: null, paperPage: 0, paperZoom: 1, paperViewMode: 'pdf', annotationEnabled: false, paperAnnotations: {}, infra: null, ragStats: null, runtimeConfig: null, skills: [], conversations: [], selectedConversationId: null, selectedSkillId: 'general_assistant', skillDockCollapsed: true, institutionProfiles: [], institutionSession: null, institutionBrowser: null, auditPoolExpanded: false };
         const routeTitles = { chat: '智能会话', tasks: '写作专项', audit: '引用审计', knowledge: '个人知识库', profile: '个人中心' };
         const sourceDefaults = {
             online: { label: '附加约束（可选）', placeholder: '例如：优先近三年、中文核心、包含公开数据集' },
@@ -9767,6 +9930,8 @@
             const poolIds = new Set(papers.map((paper) => paper.paper_id).filter(Boolean));
             const phantomIds = hallucinated.filter((id) => !poolIds.has(id));
             $('auditTaskLabel').textContent = data.task_id || '未选择任务';
+            state.auditPoolExpanded = false;
+            $('pageAudit')?.classList.remove('audit-pool-expanded');
 
             const isPassed = Boolean(audit.is_valid);
             const statusText = isPassed ? '引用通过' : '需要复核';
@@ -9844,17 +10009,31 @@
                 <section class="audit-paper-board">
                     <header>
                         <strong>文献池</strong>
-                        <span>${papers.length} 篇 · ${found.length} 匹配 · ${missing.length} 未覆盖</span>
+                        <div class="audit-paper-head-actions">
+                            <span>${papers.length} 篇 · ${found.length} 匹配 · ${missing.length} 未覆盖</span>
+                            <button id="auditPoolToggle" class="audit-pool-toggle" type="button" aria-expanded="false"><span>展开</span><i></i></button>
+                        </div>
                     </header>
                     <div class="audit-paper-list-modern">
                         ${paperRows.concat(phantomRows).join('') || '<article class="audit-paper-card pool"><span class="audit-paper-number">--</span><div class="audit-paper-main"><strong class="audit-paper-title">暂无文献池数据</strong><div class="audit-paper-subline"><span>任务完成后展示来源</span></div></div><em class="audit-paper-status pool">待生成</em></article>'}
                     </div>
                 </section>
             `;
+            $('auditPoolToggle')?.addEventListener('click', toggleAuditPool);
             $('referenceCount').textContent = `${references.length}`;
             $('referenceList').innerHTML = references.length
                 ? `<table class="table"><thead><tr><th>#</th><th>参考文献</th></tr></thead><tbody>${references.map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(item)}</td></tr>`).join('')}</tbody></table>`
                 : '<div class="subtle">暂无参考文献</div>';
+        }
+
+        function toggleAuditPool() {
+            state.auditPoolExpanded = !state.auditPoolExpanded;
+            $('pageAudit')?.classList.toggle('audit-pool-expanded', state.auditPoolExpanded);
+            const button = $('auditPoolToggle');
+            if (!button) return;
+            button.setAttribute('aria-expanded', String(state.auditPoolExpanded));
+            const label = button.querySelector('span');
+            if (label) label.textContent = state.auditPoolExpanded ? '收起' : '展开';
         }
 
         mountProfileConfig();
