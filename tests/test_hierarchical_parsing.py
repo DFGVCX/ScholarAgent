@@ -253,6 +253,27 @@ class HierarchicalPdfParsingTest(unittest.TestCase):
             self.assertEqual(figure.text, f"The manual quotes: {phrase}. Continue reading.")
             self.assertEqual(figure.metadata["markdown"], f"<!-- audit says {phrase}; retain this note -->")
 
+    def test_docling_picture_no_icon_placeholder_comment_is_preserved(self) -> None:
+        """Catches cleanup treating a no-icon comment as Docling's emoji placeholder."""
+        from app.papers.docling_adapter import parse_docling_pdf
+
+        no_icon_comment = "<!-- Image not available. Please use PdfPipelineOptions(generate_picture_images=True) -->"
+        with TemporaryDirectory() as temporary:
+            picture = _DoclingItem(
+                "picture",
+                no_icon_comment,
+                caption="Figure 7. No-icon note",
+                markdown=no_icon_comment,
+            )
+            parsed = parse_docling_pdf(
+                Path(temporary) / "paper.pdf",
+                converter=_Converter(_DoclingDocument([(picture, 1)])),
+            )
+
+            figure = parsed.pages[0].blocks[0]
+            self.assertEqual(figure.text, no_icon_comment)
+            self.assertEqual(figure.metadata["markdown"], no_icon_comment)
+
     def test_docling_picture_asset_root_symlink_is_not_followed(self) -> None:
         """Catches image export writing through a pre-existing assets-directory symlink."""
         from app.papers.docling_adapter import parse_docling_pdf

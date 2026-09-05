@@ -46,7 +46,7 @@ _PICTURE_PLACEHOLDER = (
     "Image not available. Please use PdfPipelineOptions(generate_picture_images=True)"
 )
 _PICTURE_PLACEHOLDER_COMMENT_RE = re.compile(
-    r"<!--\s*(?:🖼️?\s*)?(?:❌\s*)?"
+    r"<!--\s*🖼(?:\ufe0f)?\s*❌\s*"
     + re.escape(_PICTURE_PLACEHOLDER)
     + r"\s*-->",
 )
