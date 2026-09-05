@@ -393,9 +393,13 @@ class ConversationContextManager:
     ) -> None:
         payload = {"events": events, **state}
         mysql_store.execute(
-            "INSERT OR REPLACE INTO scholar_conversation_context "
+            "INSERT INTO scholar_conversation_context "
             "(conversation_id, tenant_id, user_id, summary, state_json, token_estimate, compression_count, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+            "ON CONFLICT (tenant_id, user_id, conversation_id) DO UPDATE SET "
+            "summary=EXCLUDED.summary, state_json=EXCLUDED.state_json, "
+            "token_estimate=EXCLUDED.token_estimate, compression_count=EXCLUDED.compression_count, "
+            "updated_at=CURRENT_TIMESTAMP",
             (conversation_id, user.tenant_id, user.user_id, summary, json.dumps(payload, ensure_ascii=False), tokens, count),
         )
 

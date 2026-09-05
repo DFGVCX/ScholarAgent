@@ -9,20 +9,6 @@ from app.schemas import UserContext
 from app.services import mysql_store
 
 
-STATE_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS scholar_conversation_working_state (
-    conversation_id TEXT NOT NULL,
-    tenant_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    state_version INTEGER NOT NULL DEFAULT 1,
-    state_json TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (tenant_id, user_id, conversation_id)
-)
-"""
-
-
 def _default_state() -> dict[str, Any]:
     return {
         "state_version": 0,
@@ -48,9 +34,7 @@ class ConversationStateService:
         self._schema_ready = False
 
     def ensure_schema(self) -> None:
-        if not self._schema_ready:
-            mysql_store.execute(STATE_SCHEMA_SQL)
-            self._schema_ready = True
+        self._schema_ready = True
 
     def get(self, user: UserContext, conversation_id: str) -> dict[str, Any]:
         self.ensure_schema()
@@ -159,11 +143,14 @@ class ConversationStateService:
         saved["state_version"] = int(saved.get("state_version") or 0) + 1
         saved["updated_at"] = datetime.now(timezone.utc).isoformat()
         mysql_store.execute(
-            "INSERT OR REPLACE INTO scholar_conversation_working_state "
+            "INSERT INTO scholar_conversation_working_state "
             "(conversation_id, tenant_id, user_id, state_version, state_json, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, "
             "COALESCE((SELECT created_at FROM scholar_conversation_working_state "
-            "WHERE tenant_id=? AND user_id=? AND conversation_id=?), datetime('now')), datetime('now'))",
+            "WHERE tenant_id=? AND user_id=? AND conversation_id=?), datetime('now')), datetime('now')) "
+            "ON CONFLICT (tenant_id, user_id, conversation_id) DO UPDATE SET "
+            "state_version=EXCLUDED.state_version, state_json=EXCLUDED.state_json, "
+            "updated_at=CURRENT_TIMESTAMP",
             (
                 conversation_id, user.tenant_id, user.user_id, saved["state_version"],
                 json.dumps(saved, ensure_ascii=False),

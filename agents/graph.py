@@ -143,12 +143,18 @@ def build_global_graph(checkpointer: Any | None = None):
 app = build_global_graph()
 _runtime_app: Any | None = None
 _runtime_lock = asyncio.Lock()
+_runtime_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def _get_runtime_app():
-    global _runtime_app
-    if os.getenv("SCHOLAR_CHECKPOINT_BACKEND", "memory").strip().lower() != "sqlite":
+    global _runtime_app, _runtime_lock, _runtime_loop
+    if os.getenv("SCHOLAR_CHECKPOINT_BACKEND", "postgres").strip().lower() == "memory":
         return app
+    current_loop = asyncio.get_running_loop()
+    if _runtime_loop is not current_loop:
+        _runtime_app = None
+        _runtime_lock = asyncio.Lock()
+        _runtime_loop = current_loop
     async with _runtime_lock:
         if _runtime_app is None:
             _runtime_app = build_global_graph(await checkpoint_provider.get())

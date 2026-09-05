@@ -11,29 +11,6 @@ from app.schemas import UserContext
 from app.services import mysql_store
 
 
-MEMORY_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS scholar_memories (
-    memory_id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    conversation_id TEXT,
-    memory_type TEXT NOT NULL,
-    content TEXT NOT NULL,
-    normalized_content TEXT NOT NULL,
-    importance REAL NOT NULL DEFAULT 0.5,
-    confidence REAL NOT NULL DEFAULT 1.0,
-    source_message_id TEXT,
-    metadata_json TEXT,
-    access_count INTEGER NOT NULL DEFAULT 0,
-    last_accessed_at TEXT,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (tenant_id, user_id, memory_type, normalized_content)
-)
-"""
-
-
 @dataclass(frozen=True)
 class MemoryRecord:
     memory_id: str
@@ -61,13 +38,7 @@ class UserMemoryService:
         self._schema_ready = False
 
     def ensure_schema(self) -> None:
-        if not self._schema_ready:
-            mysql_store.execute(MEMORY_SCHEMA_SQL)
-            mysql_store.execute(
-                "CREATE INDEX IF NOT EXISTS idx_scholar_memories_recall "
-                "ON scholar_memories(tenant_id, user_id, status, memory_type, updated_at)"
-            )
-            self._schema_ready = True
+        self._schema_ready = True
 
     @staticmethod
     def _normalize(content: str) -> str:
@@ -94,14 +65,18 @@ class UserMemoryService:
         ).hexdigest()[:32]
         memory_id = f"mem_{digest}"
         mysql_store.execute(
-            "INSERT OR REPLACE INTO scholar_memories "
+            "INSERT INTO scholar_memories "
             "(memory_id, tenant_id, user_id, conversation_id, memory_type, content, "
             "normalized_content, importance, confidence, source_message_id, metadata_json, "
             "access_count, last_accessed_at, status, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
             "COALESCE((SELECT access_count FROM scholar_memories WHERE memory_id=?), 0), "
             "(SELECT last_accessed_at FROM scholar_memories WHERE memory_id=?), 'active', "
-            "COALESCE((SELECT created_at FROM scholar_memories WHERE memory_id=?), datetime('now')), datetime('now'))",
+            "COALESCE((SELECT created_at FROM scholar_memories WHERE memory_id=?), datetime('now')), datetime('now')) "
+            "ON CONFLICT (memory_id) DO UPDATE SET conversation_id=EXCLUDED.conversation_id, "
+            "content=EXCLUDED.content, importance=EXCLUDED.importance, confidence=EXCLUDED.confidence, "
+            "source_message_id=EXCLUDED.source_message_id, metadata_json=EXCLUDED.metadata_json, "
+            "status='active', updated_at=CURRENT_TIMESTAMP",
             (
                 memory_id, user.tenant_id, user.user_id, conversation_id or None,
                 memory_type, content.strip(), normalized, float(importance), float(confidence),

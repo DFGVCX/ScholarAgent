@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
 from typing import Any
+
+
+_RUNTIME_CONFIG_CACHE: dict[str, str] | None = None
 
 
 CONFIG_KEYS: tuple[str, ...] = (
@@ -18,11 +19,15 @@ CONFIG_KEYS: tuple[str, ...] = (
     "SCHOLAR_RAG_EMBEDDING_API_KEY",
     "SCHOLAR_RAG_EMBEDDING_MODEL",
     "SCHOLAR_RAG_EMBEDDING_DIMENSIONS",
+    "SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS",
+    "SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS",
     "SCHOLAR_RAG_CHUNK_SIZE",
     "SCHOLAR_RAG_CHUNK_OVERLAP",
     "SCHOLAR_RAG_CHUNK_STRATEGY",
+    "SCHOLAR_PDF_PARSE_STRATEGY",
     "SCHOLAR_RAG_TOP_K",
     "SCHOLAR_RAG_CANDIDATE_LIMIT",
+    "SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER",
     "SCHOLAR_PRIMARY_MODEL_PROVIDER",
     "SCHOLAR_SECONDARY_MODEL_PROVIDER",
     "SCHOLAR_LLM_BASE_URL",
@@ -42,13 +47,26 @@ SECRET_KEYS: frozenset[str] = frozenset(
 )
 
 SELECT_OPTIONS: dict[str, tuple[str, ...]] = {
-    "SCHOLAR_STORAGE_BACKEND": ("auto", "sqlite"),
+    "SCHOLAR_STORAGE_BACKEND": ("postgresql",),
     "SCHOLAR_ALLOW_MOCK_DATA": ("false", "true"),
     "SCHOLAR_EXTERNAL_SOURCE_PROVIDER": ("real", "mock"),
-    "SCHOLAR_RAG_INDEX_BACKEND": ("auto", "chromadb"),
-    "SCHOLAR_RAG_RETRIEVAL_MODE": ("hybrid", "lexical", "vector"),
-    "SCHOLAR_RAG_EMBEDDING_PROVIDER": ("lexical", "hybrid", "openai-compatible", "bge", "jina", "cohere", "mock-hash"),
-    "SCHOLAR_RAG_CHUNK_STRATEGY": ("paragraph", "fixed"),
+    "SCHOLAR_RAG_INDEX_BACKEND": ("pgvector",),
+    "SCHOLAR_RAG_RETRIEVAL_MODE": ("hybrid_rrf", "lexical"),
+    "SCHOLAR_RAG_EMBEDDING_PROVIDER": ("qwen",),
+    "SCHOLAR_RAG_CHUNK_STRATEGY": (
+        "legacy_fixed",
+        "structure_aware_v1",
+        "formula_aware_v2",
+        "multimodal_aware_v3",
+        "scholar_hierarchical_v4",
+    ),
+    "SCHOLAR_PDF_PARSE_STRATEGY": (
+        "legacy_fixed",
+        "structure_aware_v1",
+        "formula_aware_v2",
+        "multimodal_aware_v3",
+        "scholar_hierarchical_v4",
+    ),
     "SCHOLAR_PRIMARY_MODEL_PROVIDER": (
         "none",
         "openai-compatible",
@@ -118,21 +136,25 @@ SELECT_OPTIONS: dict[str, tuple[str, ...]] = {
 }
 
 DEFAULT_VALUES: dict[str, str] = {
-    "SCHOLAR_STORAGE_BACKEND": "auto",
+    "SCHOLAR_STORAGE_BACKEND": "postgresql",
     "SCHOLAR_ALLOW_MOCK_DATA": "false",
     "SCHOLAR_EXTERNAL_SOURCE_PROVIDER": "real",
     "SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS": "8.0",
-    "SCHOLAR_RAG_INDEX_BACKEND": "auto",
-    "SCHOLAR_RAG_RETRIEVAL_MODE": "hybrid",
-    "SCHOLAR_RAG_EMBEDDING_PROVIDER": "lexical",
-    "SCHOLAR_RAG_EMBEDDING_BASE_URL": "",
-    "SCHOLAR_RAG_EMBEDDING_MODEL": "",
-    "SCHOLAR_RAG_EMBEDDING_DIMENSIONS": "0",
+    "SCHOLAR_RAG_INDEX_BACKEND": "pgvector",
+    "SCHOLAR_RAG_RETRIEVAL_MODE": "hybrid_rrf",
+    "SCHOLAR_RAG_EMBEDDING_PROVIDER": "qwen",
+    "SCHOLAR_RAG_EMBEDDING_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode",
+    "SCHOLAR_RAG_EMBEDDING_MODEL": "qwen3.7-text-embedding",
+    "SCHOLAR_RAG_EMBEDDING_DIMENSIONS": "1024",
+    "SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS": "0",
+    "SCHOLAR_RAG_SEMANTIC_TIMEOUT_SECONDS": "8.0",
     "SCHOLAR_RAG_CHUNK_SIZE": "900",
     "SCHOLAR_RAG_CHUNK_OVERLAP": "120",
-    "SCHOLAR_RAG_CHUNK_STRATEGY": "paragraph",
+    "SCHOLAR_RAG_CHUNK_STRATEGY": "multimodal_aware_v3",
+    "SCHOLAR_PDF_PARSE_STRATEGY": "multimodal_aware_v3",
     "SCHOLAR_RAG_TOP_K": "8",
     "SCHOLAR_RAG_CANDIDATE_LIMIT": "800",
+    "SCHOLAR_RAG_MAX_CHUNKS_PER_PAPER": "3",
     "SCHOLAR_PRIMARY_MODEL_PROVIDER": "none",
     "SCHOLAR_SECONDARY_MODEL_PROVIDER": "none",
     "SCHOLAR_LLM_BASE_URL": "",
@@ -142,88 +164,59 @@ DEFAULT_VALUES: dict[str, str] = {
 }
 
 
-def runtime_config_path() -> Path:
-    """Return path to legacy JSON config file (for migration and fallback)."""
-    configured = os.getenv("SCHOLAR_RUNTIME_CONFIG_PATH")
-    if configured:
-        return Path(configured)
-    storage_dir = Path(os.getenv("SCHOLAR_STORAGE_DIR", "storage/runtime"))
-    return storage_dir / "runtime_config.json"
-
-
-def _migrate_json_to_db() -> int:
-    """Migrate settings from legacy JSON file to SQLite. Returns count of migrated keys."""
-    json_path = runtime_config_path()
-    source_path = json_path if json_path.exists() else json_path.with_suffix(".json.bak")
-    if not source_path.exists():
-        return 0
-    try:
-        raw = json.loads(source_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return 0
-    if not isinstance(raw, dict):
-        return 0
-    from app.services import mysql_store
-    count = 0
-    for key, value in raw.items():
-        if key in CONFIG_KEYS and value is not None:
-            mysql_store.set_setting(key, str(value))
-            count += 1
-    if count > 0 and source_path == json_path:
-        backup = json_path.with_suffix(".json.bak")
-        try:
-            json_path.rename(backup)
-        except OSError:
-            pass
-    return count
-
-
 def read_runtime_config() -> dict[str, str]:
-    """Read runtime config from SQLite scholar_settings table, with JSON fallback."""
+    """Read runtime overrides from PostgreSQL; environment/defaults remain bootstrap inputs."""
+    global _RUNTIME_CONFIG_CACHE
     try:
         from app.services import mysql_store
         all_settings = mysql_store.get_all_settings()
-        if not all_settings:
-            _migrate_json_to_db()
-            all_settings = mysql_store.get_all_settings()
-        return {key: str(value) for key, value in all_settings.items()
-                if key in CONFIG_KEYS and value is not None}
+        loaded = {
+            key: str(value) for key, value in all_settings.items()
+            if key in CONFIG_KEYS and value is not None
+        }
     except Exception:
-        # Ultimate fallback: legacy JSON file
-        path = runtime_config_path()
-        if not path.exists():
-            return {}
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(raw, dict):
-            return {}
-        return {key: str(value) for key, value in raw.items()
-                if key in CONFIG_KEYS and value is not None}
+        # PostgreSQL may still be starting when the process first imports settings.
+        # Keep the last known-good view, but retry PostgreSQL on the next read.
+        return dict(_RUNTIME_CONFIG_CACHE or {})
+    if not loaded:
+        # Migrations or bootstrap data can still be settling even when the table
+        # already answers successfully. Keep the last known-good view and retry later.
+        return dict(_RUNTIME_CONFIG_CACHE or {})
+    _RUNTIME_CONFIG_CACHE = loaded
+    return dict(_RUNTIME_CONFIG_CACHE)
+
+
+def _read_persisted_config() -> dict[str, str]:
+    """Read the authoritative runtime configuration without consulting the cache."""
+    from app.services import mysql_store
+
+    return {
+        key: str(value)
+        for key, value in mysql_store.get_all_settings().items()
+        if key in CONFIG_KEYS and value is not None
+    }
 
 
 def write_runtime_config(values: dict[str, Any]) -> dict[str, str]:
+    global _RUNTIME_CONFIG_CACHE
     sanitized = _sanitize_values(values, preserve_blank_secrets=False)
-    try:
-        from app.services import mysql_store
-        existing = mysql_store.get_all_settings()
-        for key in existing:
-            if key in CONFIG_KEYS and key not in sanitized:
-                mysql_store.execute("DELETE FROM scholar_settings WHERE key = ?", (key,))
-        for key, val in sanitized.items():
-            mysql_store.set_setting(key, val)
-    except Exception:
-        # Fallback to JSON if SQLite fails
-        path = runtime_config_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    from app.services import mysql_store
+    existing = mysql_store.get_all_settings()
+    for key in existing:
+        if key in CONFIG_KEYS and key not in sanitized:
+            mysql_store.execute("DELETE FROM scholar_settings WHERE key = ?", (key,))
+    for key, val in sanitized.items():
+        mysql_store.set_setting(key, val)
+    _RUNTIME_CONFIG_CACHE = dict(sanitized)
     apply_runtime_config(sanitized)
     return sanitized
 
 
 def update_runtime_config(values: dict[str, Any]) -> dict[str, str]:
-    current = read_runtime_config()
+    # A settings form can outlive a transient startup/database read failure. Always
+    # merge updates against PostgreSQL itself so a blank secret field cannot erase
+    # a key that was merely absent from the in-process cache.
+    current = _read_persisted_config()
     incoming = _sanitize_values(values, preserve_blank_secrets=True)
     merged = dict(current)
     for key, value in incoming.items():
@@ -260,14 +253,9 @@ def public_runtime_config() -> dict[str, Any]:
                 "options": list(SELECT_OPTIONS.get(key, ())),
             }
         )
-    # Determine storage backend info
-    try:
-        from app.services import mysql_store
-        db_path = str(mysql_store._db_path())
-        storage_backend = "sqlite"
-    except Exception:
-        db_path = str(runtime_config_path())
-        storage_backend = "json"
+    from app.services import mysql_store
+    db_path = mysql_store.configured_database_name()
+    storage_backend = "postgresql"
     return {
         "path": db_path,
         "storage_backend": storage_backend,
@@ -303,6 +291,7 @@ def _normalize_value(key: str, value: Any) -> str:
         "SCHOLAR_RAG_RETRIEVAL_MODE",
         "SCHOLAR_RAG_EMBEDDING_PROVIDER",
         "SCHOLAR_RAG_CHUNK_STRATEGY",
+        "SCHOLAR_PDF_PARSE_STRATEGY",
         "SCHOLAR_PRIMARY_MODEL_PROVIDER",
         "SCHOLAR_SECONDARY_MODEL_PROVIDER",
     }:

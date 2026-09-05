@@ -1,0 +1,51 @@
+name: RAG regression
+
+on:
+  push:
+    paths:
+      - "app/papers/**"
+      - "app/retrieval/**"
+      - "app/db/**"
+      - "app/services/rag_service.py"
+      - "alembic/**"
+      - "scripts/run_rag_regression.py"
+      - "tests/**"
+      - "frontend/dist/**"
+      - "frontend/tests/**"
+      - "frontend/package.json"
+      - ".github/workflows/rag-regression.yml"
+  pull_request:
+    paths:
+      - "app/papers/**"
+      - "app/retrieval/**"
+      - "app/db/**"
+      - "app/services/rag_service.py"
+      - "alembic/**"
+      - "scripts/run_rag_regression.py"
+      - "tests/**"
+      - "frontend/dist/**"
+      - "frontend/tests/**"
+      - "frontend/package.json"
+      - ".github/workflows/rag-regression.yml"
+
+jobs:
+  unit-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install runtime dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-base.txt
+      - name: Run deterministic RAG regression
+        run: python scripts/run_rag_regression.py
+      - name: Run deterministic paper workbench tests
+        run: npm test --prefix frontend
+      - name: Validate Compose configuration
+        run: docker compose config --quiet

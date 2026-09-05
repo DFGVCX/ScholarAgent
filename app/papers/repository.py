@@ -1,0 +1,1719 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from datetime import datetime
+import json
+from typing import Any
+from uuid import UUID, uuid4
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.papers.assets import inventory_from_manifest
+from app.papers.chunking import ChunkDraft, build_embedding_text
+from app.papers.models import ContentVersion, PaperInput, PaperRecord, normalize_arxiv_id, normalize_doi
+from app.papers.parsing import ParsedPaper
+
+
+_PAPER_COLUMNS = """
+paper_uuid, tenant_id, user_id, paper_id, source, title, authors, abstract,
+published_at, normalized_doi, normalized_arxiv_id, canonical_url,
+in_knowledge_base, ingestion_status, current_content_version, metadata,
+created_at, updated_at
+"""
+
+
+def _json_value(value: Any, fallback: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return fallback
+    return value if value is not None else fallback
+
+
+def _json_mapping(value: Any) -> dict[str, Any]:
+    parsed = _json_value(value, {})
+    return dict(parsed) if isinstance(parsed, Mapping) else {}
+
+
+def _merge_parser_metadata(
+    current: Mapping[str, Any], incoming: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Merge parser-owned keys while preserving late user bibliography edits."""
+
+    merged = {
+        key: value
+        for key, value in incoming.items()
+        if key in {"parsing", "bibliography"}
+    }
+    incoming_bibliography = merged.get("bibliography")
+    current_bibliography = current.get("bibliography")
+    if isinstance(incoming_bibliography, Mapping) and isinstance(
+        current_bibliography, Mapping
+    ):
+        bibliography = dict(incoming_bibliography)
+        for name, value in current_bibliography.items():
+            if isinstance(value, Mapping) and value.get("user_edited") is True:
+                bibliography[str(name)] = dict(value)
+        merged["bibliography"] = bibliography
+    return merged
+
+
+class PaperRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get(self, tenant_id: str, user_id: str, paper_id: str) -> PaperRecord | None:
+        result = await self.session.execute(
+            text(
+                f"SELECT {_PAPER_COLUMNS} FROM papers "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_id=:paper_id "
+                "AND deleted_at IS NULL"
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_id": paper_id},
+        )
+        row = result.mappings().first()
+        return self._record(row) if row else None
+
+    async def list(
+        self, tenant_id: str, user_id: str, *, query: str = "", limit: int = 50
+    ) -> list[PaperRecord]:
+        result = await self.session.execute(
+            text(
+                f"SELECT {_PAPER_COLUMNS} FROM papers "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND deleted_at IS NULL "
+                "AND (:query='' OR title ILIKE :pattern OR abstract ILIKE :pattern OR paper_id ILIKE :pattern) "
+                "ORDER BY updated_at DESC LIMIT :limit"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "query": query.strip(),
+                "pattern": f"%{query.strip()}%",
+                "limit": max(1, min(limit, 200)),
+            },
+        )
+        return [self._record(row) for row in result.mappings().all()]
+
+    async def get_document(
+        self, tenant_id: str, user_id: str, paper_id: str
+    ) -> dict[str, Any] | None:
+        rows = await self.list_documents(tenant_id, user_id, query=paper_id, limit=10)
+        return next((row for row in rows if row["paper_id"] == paper_id), None)
+
+    async def get_structure(
+        self, tenant_id: str, user_id: str, paper_id: str
+    ) -> dict[str, Any] | None:
+        current = await self.session.execute(
+            text(
+                """SELECT p.paper_id, pc.content_uuid, pc.content_version,
+                    pc.parser_name, pc.parser_version, pc.parse_status, pc.parse_manifest,
+                    pc.chunk_strategy, pc.chunker_version
+                FROM paper_contents pc
+                JOIN papers p ON p.paper_uuid=pc.paper_uuid
+                    AND p.tenant_id=pc.tenant_id AND p.user_id=pc.user_id
+                WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id
+                    AND p.paper_id=:paper_id AND p.deleted_at IS NULL
+                    AND pc.content_version=p.current_content_version"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_id": paper_id},
+        )
+        row = current.mappings().first()
+        if row is None:
+            return None
+        content_uuid = row.get("content_uuid")
+        page_result = await self.session.execute(
+            text(
+                """SELECT pp.page_number, pp.text, pp.quality_status,
+                    pp.extraction_method, pp.blocks
+                FROM paper_pages pp
+                WHERE pp.tenant_id=:tenant_id AND pp.user_id=:user_id
+                    AND pp.content_uuid=:content_uuid
+                ORDER BY pp.page_number"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "content_uuid": content_uuid},
+        )
+        section_result = await self.session.execute(
+            text(
+                """SELECT ps.section_id, ps.section_index, ps.kind, ps.title,
+                    ps.page_start, ps.page_end, ps.content
+                FROM paper_sections ps
+                WHERE ps.tenant_id=:tenant_id AND ps.user_id=:user_id
+                    AND ps.content_uuid=:content_uuid
+                ORDER BY ps.section_index"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "content_uuid": content_uuid},
+        )
+        chunk_result = await self.session.execute(
+            text(
+                """SELECT pc.chunk_uuid, pc.chunk_index, pc.chunk_type,
+                    pc.section_id, pc.section_path, pc.parent_section_id,
+                    pc.page_start, pc.page_end,
+                    pc.content, pc.embedding_content, pc.token_count,
+                    pc.source_block_ids, pc.chunk_metadata, pc.context_before, pc.context_after,
+                    LAG(pc.chunk_uuid) OVER (ORDER BY pc.chunk_index) AS previous_chunk_id,
+                    LEAD(pc.chunk_uuid) OVER (ORDER BY pc.chunk_index) AS next_chunk_id,
+                    pc.embedding_status, pc.embedding_model
+                FROM paper_chunks pc
+                WHERE pc.tenant_id=:tenant_id AND pc.user_id=:user_id
+                    AND pc.content_uuid=:content_uuid
+                ORDER BY pc.chunk_index"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "content_uuid": content_uuid},
+        )
+
+        pages = []
+        for page in page_result.mappings().all():
+            pages.append(
+                {
+                    "page_number": int(page["page_number"]),
+                    "text": str(page.get("text") or ""),
+                    "quality_status": str(page.get("quality_status") or ""),
+                    "extraction_method": str(page.get("extraction_method") or ""),
+                    "blocks": list(_json_value(page.get("blocks"), [])),
+                }
+            )
+        sections = []
+        for section in section_result.mappings().all():
+            sections.append(
+                {
+                    "section_id": str(section["section_id"]),
+                    "index": int(section["section_index"]),
+                    "kind": str(section.get("kind") or ""),
+                    "title": str(section.get("title") or ""),
+                    "page_start": int(section.get("page_start") or 1),
+                    "page_end": int(section.get("page_end") or 1),
+                    "content": str(section.get("content") or ""),
+                }
+            )
+        chunks = []
+        for chunk in chunk_result.mappings().all():
+            content = str(chunk.get("content") or "")
+            chunks.append(
+                {
+                    "id": str(chunk["chunk_uuid"]),
+                    "index": int(chunk["chunk_index"]),
+                    "type": str(chunk.get("chunk_type") or "prose"),
+                    "section_id": str(chunk.get("section_id") or ""),
+                    "section_path": str(chunk.get("section_path") or ""),
+                    "parent_section_id": str(chunk.get("parent_section_id") or ""),
+                    "page_start": int(chunk["page_start"]) if chunk.get("page_start") is not None else None,
+                    "page_end": int(chunk["page_end"]) if chunk.get("page_end") is not None else None,
+                    "content": content,
+                    "embedding_content": str(chunk.get("embedding_content") or ""),
+                    "character_count": len(content),
+                    "token_count": int(chunk.get("token_count") or 0),
+                    "source_block_ids": list(_json_value(chunk.get("source_block_ids"), [])),
+                    "metadata": _json_mapping(chunk.get("chunk_metadata")),
+                    "context_before": str(chunk.get("context_before") or ""),
+                    "context_after": str(chunk.get("context_after") or ""),
+                    "previous_chunk_id": (
+                        str(chunk["previous_chunk_id"])
+                        if chunk.get("previous_chunk_id") is not None
+                        else None
+                    ),
+                    "next_chunk_id": (
+                        str(chunk["next_chunk_id"])
+                        if chunk.get("next_chunk_id") is not None
+                        else None
+                    ),
+                    "embedding_status": str(chunk.get("embedding_status") or "pending"),
+                    "embedding_model": str(chunk.get("embedding_model") or ""),
+                }
+            )
+        manifest = _json_mapping(row.get("parse_manifest"))
+        assets = inventory_from_manifest(manifest)
+        return {
+            "paper_id": str(row["paper_id"]),
+            "content_version": int(row.get("content_version") or 0),
+            "parser": {
+                "name": str(row.get("parser_name") or ""),
+                "version": str(row.get("parser_version") or ""),
+                "status": str(row.get("parse_status") or ""),
+            },
+            "chunker": {
+                "strategy": str(row.get("chunk_strategy") or ""),
+                "version": str(row.get("chunker_version") or ""),
+            },
+            "manifest": manifest,
+            "assets": assets,
+            "pages": pages,
+            "sections": sections,
+            "chunks": chunks,
+        }
+
+    async def list_documents(
+        self, tenant_id: str, user_id: str, *, query: str = "", limit: int = 50
+    ) -> list[dict[str, Any]]:
+        result = await self.session.execute(
+            text(
+                """SELECT p.paper_id, p.source, p.title, p.authors, p.abstract,
+                    pc.full_text, p.published_at, p.normalized_doi AS doi,
+                    p.normalized_arxiv_id AS arxiv_id, p.canonical_url AS url,
+                    p.in_knowledge_base, p.ingestion_status, p.metadata,
+                    pc.parse_status, pc.parser_name, pc.parser_version,
+                    pc.chunk_strategy, pc.chunker_version, pc.extraction_quality,
+                    pc.parse_manifest,
+                    COALESCE((SELECT COUNT(*) FROM paper_pages pp
+                        WHERE pp.content_uuid=pc.content_uuid AND pp.tenant_id=pc.tenant_id
+                          AND pp.user_id=pc.user_id), 0) AS page_count,
+                    COALESCE((SELECT COUNT(*) FROM paper_sections ps
+                        WHERE ps.content_uuid=pc.content_uuid AND ps.tenant_id=pc.tenant_id
+                          AND ps.user_id=pc.user_id), 0) AS section_count,
+                    asset.file_uri, asset.file_name, asset.mime_type, asset.file_size
+                FROM papers p
+                LEFT JOIN paper_contents pc ON pc.paper_uuid=p.paper_uuid
+                    AND pc.tenant_id=p.tenant_id AND pc.user_id=p.user_id
+                    AND pc.content_version=p.current_content_version
+                LEFT JOIN LATERAL (
+                    SELECT file_uri, file_name, mime_type, file_size FROM paper_assets a
+                    WHERE a.paper_uuid=p.paper_uuid AND a.tenant_id=p.tenant_id AND a.user_id=p.user_id
+                    ORDER BY a.created_at DESC LIMIT 1
+                ) asset ON true
+                WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id AND p.deleted_at IS NULL
+                    AND (:query='' OR p.paper_id ILIKE :pattern OR p.title ILIKE :pattern
+                         OR p.abstract ILIKE :pattern)
+                ORDER BY p.updated_at DESC LIMIT :limit"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "query": query.strip(),
+                "pattern": f"%{query.strip()}%",
+                "limit": max(1, min(limit, 200)),
+            },
+        )
+        documents: list[dict[str, Any]] = []
+        for row in result.mappings().all():
+            authors = row.get("authors") or []
+            metadata = dict(row.get("metadata") or {})
+            if row.get("file_uri"):
+                metadata.update(
+                    {
+                        "file_path": row["file_uri"],
+                        "file_name": row.get("file_name"),
+                        "content_type": row.get("mime_type"),
+                        "content_length": row.get("file_size"),
+                    }
+                )
+            published_at = row.get("published_at")
+            documents.append(
+                {
+                    "paper_id": row["paper_id"],
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "source": row["source"],
+                    "title": row["title"],
+                    "authors": list(authors),
+                    "abstract": row.get("abstract") or "",
+                    "full_text": row.get("full_text") or "",
+                    "published_at": published_at.isoformat() if hasattr(published_at, "isoformat") else published_at,
+                    "doi": row.get("doi"),
+                    "arxiv_id": row.get("arxiv_id"),
+                    "url": row.get("url"),
+                    "file_path": row.get("file_uri") or "",
+                    "in_knowledge_base": bool(row.get("in_knowledge_base")),
+                    "ingestion_status": row.get("ingestion_status"),
+                    "parsing": {
+                        "status": row.get("parse_status"),
+                        "parser_name": row.get("parser_name"),
+                        "parser_version": row.get("parser_version"),
+                        "chunk_strategy": row.get("chunk_strategy"),
+                        "chunker_version": row.get("chunker_version"),
+                        "quality_score": row.get("extraction_quality"),
+                        "page_count": int(row.get("page_count") or 0),
+                        "section_count": int(row.get("section_count") or 0),
+                        "manifest": dict(row.get("parse_manifest") or {}),
+                    },
+                    "metadata": metadata,
+                }
+            )
+        return documents
+
+    async def save(self, tenant_id: str, user_id: str, paper: PaperInput) -> PaperRecord:
+        result = await self.session.execute(
+            text(
+                """INSERT INTO papers (
+                    tenant_id, user_id, paper_id, source, source_identifier, normalized_doi,
+                    normalized_arxiv_id, title, authors, abstract, published_at, canonical_url,
+                    in_knowledge_base, ingestion_status, metadata
+                ) VALUES (
+                    :tenant_id, :user_id, :paper_id, :source, :source_identifier, :doi,
+                    :arxiv_id, :title, CAST(:authors AS jsonb), :abstract, :published_at, :url,
+                    :in_kb, :status, CAST(:metadata AS jsonb)
+                ) ON CONFLICT (tenant_id, user_id, paper_id) DO UPDATE SET
+                    source=EXCLUDED.source, source_identifier=EXCLUDED.source_identifier,
+                    normalized_doi=EXCLUDED.normalized_doi,
+                    normalized_arxiv_id=EXCLUDED.normalized_arxiv_id, title=EXCLUDED.title,
+                    authors=EXCLUDED.authors, abstract=EXCLUDED.abstract,
+                    published_at=EXCLUDED.published_at, canonical_url=EXCLUDED.canonical_url,
+                    in_knowledge_base=EXCLUDED.in_knowledge_base, metadata=EXCLUDED.metadata,
+                    updated_at=now(), deleted_at=NULL
+                RETURNING """ + _PAPER_COLUMNS
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_id": paper.paper_id.strip(),
+                "source": paper.source.strip(),
+                "source_identifier": normalize_doi(paper.doi) or normalize_arxiv_id(paper.arxiv_id),
+                "doi": normalize_doi(paper.doi),
+                "arxiv_id": normalize_arxiv_id(paper.arxiv_id),
+                "title": paper.title.strip(),
+                "authors": json.dumps(list(paper.authors), ensure_ascii=False),
+                "abstract": paper.abstract,
+                "published_at": paper.published_at,
+                "url": paper.url,
+                "in_kb": paper.in_knowledge_base,
+                "status": "metadata_only",
+                "metadata": json.dumps(dict(paper.metadata), ensure_ascii=False),
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            raise RuntimeError("paper upsert returned no row")
+        return self._record(row)
+
+    async def merge_extracted_metadata(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        paper: PaperInput,
+    ) -> PaperRecord:
+        """Merge parser-owned metadata without overwriting user-editable fields."""
+
+        current_result = await self.session.execute(
+            text(
+                """SELECT metadata FROM papers
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND deleted_at IS NULL
+                FOR UPDATE"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+            },
+        )
+        current_row = current_result.mappings().first()
+        if current_row is None:
+            raise KeyError("paper not found")
+        parser_metadata = _merge_parser_metadata(
+            _json_mapping(current_row.get("metadata")), dict(paper.metadata)
+        )
+        result = await self.session.execute(
+            text(
+                """UPDATE papers SET
+                    title=CASE
+                        WHEN btrim(title)='' OR title=paper_id THEN :title
+                        ELSE title
+                    END,
+                    authors=CASE
+                        WHEN jsonb_array_length(authors)=0 THEN CAST(:authors AS jsonb)
+                        ELSE authors
+                    END,
+                    published_at=COALESCE(published_at, :published_at),
+                    normalized_doi=COALESCE(normalized_doi, :doi),
+                    normalized_arxiv_id=COALESCE(normalized_arxiv_id, :arxiv_id),
+                    metadata=metadata || CAST(:metadata AS jsonb),
+                    updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND deleted_at IS NULL
+                RETURNING """ + _PAPER_COLUMNS
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "title": paper.title.strip(),
+                "authors": json.dumps(list(paper.authors), ensure_ascii=False),
+                "published_at": paper.published_at,
+                "doi": normalize_doi(paper.doi),
+                "arxiv_id": normalize_arxiv_id(paper.arxiv_id),
+                "metadata": json.dumps(parser_metadata, ensure_ascii=False),
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            raise KeyError("paper not found")
+        return self._record(row)
+
+    async def update_bibliography(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_id: str,
+        *,
+        title: str,
+        authors: Sequence[str],
+        published_at: str | None,
+        doi: str | None,
+        arxiv_id: str | None,
+        metadata: Mapping[str, Any],
+    ) -> bool:
+        """Update paper-level bibliography without replacing parsed content or vectors."""
+
+        result = await self.session.execute(
+            text(
+                """UPDATE papers SET
+                    title=:title,
+                    authors=CAST(:authors AS jsonb),
+                    published_at=:published_at,
+                    normalized_doi=:doi,
+                    normalized_arxiv_id=:arxiv_id,
+                    metadata=CAST(:metadata AS jsonb),
+                    updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_id=:paper_id
+                    AND deleted_at IS NULL
+                RETURNING paper_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_id": paper_id,
+                "title": title.strip(),
+                "authors": json.dumps(list(authors), ensure_ascii=False),
+                "published_at": published_at,
+                "doi": normalize_doi(doi),
+                "arxiv_id": normalize_arxiv_id(arxiv_id),
+                "metadata": json.dumps(dict(metadata), ensure_ascii=False),
+            },
+        )
+        return result.mappings().first() is not None
+
+    async def set_knowledge_base(
+        self, tenant_id: str, user_id: str, paper_id: str, enabled: bool
+    ) -> bool:
+        result = await self.session.execute(
+            text(
+                "UPDATE papers SET in_knowledge_base=:enabled, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_id=:paper_id "
+                "AND deleted_at IS NULL RETURNING paper_uuid"
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_id": paper_id, "enabled": enabled},
+        )
+        return result.first() is not None
+
+    async def soft_delete(self, tenant_id: str, user_id: str, paper_id: str) -> bool:
+        result = await self.session.execute(
+            text(
+                "UPDATE papers SET deleted_at=now(), in_knowledge_base=false, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_id=:paper_id "
+                "AND deleted_at IS NULL RETURNING paper_uuid"
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_id": paper_id},
+        )
+        row = result.mappings().first()
+        if row is None:
+            return False
+        await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status='failed', completed_at=now(), locked_at=NULL,
+                    locked_by=NULL, lease_token=NULL,
+                    last_error='paper deleted while PDF ingestion was active', updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND job_type='ingest_pdf'
+                  AND status IN ('pending','retry','running')"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": row["paper_uuid"],
+            },
+        )
+        return True
+
+    async def replace_content(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID,
+        full_text: str,
+        content_hash: str,
+        chunks: Sequence[ChunkDraft],
+        *,
+        extraction_method: str,
+        parsed: ParsedPaper | None = None,
+        parser_name: str = "legacy_fixed",
+        parser_version: str = "1",
+        chunk_strategy: str = "legacy_fixed",
+        chunker_version: str = "1",
+        ingestion_generation: UUID | str | None = None,
+    ) -> ContentVersion:
+        locked = await self.session.execute(
+            text(
+                "SELECT current_content_version FROM papers WHERE tenant_id=:tenant_id "
+                "AND user_id=:user_id AND paper_uuid=:paper_uuid AND deleted_at IS NULL FOR UPDATE"
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
+        )
+        row = locked.mappings().first()
+        if row is None:
+            raise KeyError("paper not found")
+        if ingestion_generation is not None:
+            existing = await self.content_version_for_generation(
+                tenant_id, user_id, paper_uuid, ingestion_generation
+            )
+            if existing is not None:
+                return existing
+        version = int(row["current_content_version"]) + 1
+        inserted = await self.session.execute(
+            text(
+                """INSERT INTO paper_contents (
+                    tenant_id, user_id, paper_uuid, content_version, full_text, content_hash,
+                    language, extraction_method, extraction_quality, parser_name, parser_version,
+                    chunk_strategy, chunker_version, parse_status, parse_manifest,
+                    ingestion_generation
+                ) VALUES (
+                    :tenant_id, :user_id, :paper_uuid, :version, :full_text, :content_hash,
+                    :language, :extraction_method, :extraction_quality, :parser_name, :parser_version,
+                    :chunk_strategy, :chunker_version, :parse_status,
+                    CAST(:parse_manifest AS jsonb), :ingestion_generation
+                ) RETURNING content_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "version": version,
+                "full_text": full_text,
+                "content_hash": content_hash,
+                "extraction_method": extraction_method,
+                "language": str((parsed.metadata if parsed else {}).get("language") or "") or None,
+                "extraction_quality": parsed.quality_score if parsed else None,
+                "parser_name": parser_name,
+                "parser_version": parser_version,
+                "chunk_strategy": chunk_strategy,
+                "chunker_version": chunker_version,
+                "parse_status": parsed.status if parsed else "ready",
+                "parse_manifest": json.dumps(parsed.to_manifest() if parsed else {}, ensure_ascii=False),
+                "ingestion_generation": ingestion_generation,
+            },
+        )
+        content_uuid = inserted.scalar_one()
+        if parsed is not None:
+            for page in parsed.pages:
+                await self.session.execute(
+                    text(
+                        """INSERT INTO paper_pages (
+                            tenant_id, user_id, paper_uuid, content_uuid, content_version,
+                            page_number, text, text_hash, extraction_method, quality_status,
+                            searchable_chars, blocks
+                        ) VALUES (
+                            :tenant_id, :user_id, :paper_uuid, :content_uuid, :version,
+                            :page_number, :text, :text_hash, :page_extraction_method,
+                            :quality_status, :searchable_chars, CAST(:blocks AS jsonb))"""
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "paper_uuid": paper_uuid,
+                        "content_uuid": content_uuid,
+                        "version": version,
+                        "page_number": page.page_number,
+                        "text": page.text,
+                        "text_hash": page.text_hash,
+                        "page_extraction_method": page.extraction_method,
+                        "quality_status": page.quality_status,
+                        "searchable_chars": page.searchable_chars,
+                        "blocks": json.dumps([block.to_dict() for block in page.blocks], ensure_ascii=False),
+                    },
+                )
+            for section in parsed.sections:
+                await self.session.execute(
+                    text(
+                        """INSERT INTO paper_sections (
+                            tenant_id, user_id, paper_uuid, content_uuid, content_version,
+                            section_id, section_index, kind, title, page_start, page_end,
+                            content, char_count, char_start, char_end, text_hash
+                        ) VALUES (
+                            :tenant_id, :user_id, :paper_uuid, :content_uuid, :version,
+                            :section_id, :section_index, :kind, :title, :page_start, :page_end,
+                            :content, :char_count, :char_start, :char_end, :text_hash)"""
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "paper_uuid": paper_uuid,
+                        "content_uuid": content_uuid,
+                        "version": version,
+                        "section_id": section.section_id,
+                        "section_index": section.index,
+                        "kind": section.kind,
+                        "title": section.title,
+                        "page_start": section.page_start,
+                        "page_end": section.page_end,
+                        "content": section.text,
+                        "char_count": len(section.text),
+                        "char_start": section.char_start,
+                        "char_end": section.char_end,
+                        "text_hash": section.text_hash,
+                    },
+                )
+        for chunk in chunks:
+            await self.session.execute(
+                text(
+                    """INSERT INTO paper_chunks (
+                        tenant_id, user_id, paper_uuid, content_uuid, content_version,
+                        chunk_index, section_id, section_path, page_start, page_end,
+                        char_start, char_end, content, content_hash, token_count,
+                        chunk_type, parent_section_id, source_block_ids,
+                        context_before, context_after, embedding_content, chunk_metadata
+                    ) VALUES (
+                        :tenant_id, :user_id, :paper_uuid, :content_uuid, :version,
+                        :position, :section_id, :section_path, :page_start, :page_end,
+                        :char_start, :char_end, :content, :content_hash, :token_count,
+                        :chunk_type, :parent_section_id, CAST(:source_block_ids AS jsonb),
+                        :context_before, :context_after, :embedding_content,
+                        CAST(:chunk_metadata AS jsonb))"""
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "paper_uuid": paper_uuid,
+                    "content_uuid": content_uuid,
+                    "version": version,
+                    "position": chunk.position,
+                    "section_id": chunk.section_id,
+                    "section_path": chunk.section_path,
+                    "page_start": chunk.page_start,
+                    "page_end": chunk.page_end,
+                    "char_start": chunk.char_start,
+                    "char_end": chunk.char_end,
+                    "content": chunk.content,
+                    "content_hash": chunk.content_hash,
+                    "token_count": chunk.token_count,
+                    "chunk_type": chunk.chunk_type,
+                    "parent_section_id": chunk.parent_section_id,
+                    "source_block_ids": json.dumps(list(chunk.source_block_ids), ensure_ascii=False),
+                    "context_before": chunk.context_before,
+                    "context_after": chunk.context_after,
+                    "embedding_content": chunk.embedding_content,
+                    "chunk_metadata": json.dumps(dict(chunk.metadata), ensure_ascii=False),
+                },
+            )
+        await self.session.execute(
+            text(
+                "UPDATE papers SET current_content_version=:version, ingestion_status='embedding', "
+                "ingestion_generation=:ingestion_generation, last_error=NULL, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id "
+                "AND paper_uuid=:paper_uuid"
+            ),
+            {
+                "version": version,
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "ingestion_generation": ingestion_generation,
+            },
+        )
+        return ContentVersion(
+            paper_uuid,
+            content_uuid,
+            version,
+            len(chunks),
+            parsed.status if parsed else "ready",
+            parser_name,
+            parser_version,
+            chunk_strategy,
+            chunker_version,
+        )
+
+    async def content_version_for_generation(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        ingestion_generation: UUID | str,
+    ) -> ContentVersion | None:
+        result = await self.session.execute(
+            text(
+                """SELECT pc.content_uuid, pc.content_version, pc.parse_status,
+                    pc.parser_name, pc.parser_version, pc.chunk_strategy,
+                    pc.chunker_version, COUNT(c.chunk_uuid) AS chunk_count
+                FROM paper_contents pc
+                JOIN papers p ON p.tenant_id=pc.tenant_id AND p.user_id=pc.user_id
+                    AND p.paper_uuid=pc.paper_uuid
+                LEFT JOIN paper_chunks c ON c.tenant_id=pc.tenant_id
+                    AND c.user_id=pc.user_id AND c.paper_uuid=pc.paper_uuid
+                    AND c.content_uuid=pc.content_uuid
+                WHERE pc.tenant_id=:tenant_id AND pc.user_id=:user_id
+                  AND pc.paper_uuid=:paper_uuid
+                  AND pc.ingestion_generation=:ingestion_generation
+                  AND p.deleted_at IS NULL
+                GROUP BY pc.content_uuid, pc.content_version, pc.parse_status,
+                    pc.parser_name, pc.parser_version, pc.chunk_strategy,
+                    pc.chunker_version"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "ingestion_generation": ingestion_generation,
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return ContentVersion(
+            paper_uuid=UUID(str(paper_uuid)),
+            content_uuid=UUID(str(row["content_uuid"])),
+            content_version=int(row["content_version"]),
+            chunk_count=int(row.get("chunk_count") or 0),
+            parse_status=str(row.get("parse_status") or "ready"),
+            parser_name=str(row.get("parser_name") or "legacy_fixed"),
+            parser_version=str(row.get("parser_version") or "1"),
+            chunk_strategy=str(row.get("chunk_strategy") or "legacy_fixed"),
+            chunker_version=str(row.get("chunker_version") or "1"),
+        )
+
+    async def content_embeddings_ready(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        content_uuid: UUID | str,
+        *,
+        model: str,
+    ) -> bool:
+        result = await self.session.execute(
+            text(
+                """SELECT COUNT(*) AS total,
+                    COUNT(*) FILTER (
+                        WHERE embedding_status='ready' AND embedding IS NOT NULL
+                          AND embedding_model=:model
+                    ) AS ready
+                FROM paper_chunks
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND content_uuid=:content_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "content_uuid": content_uuid,
+                "model": model,
+            },
+        )
+        row = result.mappings().first() or {}
+        total = int(row.get("total") or 0)
+        return total > 0 and int(row.get("ready") or 0) == total
+
+    async def save_asset(self, tenant_id: str, user_id: str, paper_uuid: UUID, paper: PaperInput) -> None:
+        if not paper.file_uri:
+            return
+        if not paper.file_sha256 or paper.file_size is None or not paper.mime_type:
+            raise ValueError("file_uri requires file_sha256, file_size, and mime_type")
+        await self.session.execute(
+            text(
+                """INSERT INTO paper_assets (
+                    tenant_id, user_id, paper_uuid, file_uri, file_name, mime_type,
+                    sha256, file_size, validation_status
+                ) VALUES (
+                    :tenant_id, :user_id, :paper_uuid, :file_uri, :file_name, :mime_type,
+                    :sha256, :file_size, 'valid'
+                ) ON CONFLICT (tenant_id, user_id, sha256) DO UPDATE SET
+                    paper_uuid=EXCLUDED.paper_uuid, file_uri=EXCLUDED.file_uri,
+                    file_name=EXCLUDED.file_name, mime_type=EXCLUDED.mime_type,
+                    file_size=EXCLUDED.file_size, validation_status='valid', updated_at=now()"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "file_uri": paper.file_uri,
+                "file_name": paper.file_name or paper.file_uri.rsplit("/", 1)[-1],
+                "mime_type": paper.mime_type,
+                "sha256": paper.file_sha256,
+                "file_size": paper.file_size,
+            },
+        )
+
+    async def set_embeddings(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID,
+        content_uuid: UUID,
+        embeddings: Sequence[Sequence[float]],
+        *,
+        model: str,
+    ) -> None:
+        for position, embedding in enumerate(embeddings):
+            vector = "[" + ",".join(format(float(value), ".9g") for value in embedding) + "]"
+            await self.session.execute(
+                text(
+                    "UPDATE paper_chunks SET embedding=CAST(:embedding AS vector), "
+                    "embedding_model=:model, embedding_status='ready', embedding_error=NULL, updated_at=now() "
+                    "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid "
+                    "AND content_uuid=:content_uuid AND chunk_index=:position"
+                ),
+                {
+                    "embedding": vector,
+                    "model": model,
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "paper_uuid": paper_uuid,
+                    "content_uuid": content_uuid,
+                    "position": position,
+                },
+            )
+        await self.session.execute(
+            text(
+                "UPDATE papers SET ingestion_status='ready', last_error=NULL, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid"
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
+        )
+
+    async def mark_embedding_failed(
+        self, tenant_id: str, user_id: str, paper_uuid: UUID, content_uuid: UUID, error: str
+    ) -> None:
+        await self.session.execute(
+            text(
+                "UPDATE paper_chunks SET embedding_status='failed', embedding_error=:error, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid "
+                "AND content_uuid=:content_uuid"
+            ),
+            {
+                "error": error[:4000],
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "content_uuid": content_uuid,
+            },
+        )
+        await self.session.execute(
+            text(
+                "UPDATE papers SET ingestion_status='failed', last_error=:error, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid"
+            ),
+            {"error": error[:4000], "tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
+        )
+
+    async def mark_parsing_failed(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        error: str,
+        *,
+        expected_generation: UUID | str | None = None,
+    ) -> bool:
+        result = await self.session.execute(
+            text(
+                "UPDATE papers SET ingestion_status='failed', last_error=:error, updated_at=now() "
+                "WHERE tenant_id=:tenant_id AND user_id=:user_id AND paper_uuid=:paper_uuid "
+                "AND deleted_at IS NULL "
+                "AND (:expected_generation IS NULL OR ingestion_generation=:expected_generation) "
+                "RETURNING paper_uuid"
+            ),
+            {
+                "error": error[:4000],
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "expected_generation": expected_generation,
+            },
+        )
+        return result.mappings().first() is not None
+
+    async def mark_embeddings_stale(
+        self, tenant_id: str, user_id: str, active_model: str, *, force: bool = False
+    ) -> int:
+        result = await self.session.execute(
+            text(
+                """UPDATE paper_chunks c
+                SET embedding=NULL, embedding_status='stale', embedding_error=NULL, updated_at=now()
+                FROM papers p
+                WHERE c.paper_uuid=p.paper_uuid
+                  AND c.tenant_id=p.tenant_id AND c.user_id=p.user_id
+                  AND c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version
+                  AND c.embedding_status='ready'
+                  AND (:force OR c.embedding_model IS DISTINCT FROM :active_model)"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "active_model": active_model,
+                "force": force,
+            },
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def embedding_stats(
+        self, tenant_id: str, user_id: str, active_model: str
+    ) -> dict[str, int]:
+        result = await self.session.execute(
+            text(
+                """SELECT
+                    COUNT(*) FILTER (
+                        WHERE c.embedding_status='ready'
+                          AND c.embedding_model=:active_model
+                          AND c.embedding IS NOT NULL
+                    ) AS ready,
+                    COUNT(*) FILTER (
+                        WHERE c.embedding_status='stale'
+                           OR (c.embedding_status='ready'
+                               AND c.embedding_model IS DISTINCT FROM :active_model)
+                    ) AS stale,
+                    COUNT(*) FILTER (WHERE c.embedding_status='failed') AS failed,
+                    COUNT(*) FILTER (WHERE c.embedding_status='pending') AS pending
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "active_model": active_model},
+        )
+        row = result.mappings().first() or {}
+        return {
+            key: int(row.get(key) or 0)
+            for key in ("ready", "stale", "failed", "pending")
+        }
+
+    async def enqueue_reembedding_jobs(
+        self, tenant_id: str, user_id: str
+    ) -> dict[str, int]:
+        existing_result = await self.session.execute(
+            text(
+                """SELECT COUNT(DISTINCT c.paper_uuid) AS existing
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version
+                  AND c.embedding_status IN ('stale','failed')
+                  AND EXISTS (
+                      SELECT 1 FROM paper_ingestion_jobs j
+                      WHERE j.tenant_id=c.tenant_id AND j.user_id=c.user_id
+                        AND j.paper_uuid=c.paper_uuid AND j.job_type='reembed'
+                        AND j.status IN ('pending','running','retry')
+                  )"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id},
+        )
+        existing_row = existing_result.mappings().first() or {}
+        inserted = await self.session.execute(
+            text(
+                """INSERT INTO paper_ingestion_jobs (
+                    tenant_id, user_id, paper_uuid, job_type, status, payload
+                )
+                SELECT DISTINCT c.tenant_id, c.user_id, c.paper_uuid,
+                    'reembed', 'pending', '{}'::jsonb
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version
+                  AND c.embedding_status IN ('stale','failed')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM paper_ingestion_jobs j
+                      WHERE j.tenant_id=c.tenant_id AND j.user_id=c.user_id
+                        AND j.paper_uuid=c.paper_uuid AND j.job_type='reembed'
+                        AND j.status IN ('pending','running','retry')
+                  )
+                ON CONFLICT DO NOTHING
+                RETURNING job_uuid"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id},
+        )
+        created = len(inserted.mappings().all())
+        return {"created": created, "existing": int(existing_row.get("existing") or 0)}
+
+    async def enqueue_pdf_ingestion_job(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        payload: Mapping[str, Any],
+        *,
+        asset_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Create or replace the one waiting generation for a tenant paper."""
+
+        generation_uuid = uuid4()
+        # All enqueue/failure paths lock the paper first, then the job row.  This
+        # keeps their lock order identical when an old worker fails while a new
+        # upload creates its successor generation.
+        await self.session.execute(
+            text(
+                """SELECT paper_uuid FROM papers
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND deleted_at IS NULL
+                FOR UPDATE"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+            },
+        )
+        await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status='failed', completed_at=now(), locked_at=NULL,
+                    locked_by=NULL, lease_token=NULL,
+                    last_error='superseded by a newer PDF upload', updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND job_type='ingest_pdf'
+                  AND status='running' AND generation_uuid<>:generation_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "generation_uuid": generation_uuid,
+            },
+        )
+        result = await self.session.execute(
+            text(
+                """INSERT INTO paper_ingestion_jobs AS jobs (
+                    tenant_id, user_id, paper_uuid, job_type, status, payload,
+                    generation_uuid, asset_sha256
+                ) VALUES (
+                    :tenant_id, :user_id, :paper_uuid, 'ingest_pdf', 'pending',
+                    CAST(:payload AS jsonb), :generation_uuid, :asset_sha256
+                )
+                ON CONFLICT (tenant_id, user_id, paper_uuid, job_type)
+                    WHERE job_type='ingest_pdf'
+                      AND status IN ('pending','retry')
+                DO UPDATE SET
+                    payload=EXCLUDED.payload,
+                    generation_uuid=EXCLUDED.generation_uuid,
+                    asset_sha256=EXCLUDED.asset_sha256,
+                    status='pending', available_at=now(), attempt_count=0,
+                    last_error=NULL, completed_at=NULL,
+                    updated_at=now()
+                RETURNING jobs.job_uuid, jobs.status, jobs.generation_uuid,
+                    jobs.asset_sha256"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "payload": json.dumps(dict(payload), ensure_ascii=False),
+                "asset_sha256": asset_sha256,
+                "generation_uuid": generation_uuid,
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            raise RuntimeError("PDF ingestion job upsert returned no row")
+        await self.session.execute(
+            text(
+                """UPDATE papers
+                SET ingestion_status='parsing', last_error=NULL,
+                    ingestion_generation=:generation_uuid, updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid AND deleted_at IS NULL"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "generation_uuid": row["generation_uuid"],
+            },
+        )
+        return dict(row)
+
+    async def list_worker_scopes(self) -> list[tuple[str, str]]:
+        result = await self.session.execute(
+            text(
+                "SELECT tenant_id, user_id FROM scholar_users "
+                "WHERE status='active' ORDER BY tenant_id, user_id"
+            )
+        )
+        return [
+            (str(row["tenant_id"]), str(row["user_id"]))
+            for row in result.mappings().all()
+        ]
+
+    async def claim_reembedding_job(
+        self, worker_id: str, tenant_id: str, user_id: str
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            text(
+                """WITH candidate AS (
+                    SELECT job_uuid
+                    FROM paper_ingestion_jobs
+                    WHERE tenant_id=:tenant_id AND user_id=:user_id
+                      AND job_type='reembed'
+                      AND status IN ('pending','retry')
+                      AND available_at <= now()
+                    ORDER BY created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE paper_ingestion_jobs j
+                SET status='running', locked_at=now(), locked_by=:worker_id,
+                    lease_token=gen_random_uuid(),
+                    attempt_count=j.attempt_count + 1, updated_at=now()
+                FROM candidate
+                WHERE j.job_uuid=candidate.job_uuid
+                RETURNING j.job_uuid, j.tenant_id, j.user_id, j.paper_uuid,
+                    j.attempt_count, j.max_attempts, j.locked_by, j.lease_token"""
+            ),
+            {"worker_id": worker_id, "tenant_id": tenant_id, "user_id": user_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def claim_pdf_ingestion_job(
+        self, worker_id: str, tenant_id: str, user_id: str
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            text(
+                """WITH candidate AS (
+                    SELECT j.job_uuid
+                    FROM paper_ingestion_jobs j
+                    JOIN papers p ON p.tenant_id=j.tenant_id AND p.user_id=j.user_id
+                        AND p.paper_uuid=j.paper_uuid
+                    WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                      AND j.job_type='ingest_pdf' AND p.deleted_at IS NULL
+                      AND p.ingestion_generation=j.generation_uuid
+                      AND (
+                          (j.status IN ('pending','retry') AND j.available_at <= now())
+                          OR (j.status='running'
+                              AND j.locked_at < now() - interval '2 hours')
+                      )
+                    ORDER BY j.created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE paper_ingestion_jobs j
+                SET status='running', locked_at=now(), locked_by=:worker_id,
+                    lease_token=gen_random_uuid(),
+                    attempt_count=j.attempt_count + 1, updated_at=now()
+                FROM candidate
+                WHERE j.job_uuid=candidate.job_uuid
+                RETURNING j.job_uuid, j.tenant_id, j.user_id, j.paper_uuid,
+                    j.attempt_count, j.max_attempts, j.payload,
+                    j.generation_uuid, j.asset_sha256, j.locked_by, j.lease_token"""
+            ),
+            {"worker_id": worker_id, "tenant_id": tenant_id, "user_id": user_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def load_pdf_ingestion_input(
+        self,
+        tenant_id: str,
+        user_id: str,
+        job: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            text(
+                """SELECT p.paper_id, p.source, p.title, p.authors, p.abstract,
+                    p.published_at, p.normalized_doi AS doi,
+                    p.normalized_arxiv_id AS arxiv_id, p.canonical_url AS url,
+                    p.in_knowledge_base, p.metadata, a.file_uri, a.file_name,
+                    a.mime_type, a.sha256 AS file_sha256, a.file_size
+                FROM paper_ingestion_jobs j
+                JOIN papers p ON p.tenant_id=j.tenant_id AND p.user_id=j.user_id
+                    AND p.paper_uuid=j.paper_uuid
+                JOIN paper_assets a ON a.tenant_id=j.tenant_id AND a.user_id=j.user_id
+                    AND a.paper_uuid=j.paper_uuid AND a.sha256=j.asset_sha256
+                WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                  AND j.job_uuid=:job_uuid AND j.status='running'
+                  AND j.locked_by=:locked_by AND j.lease_token=:lease_token
+                  AND p.deleted_at IS NULL
+                  AND p.ingestion_generation=j.generation_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+            },
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def assert_pdf_ingestion_claim(
+        self,
+        tenant_id: str,
+        user_id: str,
+        job: Mapping[str, Any],
+    ) -> None:
+        await self.session.execute(
+            text(
+                """SELECT paper_uuid FROM papers
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid
+                FOR UPDATE"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": job["paper_uuid"],
+            },
+        )
+        result = await self.session.execute(
+            text(
+                """SELECT j.job_uuid
+                FROM paper_ingestion_jobs j
+                JOIN papers p ON p.tenant_id=j.tenant_id AND p.user_id=j.user_id
+                    AND p.paper_uuid=j.paper_uuid
+                JOIN paper_assets a ON a.tenant_id=j.tenant_id AND a.user_id=j.user_id
+                    AND a.paper_uuid=j.paper_uuid AND a.sha256=j.asset_sha256
+                WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                  AND j.job_uuid=:job_uuid AND j.status='running'
+                  AND j.locked_by=:locked_by AND j.lease_token=:lease_token
+                  AND p.deleted_at IS NULL
+                  AND p.ingestion_generation=j.generation_uuid
+                FOR UPDATE OF j"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+            },
+        )
+        if result.mappings().first() is None:
+            raise RuntimeError("PDF ingestion generation or worker lease is no longer current")
+
+    async def refresh_ingestion_job_lease(
+        self,
+        tenant_id: str,
+        user_id: str,
+        job: Mapping[str, Any],
+    ) -> bool:
+        result = await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET locked_at=now(), updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND job_uuid=:job_uuid AND status='running'
+                  AND locked_by=:locked_by AND lease_token=:lease_token
+                RETURNING job_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+            },
+        )
+        return result.mappings().first() is not None
+
+    async def current_embedding_batch(
+        self, tenant_id: str, user_id: str, paper_uuid: UUID | str
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            text(
+                """SELECT c.content_uuid, c.chunk_index, c.content,
+                    c.embedding_content, c.section_path, c.section_id,
+                    c.chunk_metadata, p.title
+                FROM paper_chunks c
+                JOIN papers p ON p.paper_uuid=c.paper_uuid
+                    AND p.tenant_id=c.tenant_id AND p.user_id=c.user_id
+                WHERE c.tenant_id=:tenant_id AND c.user_id=:user_id
+                  AND c.paper_uuid=:paper_uuid AND p.deleted_at IS NULL
+                  AND c.content_version=p.current_content_version
+                ORDER BY c.chunk_index"""
+            ),
+            {"tenant_id": tenant_id, "user_id": user_id, "paper_uuid": paper_uuid},
+        )
+        rows = result.mappings().all()
+        if not rows:
+            return None
+        return {
+            "content_uuid": rows[0]["content_uuid"],
+            "chunks": [
+                {
+                    "chunk_index": int(row["chunk_index"]),
+                    "content": str(row["content"]),
+                    "embedding_text": build_embedding_text(
+                        paper_title=str(row.get("title") or ""),
+                        section_path=str(row.get("section_path") or "") or None,
+                        section_id=str(row.get("section_id") or "") or None,
+                        content=str(row["content"]),
+                        embedding_content=str(row.get("embedding_content") or ""),
+                        metadata=_json_mapping(row.get("chunk_metadata")),
+                    ),
+                }
+                for row in rows
+            ],
+        }
+
+    async def embedding_batch_for_content(
+        self,
+        tenant_id: str,
+        user_id: str,
+        paper_uuid: UUID | str,
+        content_uuid: UUID | str,
+    ) -> dict[str, Any] | None:
+        """Load one exact content version only while it remains paper-current."""
+
+        result = await self.session.execute(
+            text(
+                """SELECT pc.content_uuid, pc.chunk_index, pc.content,
+                    pc.embedding_content, pc.section_path, pc.section_id,
+                    pc.chunk_metadata, p.title
+                FROM paper_chunks pc
+                JOIN papers p ON p.paper_uuid=pc.paper_uuid
+                    AND p.tenant_id=pc.tenant_id AND p.user_id=pc.user_id
+                WHERE pc.tenant_id=:tenant_id AND pc.user_id=:user_id
+                  AND pc.paper_uuid=:paper_uuid AND pc.content_uuid=:content_uuid
+                  AND pc.content_version=p.current_content_version
+                  AND p.deleted_at IS NULL
+                ORDER BY pc.chunk_index"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": paper_uuid,
+                "content_uuid": content_uuid,
+            },
+        )
+        rows = result.mappings().all()
+        if not rows:
+            return None
+        return {
+            "content_uuid": rows[0]["content_uuid"],
+            "chunks": [
+                {
+                    "chunk_index": int(row["chunk_index"]),
+                    "content": str(row["content"]),
+                    "embedding_text": build_embedding_text(
+                        paper_title=str(row.get("title") or ""),
+                        section_path=str(row.get("section_path") or "") or None,
+                        section_id=str(row.get("section_id") or "") or None,
+                        content=str(row["content"]),
+                        embedding_content=str(row.get("embedding_content") or ""),
+                        metadata=_json_mapping(row.get("chunk_metadata")),
+                    ),
+                }
+                for row in rows
+            ],
+        }
+
+    async def complete_ingestion_job(
+        self, tenant_id: str, user_id: str, job: Mapping[str, Any]
+    ) -> bool:
+        result = await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status='completed', completed_at=now(), locked_at=NULL,
+                    locked_by=NULL, lease_token=NULL, last_error=NULL, updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND job_uuid=:job_uuid AND status='running'
+                  AND locked_by=:locked_by AND lease_token=:lease_token
+                RETURNING job_uuid"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+            },
+        )
+        return result.mappings().first() is not None
+
+    async def fail_ingestion_job(
+        self,
+        tenant_id: str,
+        user_id: str,
+        job: Mapping[str, Any],
+        error: str,
+    ) -> str | None:
+        retry = int(job.get("attempt_count") or 0) < int(job.get("max_attempts") or 1)
+        await self.session.execute(
+            text(
+                """SELECT paper_uuid FROM papers
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND paper_uuid=:paper_uuid
+                FOR UPDATE"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "paper_uuid": job["paper_uuid"],
+            },
+        )
+        result = await self.session.execute(
+            text(
+                """UPDATE paper_ingestion_jobs
+                SET status=CASE
+                        WHEN :retry AND (
+                            :generation_uuid IS NULL OR EXISTS (
+                                SELECT 1 FROM papers p
+                                WHERE p.tenant_id=paper_ingestion_jobs.tenant_id
+                                  AND p.user_id=paper_ingestion_jobs.user_id
+                                  AND p.paper_uuid=paper_ingestion_jobs.paper_uuid
+                                  AND p.deleted_at IS NULL
+                                  AND p.ingestion_generation=:generation_uuid
+                            )
+                        ) THEN 'retry' ELSE 'failed'
+                    END,
+                    last_error=:error, locked_at=NULL, locked_by=NULL,
+                    lease_token=NULL,
+                    available_at=CASE WHEN :retry AND (
+                        :generation_uuid IS NULL OR EXISTS (
+                            SELECT 1 FROM papers p
+                            WHERE p.tenant_id=paper_ingestion_jobs.tenant_id
+                              AND p.user_id=paper_ingestion_jobs.user_id
+                              AND p.paper_uuid=paper_ingestion_jobs.paper_uuid
+                              AND p.deleted_at IS NULL
+                              AND p.ingestion_generation=:generation_uuid
+                        )
+                    ) THEN now() + interval '1 minute' ELSE available_at END,
+                    completed_at=CASE WHEN :retry AND (
+                        :generation_uuid IS NULL OR EXISTS (
+                            SELECT 1 FROM papers p
+                            WHERE p.tenant_id=paper_ingestion_jobs.tenant_id
+                              AND p.user_id=paper_ingestion_jobs.user_id
+                              AND p.paper_uuid=paper_ingestion_jobs.paper_uuid
+                              AND p.deleted_at IS NULL
+                              AND p.ingestion_generation=:generation_uuid
+                        )
+                    ) THEN NULL ELSE now() END,
+                    updated_at=now()
+                WHERE tenant_id=:tenant_id AND user_id=:user_id
+                  AND job_uuid=:job_uuid AND status='running'
+                  AND locked_by=:locked_by AND lease_token=:lease_token
+                RETURNING status"""
+            ),
+            {
+                "retry": retry,
+                "error": error[:4000],
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "job_uuid": job["job_uuid"],
+                "locked_by": job["locked_by"],
+                "lease_token": job["lease_token"],
+                "generation_uuid": job.get("generation_uuid"),
+            },
+        )
+        row = result.mappings().first()
+        return str(row["status"]) if row else None
+
+    async def record_embedding_usage(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        operation: str,
+        model: str,
+        status: str,
+        input_count: int,
+        request_count: int,
+        successful_request_count: int,
+        failed_request_count: int,
+        cancelled_request_count: int,
+        reported_tokens: int,
+        usage_reported_requests: int,
+        successful_usage_reported_requests: int,
+        duration_ms: int,
+        error_type: str | None,
+    ) -> None:
+        if operation not in {"probe", "ingestion", "reindex", "retrieval", "evaluation"}:
+            raise ValueError("unsupported embedding usage operation")
+        if status not in {"succeeded", "failed", "cancelled"}:
+            raise ValueError("unsupported embedding usage status")
+        counters = {
+            "input_count": int(input_count),
+            "request_count": int(request_count),
+            "successful_request_count": int(successful_request_count),
+            "failed_request_count": int(failed_request_count),
+            "cancelled_request_count": int(cancelled_request_count),
+            "reported_tokens": int(reported_tokens),
+            "usage_reported_requests": int(usage_reported_requests),
+            "successful_usage_reported_requests": int(
+                successful_usage_reported_requests
+            ),
+            "duration_ms": int(duration_ms),
+        }
+        if any(value < 0 for value in counters.values()):
+            raise ValueError("embedding usage counters must be non-negative")
+        if (
+            counters["successful_request_count"] + counters["failed_request_count"]
+            != counters["request_count"]
+        ):
+            raise ValueError("embedding request outcomes must equal request_count")
+        if counters["cancelled_request_count"] > counters["failed_request_count"]:
+            raise ValueError("cancelled requests must be a subset of failed requests")
+        if counters["usage_reported_requests"] > counters["request_count"]:
+            raise ValueError("reported usage requests cannot exceed request_count")
+        if (
+            counters["successful_usage_reported_requests"]
+            > counters["successful_request_count"]
+        ):
+            raise ValueError("successful usage reports cannot exceed successful requests")
+        if (
+            counters["successful_usage_reported_requests"]
+            > counters["usage_reported_requests"]
+        ):
+            raise ValueError("successful usage reports must be included in all usage reports")
+        await self.session.execute(
+            text(
+                """INSERT INTO embedding_usage_events (
+                    tenant_id, user_id, operation, provider, model, status,
+                    input_count, request_count, successful_request_count,
+                    failed_request_count, cancelled_request_count,
+                    reported_tokens, usage_reported_requests,
+                    successful_usage_reported_requests, duration_ms, error_type
+                ) VALUES (
+                    :tenant_id, :user_id, :operation, 'qwen', :model, :status,
+                    :input_count, :request_count, :successful_request_count,
+                    :failed_request_count, :cancelled_request_count,
+                    :reported_tokens, :usage_reported_requests,
+                    :successful_usage_reported_requests, :duration_ms, :error_type
+                )"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "operation": operation,
+                "model": str(model).strip() or "unknown",
+                "status": status,
+                **counters,
+                "error_type": str(error_type)[:120] if error_type else None,
+            },
+        )
+
+    async def stats(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        active_model: str = "",
+    ) -> dict[str, int]:
+        result = await self.session.execute(
+            text(
+                """SELECT
+                    COUNT(DISTINCT p.paper_uuid) FILTER (WHERE p.deleted_at IS NULL) AS paper_count,
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL AND c.content_version=p.current_content_version
+                    ) AS chunk_count,
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL
+                            AND c.content_version=p.current_content_version
+                            AND c.embedding_status='ready' AND c.embedding IS NOT NULL
+                    ) AS vector_count,
+                    COUNT(DISTINCT p.paper_uuid) FILTER (
+                        WHERE p.ingestion_status='failed' AND p.deleted_at IS NULL
+                    ) AS failed_papers,
+                    (SELECT COUNT(*) FROM paper_ingestion_jobs j
+                        WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                            AND j.status='failed') AS failed_jobs,
+                    (SELECT COUNT(*) FROM paper_ingestion_jobs j
+                        WHERE j.tenant_id=:tenant_id AND j.user_id=:user_id
+                            AND j.status IN ('pending','retry','running')) AS pending_jobs,
+                    (SELECT COUNT(*) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_call_count,
+                    (SELECT COUNT(*) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id
+                            AND e.status='succeeded') AS embedding_success_count,
+                    (SELECT COUNT(*) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id
+                            AND e.status IN ('failed','cancelled')) AS embedding_failed_count,
+                    (SELECT COALESCE(SUM(e.request_count), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_request_count,
+                    (SELECT COALESCE(SUM(e.successful_request_count), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_successful_request_count,
+                    (SELECT COALESCE(SUM(e.failed_request_count), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_failed_request_count,
+                    (SELECT COALESCE(SUM(e.cancelled_request_count), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_cancelled_request_count,
+                    (SELECT COALESCE(SUM(e.reported_tokens), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_reported_tokens,
+                    (SELECT COALESCE(SUM(e.usage_reported_requests), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_usage_reported_requests,
+                    (SELECT COALESCE(SUM(e.successful_usage_reported_requests), 0) FROM embedding_usage_events e
+                        WHERE e.tenant_id=:tenant_id AND e.user_id=:user_id) AS embedding_successful_usage_reported_requests,
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL AND c.embedding_status='ready'
+                            AND c.content_version<>p.current_content_version
+                    ) AS ready_noncurrent_chunks,
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL AND c.embedding_status='ready'
+                            AND c.content_version=p.current_content_version
+                            AND c.embedding IS NULL
+                    ) AS ready_missing_vectors,
+                    COUNT(DISTINCT c.chunk_uuid) FILTER (
+                        WHERE p.deleted_at IS NULL AND c.embedding_status='ready'
+                            AND c.content_version=p.current_content_version
+                            AND c.embedding_model IS DISTINCT FROM :active_model
+                    ) AS ready_wrong_model,
+                    pg_total_relation_size('paper_chunks'::regclass) AS chunk_table_bytes,
+                    pg_indexes_size('paper_chunks'::regclass) AS chunk_index_bytes
+                FROM papers p LEFT JOIN paper_chunks c ON c.paper_uuid=p.paper_uuid
+                    AND c.tenant_id=p.tenant_id AND c.user_id=p.user_id
+                WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id"""
+            ),
+            {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "active_model": active_model,
+            },
+        )
+        row = result.mappings().first() or {}
+        keys = (
+            "paper_count",
+            "chunk_count",
+            "vector_count",
+            "failed_papers",
+            "failed_jobs",
+            "pending_jobs",
+            "ready_noncurrent_chunks",
+            "ready_missing_vectors",
+            "ready_wrong_model",
+            "chunk_table_bytes",
+            "chunk_index_bytes",
+            "embedding_call_count",
+            "embedding_success_count",
+            "embedding_failed_count",
+            "embedding_request_count",
+            "embedding_successful_request_count",
+            "embedding_failed_request_count",
+            "embedding_cancelled_request_count",
+            "embedding_reported_tokens",
+            "embedding_usage_reported_requests",
+            "embedding_successful_usage_reported_requests",
+        )
+        return {key: int(row.get(key) or 0) for key in keys}
+
+    @staticmethod
+    def _record(row: Mapping[str, Any]) -> PaperRecord:
+        authors = row.get("authors") or []
+        metadata = row.get("metadata") or {}
+        if isinstance(authors, str):
+            authors = json.loads(authors)
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        return PaperRecord(
+            paper_uuid=row["paper_uuid"],
+            tenant_id=row["tenant_id"],
+            user_id=row["user_id"],
+            paper_id=row["paper_id"],
+            source=row["source"],
+            title=row["title"],
+            authors=tuple(authors),
+            abstract=row.get("abstract") or "",
+            published_at=row.get("published_at"),
+            doi=row.get("normalized_doi"),
+            arxiv_id=row.get("normalized_arxiv_id"),
+            url=row.get("canonical_url"),
+            in_knowledge_base=bool(row.get("in_knowledge_base")),
+            ingestion_status=row.get("ingestion_status") or "metadata_only",
+            current_content_version=int(row.get("current_content_version") or 0),
+            metadata=metadata,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
