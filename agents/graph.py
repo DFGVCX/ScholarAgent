@@ -60,7 +60,12 @@ async def _execute_skill(state: GlobalState) -> dict[str, Any]:
             skill_result = dict(event.get("payload") or {})
     if skill_result is None:
         raise RuntimeError(f"{active_skill} did not return a result")
-    return {"skill_result": skill_result}
+    return {
+        "skill_result": skill_result,
+        "task_graph_plan": skill_result.get("task_graph") or state.get("task_graph_plan") or {},
+        "node_snapshots": skill_result.get("node_snapshots") or state.get("node_snapshots") or {},
+        "retry_history": skill_result.get("retry_history") or [],
+    }
 
 
 async def _global_review(state: GlobalState) -> dict[str, Any]:
@@ -143,12 +148,18 @@ def build_global_graph(checkpointer: Any | None = None):
 app = build_global_graph()
 _runtime_app: Any | None = None
 _runtime_lock = asyncio.Lock()
+_runtime_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def _get_runtime_app():
-    global _runtime_app
-    if os.getenv("SCHOLAR_CHECKPOINT_BACKEND", "memory").strip().lower() != "sqlite":
+    global _runtime_app, _runtime_lock, _runtime_loop
+    if os.getenv("SCHOLAR_CHECKPOINT_BACKEND", "postgres").strip().lower() == "memory":
         return app
+    current_loop = asyncio.get_running_loop()
+    if _runtime_loop is not current_loop:
+        _runtime_app = None
+        _runtime_lock = asyncio.Lock()
+        _runtime_loop = current_loop
     async with _runtime_lock:
         if _runtime_app is None:
             _runtime_app = build_global_graph(await checkpoint_provider.get())

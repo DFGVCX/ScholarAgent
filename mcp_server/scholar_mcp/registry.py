@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, get_type_hints
+from pydantic import TypeAdapter
 
 from mcp_server.scholar_mcp.models import SafetyLevel, ToolSpec
 
@@ -38,12 +39,13 @@ class ToolRegistry:
 
     def _build_schema(self, func: ToolCallable) -> dict[str, Any]:
         signature = inspect.signature(func)
+        hints = get_type_hints(func)
         properties: dict[str, Any] = {}
         required: list[str] = []
         for name, parameter in signature.parameters.items():
             if name == "self":
                 continue
-            properties[name] = {"type": "string"}
+            properties[name] = TypeAdapter(hints.get(name, str)).json_schema()
             if parameter.default is inspect._empty:
                 required.append(name)
         return {"type": "object", "properties": properties, "required": required}
@@ -66,7 +68,7 @@ class ToolRegistry:
         return self._tools[name]
 
     def names(self) -> list[str]:
-        return list(self._tools)
+        return sorted(self._tools)
 
     async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return await self._tools[name](**arguments)

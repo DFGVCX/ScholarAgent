@@ -229,6 +229,11 @@ body[data-layout-baseline="v1"] #pageReader {
         grid-template-rows: auto minmax(0, 1fr);
     }
 
+    /* Both columns share one track, regardless of the active form's length. */
+    body[data-layout-baseline="v1"] #pageProfile .profile-config-mount .settings-grid {
+        grid-template-rows: minmax(0, 1fr);
+    }
+
     body[data-layout-baseline="v1"] #pageProfile .profile-config-mount .config-menu {
         min-height: 0;
         overflow-x: hidden;
@@ -248,7 +253,7 @@ body[data-layout-baseline="v1"] #pageReader {
         min-width: 0;
         min-height: 0;
         display: grid;
-        grid-template-columns: 224px minmax(440px, 1fr) 360px !important;
+        grid-template-columns: var(--reader-left-width, 176px) minmax(0, 1fr) var(--reader-right-width, 260px) !important;
         overflow: hidden;
     }
 }

@@ -227,7 +227,7 @@ def _extract_pdf_text(path: Path) -> str:
         from pypdf import PdfReader
 
         reader = PdfReader(str(path))
-        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()[:50000]
+        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
     except Exception:
         return ""
 
@@ -421,7 +421,12 @@ class InstitutionalAccessService:
         if session is None or session.get("status") != "active":
             raise InstitutionalAccessError("INSTITUTION_SESSION_REQUIRED", "请先完成机构访问验证")
         expires_at = session.get("expires_at")
-        if expires_at and datetime.fromisoformat(expires_at) <= _utcnow():
+        expires_at_value = (
+            expires_at
+            if isinstance(expires_at, datetime)
+            else datetime.fromisoformat(str(expires_at)) if expires_at else None
+        )
+        if expires_at_value and expires_at_value <= _utcnow():
             institutional_access_store.update_session(user, session_id, status="expired")
             raise InstitutionalAccessError("INSTITUTION_SESSION_EXPIRED", "机构会话已经过期，请重新认证")
         _validate_public_url(source_url)

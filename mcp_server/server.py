@@ -10,6 +10,8 @@ from typing import Any, Awaitable, Callable
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -23,6 +25,7 @@ if str(ROOT_DIR) not in sys.path:
 from mcp_server.scholar_mcp import tools as _tools  # noqa: E402,F401
 from mcp_server.scholar_mcp.registry import tool_registry  # noqa: E402
 from mcp_server.scholar_mcp.tools import call_tool_with_safety  # noqa: E402
+from app.asyncio_compat import configure_psycopg_event_loop_policy  # noqa: E402
 
 
 def _build_protocol_tool(name: str) -> Callable[..., Awaitable[dict[str, Any]]]:
@@ -36,6 +39,14 @@ def _build_protocol_tool(name: str) -> Callable[..., Awaitable[dict[str, Any]]]:
 
 
 def create_mcp_server() -> FastMCP:
+    allowed_hosts = [
+        value.strip()
+        for value in os.getenv(
+            "SCHOLAR_MCP_ALLOWED_HOSTS",
+            "127.0.0.1:*,localhost:*,[::1]:*,mcp_server:*",
+        ).split(",")
+        if value.strip()
+    ]
     server = FastMCP(
         name="ScholarAgent Paper Tools",
         instructions=(
@@ -45,6 +56,15 @@ def create_mcp_server() -> FastMCP:
         stateless_http=True,
         json_response=True,
         streamable_http_path="/",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts,
+            allowed_origins=[
+                "http://127.0.0.1:*",
+                "http://localhost:*",
+                "http://[::1]:*",
+            ],
+        ),
     )
     for name in tool_registry.names():
         spec = tool_registry.get_spec(name)
@@ -53,6 +73,13 @@ def create_mcp_server() -> FastMCP:
             name=name,
             description=spec.description,
             structured_output=True,
+            annotations=ToolAnnotations(
+                readOnlyHint=spec.safety_level.value == "LOW",
+                destructiveHint=spec.safety_level.value == "HIGH",
+                idempotentHint=spec.safety_level.value == "LOW",
+                openWorldHint=spec.category in {"search", "ingestion", "institutional_access", "skill"}
+                or spec.name == "acquire_paper_to_knowledge",
+            ),
             meta={
                 "category": spec.category,
                 "safety_level": spec.safety_level.value,
@@ -103,6 +130,7 @@ app.add_middleware(SharedTokenMiddleware)
 
 
 def main() -> None:
+    configure_psycopg_event_loop_policy()
     parser = argparse.ArgumentParser(description="ScholarAgent standard MCP server")
     parser.add_argument(
         "--transport",
@@ -115,7 +143,10 @@ def main() -> None:
     if args.transport == "stdio":
         mcp.run(transport="stdio")
         return
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    uvicorn.run(
+        app, host=args.host, port=args.port, log_level="info",
+        loop="app.asyncio_compat:new_psycopg_compatible_event_loop",
+    )
 
 
 if __name__ == "__main__":

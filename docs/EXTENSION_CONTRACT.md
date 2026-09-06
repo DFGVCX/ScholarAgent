@@ -49,19 +49,35 @@ async def run_<skill_name>_workflow(initial_state: dict[str, Any]) -> AsyncItera
         "phase": "<skill_name>",
         "message": "Skill result ready",
         "percent": 94,
-        "payload": {"result": "..."},
+        "payload": {
+            "tenant_id": initial_state["tenant_id"],
+            "user_id": initial_state["user_id"],
+            "result": "...",
+        },
     }
 ```
 
-Then register it in `agents/skill_registry.py`:
+Declare the entrypoint in the folder's `SKILL.md` frontmatter. No main-router edit is required:
 
-```python
-"<skill_name>": SkillDescriptor(
-    name="<skill_name>",
-    module_path="skills.<skill_name>.main_workflow",
-    workflow_attr="run_<skill_name>_workflow",
-)
+```yaml
+---
+name: example_skill
+module: skills.example_skill.main_workflow
+entrypoint: run_example_skill_workflow
+version: 1.0.0
+description: A reviewed, independently executable capability.
+enabled: true
+---
 ```
+
+The registry discovers additions, manifest updates, disablement and removal on the next lookup.
+Python implementation changes in already imported modules require a worker restart; this is not arbitrary Python hot-reloading.
+Only reviewed code may enter `skills/`. Generated candidates remain outside the production registry.
+
+Use `agents.skill_execution.execute_registered_skill` for bounded, tenant-scoped direct execution.
+The standard MCP tools `list_skills` and `execute_skill` expose discovery and invocation. Long-running
+`survey_generation` is submitted to TaskService rather than holding an MCP request open for the full writing job.
+Built-in independent packages are `paper_retrieval`, `survey_generation`, `citation_audit`, and `citation_formatting`.
 
 ## Skill Event Contract
 
@@ -89,6 +105,10 @@ Lifecycle capabilities are executable nodes, not prompt-only advisory agents.
 8. Add tests proving execution counts across a retry, not merely the presence of graph node names.
 
 Node cache identity is computed from capability input plus a stable dependency snapshot. Runtime labels such as `completed` versus `reused` must not change the fingerprint.
+
+Section caches depend on the section definition, actual evidence, instruction and memory snapshot, not the whole outline run ID.
+Quality review must distinguish source existence, evidence location and semantic support. A model verdict without an exact source quote cannot pass.
+Run `python scripts/run_capability_acceptance.py` for offline contract and real-StateGraph control-flow tests; this does not replace external-service acceptance.
 
 ## Add An MCP Tool
 

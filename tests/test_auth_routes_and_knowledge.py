@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -13,18 +14,149 @@ from app.routes.knowledge import (
     FileTextUpdateDTO,
     KnowledgePaperDTO,
     delete_knowledge,
+    expand_rag_context,
+    get_rag_parent_context,
     get_file_annotations,
     get_knowledge_file,
     list_knowledge,
     save_file_annotations,
     save_file_text,
     save_knowledge,
+    search_rag,
     upload_knowledge_file,
+    _resolve_paper_asset,
 )
 from app.services.rag_service import rag_service
 
 
 class AuthRoutesAndKnowledgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_rag_search_passes_structured_filters_to_service(self):
+        expected = {"items": [], "count": 0}
+        with patch.object(
+            rag_service, "search", new=AsyncMock(return_value=expected)
+        ) as search:
+            response = await search_rag(
+                query="robust aggregation",
+                limit=5,
+                paper_id=["paper-1"],
+                year_from=2020,
+                year_to=2024,
+                author="Alice",
+                venue="NeurIPS",
+                section=["method"],
+                chunk_type=["equation"],
+                retrieval_mode="vector",
+                x_api_key="demo-key",
+            )
+
+        self.assertEqual(response, expected)
+        search.assert_awaited_once_with(
+            "tenant_demo",
+            "user_demo",
+            "robust aggregation",
+            5,
+            paper_ids=("paper-1",),
+            year_from=2020,
+            year_to=2024,
+            author="Alice",
+            venue="NeurIPS",
+            section_ids=("method",),
+            chunk_types=("equation",),
+            retrieval_mode="vector",
+        )
+
+    async def test_parent_context_uses_authenticated_tenant_and_user(self):
+        chunk_id = uuid4()
+        expected = {
+            "center_chunk_id": str(chunk_id),
+            "section_id": "method",
+            "content": "Complete method section.",
+        }
+        with patch.object(
+            rag_service, "parent_context", new=AsyncMock(return_value=expected)
+        ) as parent:
+            response = await get_rag_parent_context(chunk_id, x_api_key="demo-key")
+
+        self.assertEqual(response, expected)
+        parent.assert_awaited_once_with("tenant_demo", "user_demo", str(chunk_id))
+
+    async def test_context_expansion_uses_authenticated_tenant_and_user(self):
+        chunk_id = uuid4()
+        expected = {
+            "center_chunk_id": str(chunk_id),
+            "chunks": [],
+            "token_budget": 512,
+        }
+        with patch.object(
+            rag_service, "expand_context", new=AsyncMock(return_value=expected)
+        ) as expand:
+            response = await expand_rag_context(
+                chunk_id,
+                before=2,
+                after=3,
+                token_budget=512,
+                x_api_key="demo-key",
+            )
+
+        self.assertEqual(response, expected)
+        expand.assert_awaited_once_with(
+            "tenant_demo", "user_demo", str(chunk_id), 2, 3, 512
+        )
+
+    async def test_visual_asset_resolution_requires_manifest_reference_and_safe_name(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            pdf = Path(tmp) / "paper.pdf"
+            pdf.write_bytes(b"%PDF")
+            assets = Path(tmp) / "paper_assets"
+            assets.mkdir()
+            image = assets / "page_001_figure_1.png"
+            image.write_bytes(b"png")
+            equation = assets / "page_001_equation_2.png"
+            equation.write_bytes(b"png")
+            paper = {
+                "metadata": {"file_path": str(pdf)},
+                "parsing": {
+                    "manifest": {
+                        "visual_blocks": [
+                            {"metadata": {"asset_name": "page_001_figure_1.png"}}
+                        ],
+                        "equations": [
+                            {"label": "2", "asset_name": "page_001_equation_2.png"}
+                        ],
+                    }
+                },
+            }
+
+            self.assertEqual(
+                _resolve_paper_asset(paper, "page_001_figure_1.png"),
+                image.resolve(),
+            )
+            self.assertEqual(
+                _resolve_paper_asset(paper, "page_001_equation_2.png"),
+                equation.resolve(),
+            )
+            with self.assertRaisesRegex(ValueError, "not referenced"):
+                _resolve_paper_asset(paper, "other.png")
+            with self.assertRaisesRegex(ValueError, "unsafe"):
+                _resolve_paper_asset(paper, "../page_001_figure_1.png")
+
+            inventory_only = {
+                "metadata": {"file_path": str(pdf)},
+                "parsing": {
+                    "manifest": {
+                        "asset_inventory": [
+                            {"name": "page_001_figure_1.png", "type": "figure"}
+                        ]
+                    }
+                },
+            }
+            self.assertEqual(
+                _resolve_paper_asset(inventory_only, "page_001_figure_1.png"),
+                image.resolve(),
+            )
+
     async def test_login_and_me_return_tenant_context(self):
         profile = await login(
             LoginRequestDTO(username="acme", password="acme123", tenant_id="tenant_acme")

@@ -18,6 +18,7 @@ class SurveyWorkflowTest(unittest.IsolatedAsyncioTestCase):
                 "SCHOLAR_PRIMARY_MODEL_PROVIDER",
                 "SCHOLAR_RAG_EMBEDDING_PROVIDER",
                 "SCHOLAR_RUNTIME_CONFIG_PATH",
+                "SCHOLAR_CHECKPOINT_BACKEND",
             )
         }
         self._runtime_config_path = Path("storage/runtime") / f"test_runtime_config_{uuid.uuid4().hex}.json"
@@ -27,6 +28,7 @@ class SurveyWorkflowTest(unittest.IsolatedAsyncioTestCase):
         os.environ["SCHOLAR_EXTERNAL_SOURCE_PROVIDER"] = "mock"
         os.environ["SCHOLAR_PRIMARY_MODEL_PROVIDER"] = "deterministic"
         os.environ["SCHOLAR_RAG_EMBEDDING_PROVIDER"] = "mock-hash"
+        os.environ["SCHOLAR_CHECKPOINT_BACKEND"] = "memory"
 
     async def asyncTearDown(self):
         for key, value in self._old_env.items():
@@ -88,7 +90,7 @@ class SurveyWorkflowTest(unittest.IsolatedAsyncioTestCase):
                 events.append(event)
 
         task = asyncio.create_task(run_workflow())
-        # Index persistence can take a few seconds on a cold Windows/Chroma start.
+        # Workflow startup can take a few seconds on a cold Windows/PostgreSQL start.
         # Poll with a bounded lifecycle timeout instead of assuming a 2s backend.
         for _ in range(600):
             if any(event["event"] == "outline_required" for event in events):

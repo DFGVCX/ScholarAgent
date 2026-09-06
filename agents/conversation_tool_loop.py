@@ -10,6 +10,7 @@ from agents.evolution import skill_evolution_service
 from app.schemas import UserContext
 from app.services.conversation_tool_store import conversation_tool_call_store
 from app.services.conversation_state_service import conversation_state_service
+from app.services.rag_service import rag_service
 from mcp_server.scholar_mcp.client import ScholarMCPClient
 
 
@@ -163,6 +164,8 @@ class ConversationToolLoop:
         arguments = dict(plan.get("arguments") or {})
         arguments["tenant_id"] = user.tenant_id
         arguments["user_id"] = user.user_id
+        if tool_name == "search_papers":
+            arguments["conversation_id"] = conversation_id
         route_state = conversation_state_service.record_route(
             user, conversation_id,
             intent=str(plan.get("intent") or "tool_action"),
@@ -173,6 +176,18 @@ class ConversationToolLoop:
             planned_steps=[tool_name],
         )
         outcome = await self._execute(user, conversation_id, tool_name, arguments)
+        if tool_name == "search_papers":
+            result = outcome.metadata.get("result") or {}
+            replay_id = str(result.get("replay_id") or "")
+            adopted = [
+                str(item.get("chunk_id"))
+                for item in (result.get("local_hits") or [])[:5]
+                if item.get("chunk_id")
+            ]
+            if replay_id:
+                result["retrieval_attribution"] = await rag_service.mark_adoption(
+                    user.tenant_id, user.user_id, replay_id, adopted
+                )
         return ToolLoopOutcome(
             outcome.content,
             {
@@ -600,14 +615,28 @@ class ConversationToolLoop:
         if result.get("status") in {"ERROR", "DENIED"}:
             return f"工具执行失败：{result.get('error') or result.get('safety', {}).get('reason') or '未知错误'}"
         if tool_name == "search_papers":
-            items = result.get("items") or []
+            local_hits = result.get("local_hits") or []
+            external_candidates = result.get("external_candidates") or []
+            items = [*local_hits, *external_candidates]
             if not items:
                 return "没有检索到符合条件的论文。可以补充关键词、年份或研究方向后继续检索。"
-            lines = [f"已检索到 {len(items)} 篇候选论文："]
+            local_paper_count = len(
+                {str(item.get("paper_id") or "") for item in local_hits}
+            )
+            lines = [
+                f"已检索到 {len(local_hits)} 个本地可引用证据 Chunk"
+                f"（来自 {local_paper_count} 篇论文），"
+                f"以及 {len(external_candidates)} 篇外部候选："
+            ]
             for index, item in enumerate(items[:5], 1):
                 suffix = f" · DOI: {item.get('doi')}" if item.get("doi") else ""
-                lines.append(f"{index}. **{item.get('title') or '未命名论文'}** · {item.get('source') or 'unknown'}{suffix}")
-            lines.append("可以继续说“下载第一篇并保存到知识库”。")
+                evidence = "可引用" if item.get("can_cite") else "需下载入库后引用"
+                lines.append(
+                    f"{index}. **{item.get('title') or '未命名论文'}** · "
+                    f"{item.get('source') or 'unknown'} · {evidence}{suffix}"
+                )
+            if external_candidates:
+                lines.append("外部候选不会因搜索自动入库；可以继续说“下载第一篇并保存到知识库”。")
             return "\n\n".join(lines)
         if tool_name in {"save_to_knowledge", "acquire_paper_to_knowledge"}:
             paper = result.get("paper") or {}

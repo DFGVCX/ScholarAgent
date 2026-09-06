@@ -1,0 +1,1 @@
+"""Independent citation formatting capability."""

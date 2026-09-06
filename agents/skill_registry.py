@@ -103,6 +103,8 @@ class SkillRegistry:
             available = ", ".join(sorted(skills)) or "none"
             raise KeyError(f"Unknown skill '{name}'. Available skills: {available}")
         descriptor = skills[name]
+        if not descriptor.enabled:
+            raise KeyError(f"Skill '{name}' is disabled")
         module = import_module(descriptor.module_path)
         workflow = getattr(module, descriptor.workflow_attr, None)
         if not callable(workflow):

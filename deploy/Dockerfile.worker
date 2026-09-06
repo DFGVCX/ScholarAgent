@@ -1,11 +1,18 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-trixie
 
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+COPY requirements-base.txt /app/requirements-base.txt
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0t64 \
+        libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . /app
 

@@ -34,7 +34,7 @@ class KnowledgeBaseToggleTest(unittest.IsolatedAsyncioTestCase):
         paper_id = saved["paper_id"]
         self.assertFalse(saved.get("in_knowledge_base", True))
 
-        # 2. Verify the paper is NOT in ChromaDB
+        # 2. Verify the paper is NOT in the PostgreSQL/pgvector retrieval index
         rag_result = await rag_service.search("tenant_demo", "user_demo", title, 5)
         self.assertFalse(
             any(item["paper_id"] == paper_id for item in rag_result["items"])
@@ -51,7 +51,7 @@ class KnowledgeBaseToggleTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(result["in_knowledge_base"])
 
-        # 4. Verify the paper IS now in ChromaDB
+        # 4. Verify the paper IS now in the PostgreSQL/pgvector retrieval index
         rag_result2 = await rag_service.search("tenant_demo", "user_demo", title, 5)
         self.assertTrue(
             any(item["paper_id"] == paper_id for item in rag_result2["items"])

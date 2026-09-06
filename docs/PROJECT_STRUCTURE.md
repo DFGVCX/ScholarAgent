@@ -13,7 +13,7 @@ This file is the source of truth for where new files belong.
 | `browser_worker/` | Authenticated browser runtime | Institution login sessions, CNKI navigation, official downloads | Browser session lifecycle and source-specific browser adapters | General web scraping, Agent planning, API business logic |
 | `frontend/` | Web console | Frontend source and deployable static bundle | `src`, `dist`, package config, frontend docs | Backend services, Python scripts |
 | `deploy/` | Deployment | Dockerfiles, nginx config, database init SQL | Container and infra config | Runtime uploads or logs |
-| `scripts/` | Operations | One-off setup and bootstrap commands | MySQL/RAG initialization, maintenance helpers | Long-running application services |
+| `scripts/` | Operations | One-off setup and bootstrap commands | PostgreSQL/pgvector validation, seed data, maintenance helpers | Long-running application services |
 | `tests/` | Quality | Unit/API/workflow/E2E tests | Test suites and fixtures | Production code |
 
 ## Project Knowledge

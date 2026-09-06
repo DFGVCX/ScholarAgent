@@ -91,6 +91,13 @@ class TaskService:
 
         final_result: dict[str, Any] = {}
         try:
+            from app.services.memory_service import user_memory_service
+
+            initial_state["memory_context"] = await asyncio.to_thread(
+                user_memory_service.preference_snapshot,
+                UserContext(tenant_id=record.tenant_id, user_id=record.user_id),
+                str(record.request.get("topic") or ""),
+            )
             async for event in run_global_workflow(initial_state):
                 task_event = TaskEvent(
                     event=event.get("event", "progress"),

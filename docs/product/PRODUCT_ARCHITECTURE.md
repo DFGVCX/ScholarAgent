@@ -1149,7 +1149,7 @@ Compose 服务必须包含：
 2. 实现元工具和装饰器注册。
 3. 实现 PDF/arXiv/DOI ingest。
 4. 实现安全分级。
-5. 暂用 SQLite/TinyDB 可作为 fallback，但接口按 PostgreSQL repository 设计。
+5. 已统一使用 PostgreSQL repository；SQLite/TinyDB fallback 方案已废弃，关系数据与检索事实源不允许静默降级。
 
 ### 阶段 3：Skill 子图落地
 
