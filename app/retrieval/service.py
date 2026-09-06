@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 import math
 import re
@@ -10,6 +11,7 @@ import time
 from typing import Any, Protocol
 
 from app.retrieval.embedding import EmbeddingUnavailable, QwenEmbeddingClient
+from app.retrieval.bm25 import BM25CapacityExceeded, search_tokens
 from app.retrieval.models import (
     ContextChunk,
     ContextWindowRequest,
@@ -54,12 +56,14 @@ class Reranker(Protocol):
 
 
 def reciprocal_rank_fusion(
-    ranked_ids: Sequence[Sequence[str]], *, k: int = 60
+    ranked_ids: Sequence[Sequence[str]], *, k: int = 60, weights: Sequence[float] | None = None
 ) -> list[tuple[str, float]]:
     scores: dict[str, float] = {}
-    for ranking in ranked_ids:
+    for index, ranking in enumerate(ranked_ids):
+        weight = weights[index] if weights is not None else 1.0
         for rank, item_id in enumerate(ranking, start=1):
-            scores[item_id] = scores.get(item_id, 0.0) + 1.0 / (k + rank)
+            if weight > 0:
+                scores[item_id] = scores.get(item_id, 0.0) + weight / (k + rank)
     return sorted(scores.items(), key=lambda item: (-item[1], item[0]))
 
 
@@ -169,13 +173,25 @@ class RetrievalService:
     async def search(self, request: RetrievalRequest) -> RetrievalResponse:
         total_started = time.perf_counter()
         request, query_type = _adapt_candidate_pool(request)
+        temporal_as_of = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         requested_mode = request.retrieval_mode
         use_lexical = requested_mode in {"lexical", "hybrid", "hybrid_rerank"}
         use_vector = bool(request.query) and requested_mode in {"vector", "hybrid", "hybrid_rerank"}
+        warnings: list[str] = []
+        lexical_backend = "postgres_fts"
+        bm25 = getattr(self.repository, "bm25_candidates", None)
         lexical_sql_ms: float | None = None
         if use_lexical:
             lexical_started = time.perf_counter()
-            lexical = await self.repository.lexical_candidates(request)
+            if bm25 is not None and request.query:
+                try:
+                    lexical = await bm25(request, k1=request.bm25_k1, b=request.bm25_b)
+                    lexical_backend = "bm25plus"
+                except BM25CapacityExceeded as exc:
+                    warnings.append(str(exc))
+                    lexical = await self.repository.lexical_candidates(request)
+            else:
+                lexical = await self.repository.lexical_candidates(request)
             lexical_sql_ms = self._elapsed_ms(lexical_started)
         else:
             lexical = []
@@ -184,7 +200,19 @@ class RetrievalService:
         query_embedding_ms: float | None = None
         vector_sql_ms: float | None = None
         semantic_total_ms: float | None = None
-        warnings: list[str] = []
+        preference: list[RetrievalCandidate] = []
+        if requested_mode in {"hybrid", "hybrid_rerank"} and request.preference_query and request.preference_weight:
+            preference_request = replace(request, query=request.preference_query)
+            try:
+                preference = (
+                    await bm25(preference_request, k1=request.bm25_k1, b=request.bm25_b)
+                    if bm25 is not None else await self.repository.lexical_candidates(preference_request)
+                )
+                # Preference may add evidence, but cannot override the explicit research topic.
+                query_terms = set(search_tokens(" ".join((request.query, *academic_query_aliases(request.query)))))
+                preference = [item for item in preference if query_terms.intersection(search_tokens(f"{item.title} {item.content}"))]
+            except BM25CapacityExceeded as exc:
+                warnings.append(f"preference recall unavailable: {exc}")
         mode = "metadata" if not request.query else requested_mode
         if use_vector:
             semantic_started = time.perf_counter()
@@ -206,7 +234,7 @@ class RetrievalService:
                 }
                 suffix = (
                     "lexical results were preserved"
-                    if requested_mode == "hybrid"
+                    if requested_mode in {"hybrid", "hybrid_rerank"}
                     else "no lexical fallback was requested"
                 )
                 warnings.append(
@@ -239,6 +267,9 @@ class RetrievalService:
             vector,
             pool_limit,
             max_chunks_per_paper=request.max_chunks_per_paper,
+            preference=preference,
+            request=request,
+            temporal_as_of=temporal_as_of,
         )
         rerank_ms: float | None = None
         rerank_debug: dict[str, Any] = {"status": "not_requested"}
@@ -301,6 +332,14 @@ class RetrievalService:
             "adjacent_context_scope": "same_paper_version_section_top_k",
             "query_type": query_type,
             "candidate_limit": request.candidate_limit,
+            "lexical_backend": lexical_backend,
+            "weights": {"lexical": request.lexical_weight, "vector": request.vector_weight,
+                        "preference": request.preference_weight, "recency": request.recency_weight},
+            "preference_ids": list(request.preference_ids),
+            "preference_query": request.preference_query,
+            "recency_half_life_days": request.recency_half_life_days,
+            "temporal_stage": "bounded_rrf_multiplier_before_rerank",
+            "temporal_as_of": temporal_as_of.isoformat() if request.recency_weight else None,
         }
         corpus_fingerprint = await self._corpus_fingerprint(
             request, lexical, vector
@@ -330,6 +369,7 @@ class RetrievalService:
                 "candidate_pools": {
                     "lexical": self._candidate_pool_debug(lexical),
                     "vector": self._candidate_pool_debug(vector),
+                    "preference": self._candidate_pool_debug(preference),
                 },
                 "reranker": rerank_debug,
                 "ranking": [
@@ -340,6 +380,8 @@ class RetrievalService:
                         "rrf_score": hit.rrf_score,
                         "rerank_score": hit.rerank_score,
                         "final_rank": hit.final_rank,
+                        "preference_rank": hit.preference_rank,
+                        "temporal_score": hit.temporal_score,
                     }
                     for hit in hits
                 ],
@@ -360,6 +402,8 @@ class RetrievalService:
                 lexical_candidates=lexical,
                 vector_candidates=vector,
                 hits=hits,
+                ranking_policy=ranking_policy,
+                preference_candidates=preference,
             ),
         )
 
@@ -512,14 +556,37 @@ class RetrievalService:
         limit: int,
         *,
         max_chunks_per_paper: int = 3,
+        preference: Sequence[RetrievalCandidate] = (),
+        request: RetrievalRequest | None = None,
+        temporal_as_of: datetime | None = None,
     ) -> list[LocalHit]:
         rankings = [[item.chunk_id for item in lexical]]
+        weights = [request.lexical_weight if request else 1.0]
         if vector:
             rankings.append([item.chunk_id for item in vector])
-        fused = reciprocal_rank_fusion(rankings)
-        candidates = {item.chunk_id: item for item in (*lexical, *vector)}
+            weights.append(request.vector_weight if request else 1.0)
+        if preference:
+            rankings.append([item.chunk_id for item in preference])
+            weights.append(request.preference_weight if request else 0.0)
+        fused = reciprocal_rank_fusion(rankings, weights=weights)
+        raw_fused = dict(fused)
+        candidates = {item.chunk_id: item for item in (*preference, *lexical, *vector)}
+        temporal: dict[str, float] = {}
+        if request and request.recency_weight and request.retrieval_mode in {"hybrid", "hybrid_rerank"}:
+            now = temporal_as_of or datetime.now(timezone.utc)
+            for chunk_id, _ in fused:
+                value = candidates[chunk_id].published_at
+                try:
+                    published = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    published = published.replace(tzinfo=timezone.utc) if published.tzinfo is None else published
+                    age = max(0, (now - published).total_seconds() / 86400)
+                    temporal[chunk_id] = 2 ** (-age / request.recency_half_life_days)
+                except (ValueError, TypeError):
+                    temporal[chunk_id] = 0.0
+            fused = sorted(((key, score * (1 + request.recency_weight * temporal[key])) for key, score in fused), key=lambda item: (-item[1], item[0]))
         lexical_rank = {item.chunk_id: rank for rank, item in enumerate(lexical, start=1)}
         vector_rank = {item.chunk_id: rank for rank, item in enumerate(vector, start=1)}
+        preference_rank = {item.chunk_id: rank for rank, item in enumerate(preference, start=1)}
         ranked_evidence: list[tuple[str, float]] = []
         accepted_by_source: dict[tuple[str, str], list[RetrievalCandidate]] = {}
         accepted_by_position: dict[
@@ -608,7 +675,9 @@ class RetrievalService:
                     score=score,
                     lexical_rank=lexical_rank.get(chunk_id),
                     vector_rank=vector_rank.get(chunk_id),
-                    rrf_score=score,
+                    rrf_score=raw_fused[chunk_id],
+                    preference_rank=preference_rank.get(chunk_id),
+                    temporal_score=temporal.get(chunk_id, 0.0),
                     final_rank=final_rank,
                     rerank_score=None,
                     section_id=candidate.section_id,

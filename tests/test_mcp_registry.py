@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 from uuid import uuid4
 
 from mcp_server.scholar_mcp.external_sources import ExternalSourceError, _http_get_bytes
@@ -11,6 +11,14 @@ from mcp_server.server import create_mcp_server
 
 
 class MCPRegistryTest(unittest.IsolatedAsyncioTestCase):
+    def test_http_startup_uses_postgres_compatible_event_loop(self):
+        from mcp_server.server import main
+
+        with patch("sys.argv", ["mcp-server", "--transport", "streamable-http"]), \
+             patch("mcp_server.server.uvicorn.run") as run:
+            main()
+        self.assertEqual(run.call_args.kwargs["loop"], "app.asyncio_compat:new_psycopg_compatible_event_loop")
+
     def test_docker_service_host_is_allowed_by_transport_security(self):
         settings = create_mcp_server().settings.transport_security
 
@@ -47,6 +55,9 @@ class MCPRegistryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
+            "mcp_server.scholar_mcp.tools.rag_service.search",
+            new=AsyncMock(side_effect=RuntimeError("local database offline")),
+        ), patch(
             "mcp_server.scholar_mcp.tools.search_arxiv_papers",
             side_effect=ExternalSourceError("external source unavailable: timed out"),
         ), patch(

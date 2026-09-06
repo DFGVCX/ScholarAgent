@@ -60,7 +60,12 @@ async def _execute_skill(state: GlobalState) -> dict[str, Any]:
             skill_result = dict(event.get("payload") or {})
     if skill_result is None:
         raise RuntimeError(f"{active_skill} did not return a result")
-    return {"skill_result": skill_result}
+    return {
+        "skill_result": skill_result,
+        "task_graph_plan": skill_result.get("task_graph") or state.get("task_graph_plan") or {},
+        "node_snapshots": skill_result.get("node_snapshots") or state.get("node_snapshots") or {},
+        "retry_history": skill_result.get("retry_history") or [],
+    }
 
 
 async def _global_review(state: GlobalState) -> dict[str, Any]:

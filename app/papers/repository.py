@@ -99,7 +99,7 @@ class PaperRepository:
     async def get_document(
         self, tenant_id: str, user_id: str, paper_id: str
     ) -> dict[str, Any] | None:
-        rows = await self.list_documents(tenant_id, user_id, query=paper_id, limit=10)
+        rows = await self.list_documents(tenant_id, user_id, paper_id=paper_id, limit=1)
         return next((row for row in rows if row["paper_id"] == paper_id), None)
 
     async def get_structure(
@@ -244,7 +244,8 @@ class PaperRepository:
         }
 
     async def list_documents(
-        self, tenant_id: str, user_id: str, *, query: str = "", limit: int = 50
+        self, tenant_id: str, user_id: str, *, query: str = "", limit: int = 50,
+        paper_id: str = "",
     ) -> list[dict[str, Any]]:
         result = await self.session.execute(
             text(
@@ -272,6 +273,7 @@ class PaperRepository:
                     ORDER BY a.created_at DESC LIMIT 1
                 ) asset ON true
                 WHERE p.tenant_id=:tenant_id AND p.user_id=:user_id AND p.deleted_at IS NULL
+                    AND (:paper_id='' OR p.paper_id=:paper_id)
                     AND (:query='' OR p.paper_id ILIKE :pattern OR p.title ILIKE :pattern
                          OR p.abstract ILIKE :pattern)
                 ORDER BY p.updated_at DESC LIMIT :limit"""
@@ -281,6 +283,7 @@ class PaperRepository:
                 "user_id": user_id,
                 "query": query.strip(),
                 "pattern": f"%{query.strip()}%",
+                "paper_id": paper_id,
                 "limit": max(1, min(limit, 200)),
             },
         )

@@ -35,6 +35,9 @@ async def initialize_runtime_database() -> None:
 async def close_runtime_resources() -> None:
     await task_queue.close()
     await checkpoint_provider.close()
+    from app.services.tracing import trace_recorder
+
+    await asyncio.to_thread(trace_recorder.flush)
 
 
 app.add_middleware(

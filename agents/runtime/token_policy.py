@@ -24,6 +24,8 @@ class TokenPolicy:
         "outline": ModelCallBudget(5200, 900, 1800),
         "section": ModelCallBudget(6000, 1200, 3600),
         "critic": ModelCallBudget(3600, 600, 1800),
+        "evidence_review": ModelCallBudget(12000, 2400, 1800),
+        "task_graph_planning": ModelCallBudget(3600, 1600, 1800),
         "translation": ModelCallBudget(4200, 1400),
         "connection_probe": ModelCallBudget(1200, 200, 60),
     }
@@ -54,6 +56,8 @@ class TokenPolicy:
             }
         context_cost = self.estimate_tokens(str(compact_context))
         prompt_budget = max(240, budget.max_input_tokens - context_cost)
+        if purpose in {"section", "evidence_review", "task_graph_planning"} and self.estimate_tokens(prompt) > prompt_budget:
+            raise ValueError(f"{purpose} input exceeds its budget; split the structured evidence before calling the model")
         compact_prompt = self._fit_text(prompt, prompt_budget)
         estimated = self.estimate_tokens(compact_prompt) + self.estimate_tokens(str(compact_context))
         return compact_prompt, compact_context, budget, estimated

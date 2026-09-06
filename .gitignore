@@ -53,6 +53,8 @@ models/
 frontend/node_modules/
 frontend/dist/assets/*
 !frontend/dist/assets/layout-baseline.v1.css
+!frontend/dist/assets/profile-rag.css
+!frontend/dist/assets/paper-metadata.css
 
 # Windows release build outputs
 release/build/

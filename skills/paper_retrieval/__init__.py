@@ -1,0 +1,1 @@
+"""Independent literature retrieval capability."""

@@ -69,7 +69,13 @@ class ModelFactory:
         prepared_prompt, prepared_context, budget, estimated_input = token_policy.prepare(
             purpose, prompt, context or {}
         )
-        cache_key = self._cache_key(provider, purpose, prepared_prompt, prepared_context)
+        model_identity = hashlib.sha256(json.dumps({
+            "primary": [provider, settings.llm_base_url, settings.llm_model, settings.llm_api_key,
+                        settings.anthropic_base_url, settings.anthropic_model, settings.anthropic_api_key],
+            "secondary": [settings.secondary_model_provider, settings.secondary_model_base_url,
+                          settings.secondary_model_name, settings.secondary_model_api_key],
+        }, sort_keys=True).encode()).hexdigest()
+        cache_key = self._cache_key(model_identity, purpose, prepared_prompt, prepared_context)
         cached = self._cache_get(cache_key, budget.cache_ttl_seconds)
         if settings.model_response_cache_enabled and cached is not None:
             self._trace_model_call(
@@ -83,12 +89,22 @@ class ModelFactory:
             )
         except Exception as primary_error:
             fallback = settings.secondary_model_provider
-            if not fallback or fallback == "none" or fallback == provider:
+            explicit_fallback = bool(settings.secondary_model_name)
+            if not fallback or fallback == "none" or (fallback == provider and not explicit_fallback):
                 raise primary_error
             try:
-                response = await self._generate_with_provider(
-                    fallback, purpose, prepared_prompt, prepared_context, budget, estimated_input
-                )
+                if explicit_fallback:
+                    candidate = ModelCandidate(
+                        provider=fallback, base_url=settings.secondary_model_base_url,
+                        api_key=settings.secondary_model_api_key, model=settings.secondary_model_name,
+                    ).validate()
+                    response = await self._generate_with_candidate(
+                        candidate, purpose, prepared_prompt, prepared_context, budget, estimated_input
+                    )
+                else:
+                    response = await self._generate_with_provider(
+                        fallback, purpose, prepared_prompt, prepared_context, budget, estimated_input
+                    )
             except Exception as fallback_error:
                 raise RuntimeError(
                     f"Primary provider failed: {primary_error}; fallback provider failed: {fallback_error}"
@@ -204,7 +220,7 @@ class ModelFactory:
         if not api_key and provider not in LOCAL_OPENAI_COMPATIBLE_PROVIDERS:
             raise RuntimeError("SCHOLAR_LLM_API_KEY is required for remote LLM calls")
         started = now_ms()
-        structured_planning = purpose in {"intent_planning", "tool_planning", "task_graph_planning"}
+        structured_planning = purpose in {"intent_planning", "tool_planning", "task_graph_planning", "evidence_review"}
         system = (
             "You are ScholarAgent's coordinator agent. Resolve the user's semantic goal from "
             "conversation state and return only the requested JSON object. Never mix command words "
@@ -291,7 +307,7 @@ class ModelFactory:
         if not api_key or not model:
             raise RuntimeError("SCHOLAR_ANTHROPIC_API_KEY and SCHOLAR_ANTHROPIC_MODEL are required for Claude calls")
         started = now_ms()
-        structured_planning = purpose in {"intent_planning", "tool_planning", "task_graph_planning"}
+        structured_planning = purpose in {"intent_planning", "tool_planning", "task_graph_planning", "evidence_review"}
         system = (
             "You are ScholarAgent's coordinator agent. Resolve the user's semantic goal from "
             "conversation state and return only one valid JSON object. Never mix command words "

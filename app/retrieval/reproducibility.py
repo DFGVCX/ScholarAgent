@@ -7,7 +7,7 @@ import json
 from typing import Any, Mapping, Sequence
 
 
-RETRIEVAL_ALGORITHM_VERSION = "retrieval-v3"
+RETRIEVAL_ALGORITHM_VERSION = "retrieval-v4"
 
 
 def _json_default(value: Any) -> Any:
@@ -82,6 +82,8 @@ def retrieval_provenance(
     lexical_candidates: Sequence[Any],
     vector_candidates: Sequence[Any],
     hits: Sequence[Any],
+    ranking_policy: Mapping[str, Any] | None = None,
+    preference_candidates: Sequence[Any] = (),
 ) -> dict[str, Any]:
     configuration = {
         "requested_mode": requested_mode,
@@ -92,6 +94,7 @@ def retrieval_provenance(
         "embedding_model": embedding_model,
         "reranker_model": reranker_model,
         "algorithm_version": RETRIEVAL_ALGORITHM_VERSION,
+        "ranking_policy": dict(ranking_policy or {}),
     }
     return {
         "schema_version": 1,
@@ -104,6 +107,7 @@ def retrieval_provenance(
         "candidate_fingerprints": {
             "lexical": candidate_fingerprint(lexical_candidates),
             "vector": candidate_fingerprint(vector_candidates),
+            "preference": candidate_fingerprint(preference_candidates),
         },
         "result_fingerprint": result_fingerprint(hits),
         "configuration": configuration,

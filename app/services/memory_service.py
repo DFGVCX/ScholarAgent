@@ -163,6 +163,31 @@ class UserMemoryService:
             (user.tenant_id, user.user_id, memory_id),
         ) > 0
 
+    def preference_snapshot(self, user: UserContext, query: str) -> dict[str, Any]:
+        """Expose bounded, source-addressable preferences without rewriting the query."""
+        records = self.recall(user, query, limit=6)
+        retrieval = []
+        for item in records:
+            if item.memory_type not in {"preference", "profile"}:
+                continue
+            fragments = [part.strip() for part in re.split(r"[，。；,;\n]", item.content)
+                         if part.strip() and not re.search(r"引用|格式|回答|IEEE|APA|7714", part, re.I)]
+            if fragments:
+                retrieval.append((item.memory_id, " ".join(fragments)))
+        style = ""
+        for item in records:
+            match = re.search(r"IEEE|APA|GB/?T\s*7714", item.content, re.I)
+            if match:
+                style = match.group(0).upper()
+                break
+        return {
+            "memory_ids": [item.memory_id for item in records],
+            "preferences": [{"id": item.memory_id, "type": item.memory_type, "content": item.content} for item in records],
+            "retrieval_query": " ".join(content for _, content in retrieval)[:1000],
+            "retrieval_memory_ids": [memory_id for memory_id, _ in retrieval],
+            "citation_style": style,
+        }
+
     def list_memories(self, user: UserContext, limit: int = 50) -> list[dict[str, Any]]:
         self.ensure_schema()
         return mysql_store.fetch_all(

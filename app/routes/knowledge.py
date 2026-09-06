@@ -195,18 +195,11 @@ def _media_type_for(path: Path) -> str:
 
 
 async def _find_user_paper(paper_id: str, user) -> dict[str, Any]:
-    client = ScholarMCPClient()
-    result = await client.call_tool(
-        "search_papers",
-        {
-            "tenant_id": user.tenant_id,
-            "user_id": user.user_id,
-            "query": paper_id,
-            "source": "local",
-            "limit": 5,
-        },
-    )
-    paper = next((item for item in result["items"] if item.get("paper_id") == paper_id), None)
+    # File access must not depend on full-text ranking or ingestion readiness.
+    async with tenant_transaction(user.tenant_id, user.user_id) as session:
+        paper = await PaperRepository(session).get_document(
+            user.tenant_id, user.user_id, paper_id
+        )
     if paper is None:
         raise HTTPException(status_code=404, detail="paper not found")
     return paper

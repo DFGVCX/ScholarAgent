@@ -17,6 +17,9 @@ class Settings:
     storage_backend: str = "postgresql"
     primary_model_provider: str = "none"
     secondary_model_provider: str = "none"
+    secondary_model_base_url: str = ""
+    secondary_model_api_key: str = ""
+    secondary_model_name: str = ""
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
@@ -146,6 +149,9 @@ def get_settings() -> Settings:
         storage_backend="postgresql",
         primary_model_provider=_setting_value(overrides, "SCHOLAR_PRIMARY_MODEL_PROVIDER", "none").strip().lower(),
         secondary_model_provider=_setting_value(overrides, "SCHOLAR_SECONDARY_MODEL_PROVIDER", "none").strip().lower(),
+        secondary_model_base_url=_setting_value(overrides, "SCHOLAR_SECONDARY_MODEL_BASE_URL", "").strip(),
+        secondary_model_api_key=_setting_value(overrides, "SCHOLAR_SECONDARY_MODEL_API_KEY", "").strip(),
+        secondary_model_name=_setting_value(overrides, "SCHOLAR_SECONDARY_MODEL_NAME", "").strip(),
         llm_base_url=_setting_value(overrides, "SCHOLAR_LLM_BASE_URL", "").strip(),
         llm_api_key=_setting_value(overrides, "SCHOLAR_LLM_API_KEY", "").strip(),
         llm_model=_setting_value(overrides, "SCHOLAR_LLM_MODEL", "").strip(),

@@ -62,8 +62,16 @@ class TraceRecorder:
             "provider": provider,
             "model": model,
             "latency_ms": latency_ms,
-            "metadata": metadata or {},
+            "metadata": self._sanitize(metadata or {}),
         }
+        try:
+            self._persist_local(payload)
+        except Exception:
+            # Observability must not turn successful model/tool work into a failure.
+            pass
+        self._record_langfuse(payload)
+
+    def _persist_local(self, payload: dict[str, Any]) -> None:
         if mysql_store.is_available():
             mysql_store.execute(
                 """
@@ -73,23 +81,15 @@ class TraceRecorder:
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    trace_id,
-                    task_id,
-                    tenant_id,
-                    user_id,
-                    span_name,
-                    event_type,
-                    provider,
-                    model,
-                    latency_ms,
-                    mysql_store.encode_json(metadata or {}),
+                    payload["trace_id"], payload["task_id"], payload["tenant_id"], payload["user_id"],
+                    payload["span_name"], payload["event_type"], payload["provider"], payload["model"],
+                    payload["latency_ms"], mysql_store.encode_json(payload["metadata"]),
                 ),
             )
         else:
             line = json.dumps(payload | {"created_at": time.time()}, ensure_ascii=False)
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
-        self._record_langfuse(payload)
 
     def _record_langfuse(self, payload: dict[str, Any]) -> None:
         if self._langfuse is None:
@@ -105,7 +105,7 @@ class TraceRecorder:
                 "evaluation": "evaluator",
             }.get(event_type, "span")
             metadata = self._sanitize(payload.get("metadata") or {})
-            trace_id = self._langfuse.create_trace_id(seed=str(payload["trace_id"]))
+            trace_id = self._langfuse.create_trace_id(seed=f"{payload.get('tenant_id')}:{payload.get('user_id')}:{payload['trace_id']}")
             observation = self._langfuse.start_observation(
                 trace_context={"trace_id": trace_id},
                 name=str(payload["span_name"]),
@@ -129,7 +129,7 @@ class TraceRecorder:
 
     @classmethod
     def _sanitize(cls, value: Any) -> Any:
-        sensitive = re.compile(r"(api.?key|authorization|token|secret|password)", re.IGNORECASE)
+        sensitive = re.compile(r"(api.?key|authorization|(?:^|_)(?:access_|refresh_)?token$|secret|password)", re.IGNORECASE)
         if isinstance(value, dict):
             return {
                 str(key): "[REDACTED]" if sensitive.search(str(key)) else cls._sanitize(item)
@@ -138,6 +138,8 @@ class TraceRecorder:
         if isinstance(value, list):
             return [cls._sanitize(item) for item in value[:100]]
         if isinstance(value, str):
+            value = re.sub(r"(?i)(Bearer\s+)[^\s\"']+", r"\1[REDACTED]", value)
+            value = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", "[REDACTED]", value)
             return value[:8000]
         return value
 
@@ -153,7 +155,10 @@ class TraceRecorder:
 
     def flush(self) -> None:
         if self._langfuse is not None:
-            self._langfuse.flush()
+            try:
+                self._langfuse.flush()
+            except Exception as exc:
+                self._langfuse_error = str(exc)
 
 
 trace_recorder = TraceRecorder()

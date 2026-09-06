@@ -185,6 +185,14 @@ class RagService:
             "lexical": "lexical",
             "vector": "vector",
         }.get(settings.rag_retrieval_mode, settings.rag_retrieval_mode)
+        import asyncio
+        from app.schemas import UserContext
+        from app.services.memory_service import user_memory_service
+
+        preferences = await asyncio.to_thread(
+            user_memory_service.preference_snapshot,
+            UserContext(tenant_id=tenant_id, user_id=user_id), query,
+        )
         embedding = QwenEmbeddingClient.from_settings()
         try:
             async with tenant_transaction(tenant_id, user_id) as session:
@@ -214,6 +222,15 @@ class RagService:
                         chunk_types=chunk_types,
                         max_chunks_per_paper=settings.rag_max_chunks_per_paper,
                         retrieval_mode=retrieval_mode or configured_mode,
+                        preference_query=preferences["retrieval_query"],
+                        preference_ids=tuple(preferences["retrieval_memory_ids"]),
+                        lexical_weight=settings.rag_bm25_weight,
+                        vector_weight=settings.rag_vector_weight,
+                        preference_weight=settings.rag_preference_weight,
+                        recency_weight=settings.rag_recency_weight,
+                        recency_half_life_days=settings.rag_recency_half_life_days,
+                        bm25_k1=settings.rag_bm25_k1,
+                        bm25_b=settings.rag_bm25_b,
                     )
                 )
                 payload = response.to_legacy_dict()

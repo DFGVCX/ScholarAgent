@@ -38,6 +38,10 @@ class GlobalState(TypedDict, total=False):
     outline: list[dict[str, Any]]
     outline_markdown: str
     outline_node_id: str
+    outline_approved: bool
+    dirty_sections: list[str]
+    retrieval_summary: dict[str, Any]
+    retrieval_external_error: str | None
     sections: list[dict[str, Any]]
     section_reviews: list[dict[str, Any]]
     quality_decision: dict[str, Any]

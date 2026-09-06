@@ -680,6 +680,13 @@ class RetrievalServiceTest(unittest.IsolatedAsyncioTestCase):
                 "query_type": "concept",
                 "candidate_limit": 80,
                 "requested_mode": "hybrid",
+                "lexical_backend": "postgres_fts",
+                "weights": {"lexical": 1.0, "vector": 1.0, "preference": 0.0, "recency": 0.0},
+                "preference_ids": [],
+                "preference_query": "",
+                "recency_half_life_days": 365,
+                "temporal_stage": "bounded_rrf_multiplier_before_rerank",
+                "temporal_as_of": None,
             },
         )
 

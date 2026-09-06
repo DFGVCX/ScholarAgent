@@ -24,9 +24,13 @@ async def _plan_task(state: GlobalState) -> dict[str, Any]:
         }
         for item in skill_registry.list_skills()
     ]
-    plan = await dynamic_task_planner.plan_writing_with_model(
-        str(state.get("topic") or ""), dict(state), skills
-    )
+    previous = state.get("task_graph_plan") or (state.get("skill_result") or {}).get("task_graph")
+    if previous:
+        plan = dynamic_task_planner._validated_plan(str(state.get("topic") or ""), previous, planner="restored")
+    else:
+        plan = await dynamic_task_planner.plan_writing_with_model(
+            str(state.get("topic") or ""), dict(state), skills
+        )
     if state.get("retry_target"):
         node_run_store.invalidate(plan, dict(state), str(state["retry_target"]))
     get_stream_writer()({
@@ -71,6 +75,7 @@ def build_lifecycle_graph(plan: TaskGraphPlan):
             "outline": list(state.get("outline") or []),
             "outline_markdown": state.get("outline_markdown", ""),
             "papers": papers,
+            "retrieval_summary": dict(state.get("retrieval_summary") or {}),
             "sections": list(state.get("sections") or []),
             "references": references,
             "formatter_status": formatter.status(),
@@ -79,6 +84,7 @@ def build_lifecycle_graph(plan: TaskGraphPlan):
             "task_graph": plan.to_dict(),
             "node_runs": node_run_store.list_task_runs(dict(state)),
             "retry_history": list(state.get("retry_history") or []),
+            "node_snapshots": dict(state.get("node_snapshots") or {}),
         }
         get_stream_writer()({
             "event": "skill_result", "phase": "survey_generation",
@@ -166,6 +172,7 @@ async def _execute_lifecycle(state: GlobalState) -> dict[str, Any]:
         "node_runs": list(final_state.get("node_runs") or []),
         "quality_retry_count": int(final_state.get("quality_retry_count") or 0),
         "retry_history": list(final_state.get("retry_history") or []),
+        "node_snapshots": dict(final_state.get("node_snapshots") or {}),
     }
 
 

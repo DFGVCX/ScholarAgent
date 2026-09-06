@@ -7306,7 +7306,9 @@
           .reader-sidebar.right { width: 220px; }
         }
     </style>
-    <link rel="stylesheet" href="/assets/layout-baseline.v1.css?v=1">
+    <link rel="stylesheet" href="/assets/layout-baseline.v1.css?v=2">
+    <link rel="stylesheet" href="/assets/profile-rag.css?v=1">
+    <link rel="stylesheet" href="/assets/paper-metadata.css?v=1">
 </head>
 <body data-layout-baseline="v1">
     <section id="loginView" class="login-view">
@@ -7789,165 +7791,180 @@
                             </div>
                             <div id="settingsRag" class="config-section settings-card">
                                 <div class="panel-head"><h2>知识检索</h2><span class="badge">RAG</span></div>
-                                <div class="provider-matrix config-overview-cards">
-                                    <div><b>索引数据库</b><span id="ragBackendSummary">PostgreSQL 17 + pgvector，词法与向量检索共用一致的数据版本。</span></div>
-                                    <div><b>向量模型</b><span id="ragEmbeddingSummary">仅使用千问 Embedding；模型可换，但向量维度固定为 1024。</span></div>
-                                    <div><b>切换策略</b><span id="ragChunkSummary">新旧模型向量严格隔离；重建期间自动使用全文检索兜底。</span></div>
+                                <div class="rag-summary" aria-label="当前检索配置">
+                                    <div><b>索引</b><span id="ragBackendSummary">等待读取</span></div>
+                                    <div><b>模型</b><span id="ragEmbeddingSummary">等待读取</span></div>
+                                    <div><b>切片</b><span id="ragChunkSummary">等待读取</span></div>
                                 </div>
-                                <div class="field-grid">
-                                    <div>
-                                        <label for="cfgRagIndexBackend">索引后端</label>
-                                        <select id="cfgRagIndexBackend" data-config-key="SCHOLAR_RAG_INDEX_BACKEND" disabled>
-                                            <option value="pgvector">PostgreSQL + pgvector</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagRetrievalMode">召回模式</label>
-                                        <select id="cfgRagRetrievalMode" data-config-key="SCHOLAR_RAG_RETRIEVAL_MODE">
-                                            <option value="hybrid_rerank">混合召回 + 千问重排</option>
-                                            <option value="hybrid_rrf">混合召回（RRF）</option>
-                                            <option value="vector">向量召回</option>
-                                            <option value="lexical">关键词召回</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label for="cfgExternalSource">外部论文源</label>
-                                        <select id="cfgExternalSource" data-config-key="SCHOLAR_EXTERNAL_SOURCE_PROVIDER">
-                                            <option value="real">真实论文源</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagEmbedding">Embedding 方案</label>
-                                        <select id="cfgRagEmbedding" data-config-key="SCHOLAR_RAG_EMBEDDING_PROVIDER" disabled>
-                                            <option value="qwen">通义千问 / DashScope</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagEmbeddingBaseUrl">Embedding Base URL</label>
-                                        <input id="cfgRagEmbeddingBaseUrl" data-config-key="SCHOLAR_RAG_EMBEDDING_BASE_URL" placeholder="https://dashscope.aliyuncs.com/compatible-mode">
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagEmbeddingModel">Embedding 模型</label>
-                                        <input id="cfgRagEmbeddingModel" data-config-key="SCHOLAR_RAG_EMBEDDING_MODEL" placeholder="qwen3.7-text-embedding">
-                                    </div>
-                                    <div class="span-2">
-                                        <label for="cfgRagEmbeddingApiKey">Embedding API Key</label>
-                                        <input id="cfgRagEmbeddingApiKey" type="password" data-config-key="SCHOLAR_RAG_EMBEDDING_API_KEY" placeholder="留空保持现有密钥">
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagRerankerProvider">重排服务</label>
-                                        <select id="cfgRagRerankerProvider" data-config-key="SCHOLAR_RAG_RERANKER_PROVIDER">
-                                            <option value="qwen">通义千问 Reranker</option>
-                                            <option value="none">停用重排</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagRerankerModel">重排模型</label>
-                                        <input id="cfgRagRerankerModel" data-config-key="SCHOLAR_RAG_RERANKER_MODEL" placeholder="qwen3.7-text-rerank">
-                                    </div>
-                                    <div class="span-2">
-                                        <label for="cfgRagRerankerEndpoint">重排 API 地址</label>
-                                        <input id="cfgRagRerankerEndpoint" data-config-key="SCHOLAR_RAG_RERANKER_ENDPOINT" placeholder="https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank">
-                                    </div>
-                                    <div class="span-2">
-                                        <label for="cfgRagRerankerApiKey">Reranker API Key</label>
-                                        <input id="cfgRagRerankerApiKey" type="password" data-config-key="SCHOLAR_RAG_RERANKER_API_KEY" placeholder="留空时复用 Embedding 密钥">
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagRerankerTimeout">重排超时（秒）</label>
-                                        <input id="cfgRagRerankerTimeout" type="number" min="1" step="0.5" data-config-key="SCHOLAR_RAG_RERANKER_TIMEOUT_SECONDS" placeholder="8">
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagEmbeddingDimensions">向量维度</label>
-                                        <input id="cfgRagEmbeddingDimensions" type="number" value="1024" data-config-key="SCHOLAR_RAG_EMBEDDING_DIMENSIONS" disabled>
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagEmbeddingCost">Embedding 单价（元 / 百万 Token）</label>
-                                        <input id="cfgRagEmbeddingCost" type="number" min="0" step="0.0001" data-config-key="SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS" placeholder="0 表示未配置">
-                                    </div>
-                                    <div>
-                                        <label for="cfgExternalTimeout">外部源超时</label>
-                                        <input id="cfgExternalTimeout" type="number" min="1" step="0.5" data-config-key="SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS" placeholder="8">
-                                    </div>
-                                    <div>
-                                        <label for="cfgPdfParseStrategy">PDF 解析策略</label>
-                                        <select id="cfgPdfParseStrategy" data-config-key="SCHOLAR_PDF_PARSE_STRATEGY">
-                                            <option value="scholar_hierarchical_v4">层级解析 v4（Docling 主解析 + PyMuPDF 自动回退）</option>
-                                            <option value="multimodal_aware_v3">多模态解析 v3</option>
-                                            <option value="formula_aware_v2">公式感知 v2</option>
-                                            <option value="structure_aware_v1">结构感知 v1</option>
-                                            <option value="legacy_fixed">旧版固定解析</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagChunkStrategy">论文切片策略</label>
-                                        <select id="cfgRagChunkStrategy" data-config-key="SCHOLAR_RAG_CHUNK_STRATEGY">
-                                            <option value="scholar_hierarchical_v4">层级语义切片 v4（推荐）</option>
-                                            <option value="multimodal_aware_v3">多模态切片 v3</option>
-                                            <option value="formula_aware_v2">公式感知 v2</option>
-                                            <option value="structure_aware_v1">结构感知 v1</option>
-                                            <option value="legacy_fixed">旧版固定切片</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagChunkSize">切片长度</label>
-                                        <input id="cfgRagChunkSize" type="number" min="200" step="50" data-config-key="SCHOLAR_RAG_CHUNK_SIZE" placeholder="900">
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagChunkOverlap">切片重叠</label>
-                                        <input id="cfgRagChunkOverlap" type="number" min="0" step="10" data-config-key="SCHOLAR_RAG_CHUNK_OVERLAP" placeholder="120">
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagTopK">默认 Top K</label>
-                                        <input id="cfgRagTopK" type="number" min="1" max="100" data-config-key="SCHOLAR_RAG_TOP_K" placeholder="8">
-                                    </div>
-                                    <div>
-                                        <label for="cfgRagCandidateLimit">候选集上限</label>
-                                        <input id="cfgRagCandidateLimit" type="number" min="20" max="5000" data-config-key="SCHOLAR_RAG_CANDIDATE_LIMIT" placeholder="800">
-                                    </div>
+                                <div class="rag-tabs" role="tablist" aria-label="知识检索配置">
+                                    <button id="ragTabEmbedding" role="tab" type="button" aria-selected="true" aria-controls="ragPaneEmbedding" data-rag-tab>向量模型</button>
+                                    <button id="ragTabDocuments" role="tab" type="button" aria-selected="false" aria-controls="ragPaneDocuments" tabindex="-1" data-rag-tab>文档处理</button>
+                                    <button id="ragTabRetrieval" role="tab" type="button" aria-selected="false" aria-controls="ragPaneRetrieval" tabindex="-1" data-rag-tab>召回与重排</button>
+                                    <button id="ragTabIndex" role="tab" type="button" aria-selected="false" aria-controls="ragPaneIndex" tabindex="-1" data-rag-tab>索引与用量</button>
+                                    <button id="ragTabSearch" role="tab" type="button" aria-selected="false" aria-controls="ragPaneSearch" tabindex="-1" data-rag-tab>检索验证</button>
                                 </div>
-                                <div id="embeddingModelWarning" class="alert hidden">模型或服务地址发生变化。保存后旧向量会停止参与语义检索，完成重建前仍可使用全文检索。</div>
-                                <div class="provider-matrix config-overview-cards">
-                                    <div><b>当前模型</b><span id="embeddingActiveModel">等待读取</span></div>
-                                    <div><b>向量状态</b><span id="embeddingStatusCounts">ready 0 / stale 0 / failed 0 / pending 0</span></div>
-                                    <div><b>重建任务</b><span id="embeddingReindexStatus">无需重建</span></div>
-                                </div>
-                                <div class="provider-matrix config-overview-cards">
-                                    <div><b>调用次数</b><span id="embeddingUsageCalls">等待统计</span></div>
-                                    <div><b>厂商回传 Token</b><span id="embeddingUsageTokens">等待统计</span></div>
-                                    <div><b>失败率</b><span id="embeddingUsageFailureRate">等待统计</span></div>
-                                    <div><b>估算费用</b><span id="embeddingUsageCost">未配置单价</span></div>
-                                </div>
-                                <div class="ops-console">
-                                    <div class="ops-console-head">
-                                        <div><strong>Embedding 连通性</strong><span>测试候选 Key、地址和模型，成功后再保存。</span></div>
-                                        <div class="config-actions">
-                                            <button id="embeddingProbeBtn" class="plain" type="button">测试 Embedding</button>
-                                            <button id="reindexEmbeddingsBtn" class="secondary" type="button">重新生成向量</button>
+                                <div id="embeddingModelWarning" class="alert hidden" role="status">模型配置已修改。保存后需重建向量，重建完成前使用全文检索。</div>
+                                <div class="rag-tab-content">
+                                    <section id="ragPaneEmbedding" class="rag-pane" role="tabpanel" aria-labelledby="ragTabEmbedding" tabindex="0">
+                                        <div class="rag-section-head"><h3>向量服务</h3><span>Embedding</span></div>
+                                        <div class="field-grid rag-fields">
+                                            <div>
+                                                <label for="cfgRagEmbedding">服务提供方</label>
+                                                <select id="cfgRagEmbedding" data-config-key="SCHOLAR_RAG_EMBEDDING_PROVIDER" disabled><option value="qwen">通义千问 / DashScope</option></select>
+                                            </div>
+                                            <div>
+                                                <label for="cfgRagEmbeddingModel">模型名称</label>
+                                                <input id="cfgRagEmbeddingModel" data-config-key="SCHOLAR_RAG_EMBEDDING_MODEL" placeholder="qwen3.7-text-embedding">
+                                            </div>
+                                            <div class="span-2">
+                                                <label for="cfgRagEmbeddingBaseUrl">接口地址</label>
+                                                <input id="cfgRagEmbeddingBaseUrl" data-config-key="SCHOLAR_RAG_EMBEDDING_BASE_URL" placeholder="https://dashscope.aliyuncs.com/compatible-mode">
+                                            </div>
+                                            <div class="span-2">
+                                                <label for="cfgRagEmbeddingApiKey">API Key</label>
+                                                <input id="cfgRagEmbeddingApiKey" type="password" data-config-key="SCHOLAR_RAG_EMBEDDING_API_KEY" placeholder="留空保持现有密钥" autocomplete="new-password">
+                                            </div>
+                                            <div>
+                                                <label for="cfgRagEmbeddingDimensions">向量维度</label>
+                                                <input id="cfgRagEmbeddingDimensions" type="number" value="1024" data-config-key="SCHOLAR_RAG_EMBEDDING_DIMENSIONS" disabled>
+                                            </div>
+                                            <div>
+                                                <label for="cfgRagEmbeddingCost">单价（元 / 百万 Token）</label>
+                                                <input id="cfgRagEmbeddingCost" type="number" min="0" step="0.0001" data-config-key="SCHOLAR_RAG_EMBEDDING_COST_CNY_PER_MILLION_TOKENS" placeholder="未配置">
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div id="embeddingProbeResult" class="ops-result">等待测试。</div>
-                                </div>
-                                <div class="ops-console">
-                                    <div class="ops-console-head">
-                                        <div><strong>Reranker 连通性</strong><span>使用两段固定学术文本验证排序方向和调用耗时。</span></div>
-                                        <button id="rerankerProbeBtn" class="plain" type="button">测试 Reranker</button>
-                                    </div>
-                                    <div id="rerankerProbeResult" class="ops-result">等待测试。</div>
-                                </div>
-                                <div class="ops-console">
-                                    <div class="ops-console-head">
-                                        <div><strong>RAG 检索验证</strong><span>查询当前租户知识库索引，确认切分和召回效果。</span></div>
-                                        <div class="config-actions">
-                                            <button id="profileRagCompareBtn" class="plain" type="button">四策略对比</button>
-                                            <button id="profileRagSearchBtn" class="secondary" type="button">检索</button>
+                                        <div class="rag-probe-row">
+                                            <div id="embeddingProbeResult" class="rag-probe-result" role="status">尚未测试连接</div>
+                                            <button id="embeddingProbeBtn" class="plain" type="button">测试连接</button>
                                         </div>
-                                    </div>
-                                    <div class="inline-grid">
-                                        <div><label for="profileRagQuery">查询</label><input id="profileRagQuery" placeholder="输入关键词，例如 LLM healthcare reliability"></div>
-                                        <div><label for="profileRagRetrievalMode">召回策略</label><select id="profileRagRetrievalMode"><option value="hybrid_rerank">Hybrid + Reranker</option><option value="hybrid" selected>Hybrid（RRF）</option><option value="lexical">Lexical（关键词）</option><option value="vector">Vector（向量）</option></select></div>
-                                    </div>
-                                    <div id="profileRagResult" class="ops-result ops-result-large">等待检索。</div>
+                                    </section>
+                                    <section id="ragPaneDocuments" class="rag-pane" role="tabpanel" aria-labelledby="ragTabDocuments" tabindex="0" hidden>
+                                        <div class="rag-section-head"><h3>解析与切片</h3></div>
+                                        <div class="field-grid rag-fields">
+                                            <div class="span-2">
+                                                <label for="cfgPdfParseStrategy">PDF 解析策略</label>
+                                                <select id="cfgPdfParseStrategy" data-config-key="SCHOLAR_PDF_PARSE_STRATEGY">
+                                                    <option value="scholar_hierarchical_v4">层级解析 v4 · Docling / PyMuPDF</option>
+                                                    <option value="multimodal_aware_v3">多模态解析 v3</option>
+                                                    <option value="formula_aware_v2">公式感知 v2</option>
+                                                    <option value="structure_aware_v1">结构感知 v1</option>
+                                                    <option value="legacy_fixed">旧版固定解析</option>
+                                                </select>
+                                            </div>
+                                            <div class="span-2">
+                                                <label for="cfgRagChunkStrategy">切片策略</label>
+                                                <select id="cfgRagChunkStrategy" data-config-key="SCHOLAR_RAG_CHUNK_STRATEGY">
+                                                    <option value="scholar_hierarchical_v4">层级语义切片 v4（推荐）</option>
+                                                    <option value="multimodal_aware_v3">多模态切片 v3</option>
+                                                    <option value="formula_aware_v2">公式感知 v2</option>
+                                                    <option value="structure_aware_v1">结构感知 v1</option>
+                                                    <option value="legacy_fixed">旧版固定切片</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label for="cfgRagChunkSize">切片长度（字符）</label>
+                                                <input id="cfgRagChunkSize" type="number" min="200" step="50" data-config-key="SCHOLAR_RAG_CHUNK_SIZE" placeholder="900">
+                                            </div>
+                                            <div>
+                                                <label for="cfgRagChunkOverlap">重叠长度（字符）</label>
+                                                <input id="cfgRagChunkOverlap" type="number" min="0" step="10" data-config-key="SCHOLAR_RAG_CHUNK_OVERLAP" placeholder="120">
+                                            </div>
+                                        </div>
+                                        <div class="rag-section-head rag-section-divider"><h3>外部论文源</h3></div>
+                                        <div class="field-grid rag-fields">
+                                            <div>
+                                                <label for="cfgExternalSource">论文来源</label>
+                                                <select id="cfgExternalSource" data-config-key="SCHOLAR_EXTERNAL_SOURCE_PROVIDER"><option value="real">联网论文源</option></select>
+                                            </div>
+                                            <div>
+                                                <label for="cfgExternalTimeout">请求超时（秒）</label>
+                                                <input id="cfgExternalTimeout" type="number" min="1" step="0.5" data-config-key="SCHOLAR_EXTERNAL_SOURCE_TIMEOUT_SECONDS" placeholder="8">
+                                            </div>
+                                        </div>
+                                    </section>
+                                    <section id="ragPaneRetrieval" class="rag-pane" role="tabpanel" aria-labelledby="ragTabRetrieval" tabindex="0" hidden>
+                                        <div class="rag-section-head"><h3>召回策略</h3></div>
+                                        <div class="field-grid rag-fields rag-fields-three">
+                                            <div>
+                                                <label for="cfgRagRetrievalMode">召回模式</label>
+                                                <select id="cfgRagRetrievalMode" data-config-key="SCHOLAR_RAG_RETRIEVAL_MODE">
+                                                    <option value="hybrid_rerank">混合召回 + 千问重排</option>
+                                                    <option value="hybrid_rrf">混合召回（RRF）</option>
+                                                    <option value="vector">向量召回</option>
+                                                    <option value="lexical">关键词召回</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label for="cfgRagTopK">返回数量（Top K）</label>
+                                                <input id="cfgRagTopK" type="number" min="1" max="100" data-config-key="SCHOLAR_RAG_TOP_K" placeholder="8">
+                                            </div>
+                                            <div>
+                                                <label for="cfgRagCandidateLimit">候选集上限</label>
+                                                <input id="cfgRagCandidateLimit" type="number" min="20" max="5000" data-config-key="SCHOLAR_RAG_CANDIDATE_LIMIT" placeholder="800">
+                                            </div>
+                                        </div>
+                                        <details class="rag-advanced">
+                                            <summary>重排服务配置<span>Reranker</span></summary>
+                                            <div class="field-grid rag-fields">
+                                                <div>
+                                                    <label for="cfgRagRerankerProvider">重排服务</label>
+                                                    <select id="cfgRagRerankerProvider" data-config-key="SCHOLAR_RAG_RERANKER_PROVIDER"><option value="qwen">通义千问 Reranker</option><option value="none">停用重排</option></select>
+                                                </div>
+                                                <div>
+                                                    <label for="cfgRagRerankerModel">模型名称</label>
+                                                    <input id="cfgRagRerankerModel" data-config-key="SCHOLAR_RAG_RERANKER_MODEL" placeholder="qwen3.7-text-rerank">
+                                                </div>
+                                                <div class="span-2">
+                                                    <label for="cfgRagRerankerEndpoint">接口地址</label>
+                                                    <input id="cfgRagRerankerEndpoint" data-config-key="SCHOLAR_RAG_RERANKER_ENDPOINT" placeholder="https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank">
+                                                </div>
+                                                <div>
+                                                    <label for="cfgRagRerankerApiKey">API Key</label>
+                                                    <input id="cfgRagRerankerApiKey" type="password" data-config-key="SCHOLAR_RAG_RERANKER_API_KEY" placeholder="留空时复用 Embedding 密钥" autocomplete="new-password">
+                                                </div>
+                                                <div>
+                                                    <label for="cfgRagRerankerTimeout">请求超时（秒）</label>
+                                                    <input id="cfgRagRerankerTimeout" type="number" min="1" step="0.5" data-config-key="SCHOLAR_RAG_RERANKER_TIMEOUT_SECONDS" placeholder="8">
+                                                </div>
+                                            </div>
+                                            <div class="rag-probe-row">
+                                                <div id="rerankerProbeResult" class="rag-probe-result" role="status">尚未测试连接</div>
+                                                <button id="rerankerProbeBtn" class="plain" type="button">测试重排</button>
+                                            </div>
+                                        </details>
+                                    </section>
+                                    <section id="ragPaneIndex" class="rag-pane" role="tabpanel" aria-labelledby="ragTabIndex" tabindex="0" hidden>
+                                        <div class="rag-section-head"><h3>向量索引</h3><button id="reindexEmbeddingsBtn" class="plain" type="button">重新生成向量</button></div>
+                                        <div class="field-grid rag-fields">
+                                            <div>
+                                                <label for="cfgRagIndexBackend">索引后端</label>
+                                                <select id="cfgRagIndexBackend" data-config-key="SCHOLAR_RAG_INDEX_BACKEND" disabled><option value="pgvector">PostgreSQL + pgvector</option></select>
+                                            </div>
+                                            <div class="rag-readout"><b>当前模型</b><span id="embeddingActiveModel">等待读取</span></div>
+                                        </div>
+                                        <dl class="rag-index-status">
+                                            <div><dt>向量状态</dt><dd id="embeddingStatusCounts">等待读取</dd></div>
+                                            <div><dt>重建任务</dt><dd id="embeddingReindexStatus">等待读取</dd></div>
+                                        </dl>
+                                        <div class="rag-section-head rag-section-divider"><h3>调用用量</h3></div>
+                                        <dl class="rag-usage">
+                                            <div><dt>调用次数</dt><dd id="embeddingUsageCalls">等待统计</dd></div>
+                                            <div><dt>厂商回传 Token</dt><dd id="embeddingUsageTokens">等待统计</dd></div>
+                                            <div><dt>失败率</dt><dd id="embeddingUsageFailureRate">等待统计</dd></div>
+                                            <div><dt>估算费用</dt><dd id="embeddingUsageCost">未配置单价</dd></div>
+                                        </dl>
+                                    </section>
+                                    <section id="ragPaneSearch" class="rag-pane rag-search-pane" role="tabpanel" aria-labelledby="ragTabSearch" tabindex="0" hidden>
+                                        <div class="rag-search-controls">
+                                            <div><label for="profileRagQuery">检索问题</label><input id="profileRagQuery" placeholder="输入主题、关键词或研究问题"></div>
+                                            <div><label for="profileRagRetrievalMode">召回策略</label><select id="profileRagRetrievalMode"><option value="hybrid_rerank">混合召回 + 重排</option><option value="hybrid" selected>混合召回（RRF）</option><option value="lexical">关键词召回</option><option value="vector">向量召回</option></select></div>
+                                            <div class="rag-search-actions">
+                                                <button id="profileRagCompareBtn" class="plain" type="button">四策略对比</button>
+                                                <button id="profileRagSearchBtn" class="secondary" type="button">检索</button>
+                                            </div>
+                                        </div>
+                                        <div id="profileRagResult" class="ops-result ops-result-large" role="region" aria-label="检索结果" aria-live="polite">暂无检索结果</div>
+                                    </section>
                                 </div>
                             </div>
                             <div id="settingsInstitution" class="config-section settings-card">
@@ -8724,7 +8741,7 @@
             const counts = embedding?.counts || {};
             if ($('embeddingActiveModel')) $('embeddingActiveModel').textContent = embedding?.active_model || '未配置';
             if ($('embeddingStatusCounts')) {
-                $('embeddingStatusCounts').textContent = `ready ${counts.ready || 0} / stale ${counts.stale || 0} / failed ${counts.failed || 0} / pending ${counts.pending || 0}`;
+                $('embeddingStatusCounts').textContent = `就绪 ${counts.ready || 0} · 待重建 ${counts.stale || 0} · 失败 ${counts.failed || 0} · 等待 ${counts.pending || 0}`;
             }
             if ($('embeddingReindexStatus')) {
                 const failed = counts.failed || 0;
@@ -8765,6 +8782,31 @@
             });
             document.querySelectorAll('.settings-card').forEach((card) => {
                 card.classList.toggle('active', card.id === paneId);
+            });
+        }
+        function initRagSettingsTabs() {
+            const tabs = Array.from(document.querySelectorAll('#settingsRag [data-rag-tab]'));
+            const select = (tab, focus = false) => {
+                tabs.forEach((item) => {
+                    const active = item === tab;
+                    item.setAttribute('aria-selected', String(active));
+                    item.tabIndex = active ? 0 : -1;
+                    $(item.getAttribute('aria-controls')).hidden = !active;
+                });
+                if (focus) tab.focus();
+            };
+            tabs.forEach((tab, index) => {
+                tab.addEventListener('click', () => select(tab));
+                tab.addEventListener('keydown', (event) => {
+                    let next;
+                    if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+                    if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+                    if (event.key === 'Home') next = 0;
+                    if (event.key === 'End') next = tabs.length - 1;
+                    if (next === undefined) return;
+                    event.preventDefault();
+                    select(tabs[next], true);
+                });
             });
         }
         function collectRuntimeConfig() {
@@ -8919,6 +8961,20 @@
                 <section><b>扩展、过滤与合并上下文</b><pre>${escapeHtml(JSON.stringify(compact, null, 2))}</pre></section>
             </details>`;
         }
+        function renderRagResultItem(item, index) {
+            return `<article class="rag-result-item">
+                <h4>${index + 1}. ${escapeHtml(item.title || item.paper_id || '未命名文献')}</h4>
+                <div class="row-meta">${ragChunkProvenance(item)} · 片段 ${Number(item.chunk_index ?? 0)}</div>
+                <p>${escapeHtml(item.snippet || '')}</p>
+                <div class="rag-result-metrics">
+                    <span>融合分 ${Number(item.score || 0).toFixed(6)}</span>
+                    <span>关键词排名 ${item.lexical_rank == null ? '-' : Number(item.lexical_rank)}</span>
+                    <span>向量排名 ${item.vector_rank == null ? '-' : Number(item.vector_rank)}</span>
+                    <span>重排分 ${item.rerank_score == null ? '-' : Number(item.rerank_score).toFixed(4)}</span>
+                </div>
+                <details><summary>来源标识</summary><div class="row-meta">${escapeHtml(item.paper_id || '-')}<br>${escapeHtml(item.chunk_id || '-')}</div></details>
+            </article>`;
+        }
         async function searchProfileRag() {
             const query = $('profileRagQuery')?.value.trim() || '';
             const retrievalMode = $('profileRagRetrievalMode')?.value || 'hybrid';
@@ -8935,7 +8991,7 @@
                         : '<div class="alert" style="margin-bottom:10px;">向量检索暂不可用，当前结果来自关键词与中英文学术术语兜底。请在模型配置中重新测试 Embedding。</div>')
                     : '';
                 const results = items.length
-                    ? `<table class="rag-verify-table"><thead><tr><th>Chunk</th><th>命中片段</th><th>来源论文</th><th>融合分</th><th>关键词排名</th><th>向量排名</th><th>重排分</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Chunk #${Number(item.chunk_index ?? 0)}</strong><div class="row-meta">${escapeHtml(item.chunk_id || '-')}</div></td><td><div class="rag-verify-snippet">${escapeHtml(item.snippet || '')}</div></td><td><strong>${escapeHtml(item.title || item.paper_id)}</strong><div class="row-meta">${escapeHtml(item.paper_id || '-')}</div><div class="row-meta">${ragChunkProvenance(item)}</div></td><td>${Number(item.score || 0).toFixed(6)}</td><td>${item.lexical_rank ?? '-'}</td><td>${item.vector_rank ?? '-'}</td><td>${item.rerank_score == null ? '-' : Number(item.rerank_score).toFixed(4)}</td></tr>`).join('')}</tbody></table>`
+                    ? `<div class="rag-result-list">${items.map((item, index) => renderRagResultItem(item, index)).join('')}</div>`
                     : '<div class="subtle">查询成功，没有返回 chunk。</div>';
                 $('profileRagResult').innerHTML = summary + fallbackNotice + renderRagDebug(data) + results;
             } catch (error) {
@@ -9277,8 +9333,8 @@
         function handleRoute() {
             const hash = window.location.hash.replace('#', '') || '/knowledge';
             if (hash.startsWith('/reader/')) {
-                const paperId = hash.replace('/reader/', '');
-                if (readerPaperId === paperId) return; // prevent re-entry
+                const paperId = decodeURIComponent(hash.replace('/reader/', ''));
+                if (readerPaperId === paperId && $('pageReader').classList.contains('active')) return;
                 openReader(paperId);
             } else {
                 const routeName = hash.replace('/', '') || 'chat';
@@ -10206,38 +10262,59 @@
             };
         }
         function renderBibliographyField(item, definition) {
-            const [name, label, kind] = definition;
+            const [name, rawLabel, kind] = definition;
+            const label = rawLabel.replace(/（.*）/, '');
             const field = bibliographyField(item, name);
-            const source = field.source || 'not_found';
             const value = kind === 'list'
                 ? (Array.isArray(field.value) ? field.value.join('\n') : String(field.value || ''))
                 : String(field.value || '');
-            const control = kind === 'list'
-                ? `<textarea data-bibliography-field="${name}">${escapeHtml(value)}</textarea>`
-                : `<input data-bibliography-field="${name}" value="${escapeHtml(value)}">`;
-            return `<label class="paper-metadata-field ${kind === 'list' ? 'wide' : ''}">
-                <header><b>${escapeHtml(label)}</b><span>${escapeHtml(source)} · ${bibliographyConfidence(field)}${field.user_edited ? ' · 人工' : ''}</span></header>
+            const multiline = kind === 'list' || name === 'title';
+            const control = multiline
+                ? `<textarea id="bibliography-${name}" rows="2" data-bibliography-field="${name}">${escapeHtml(value)}</textarea>`
+                : `<input id="bibliography-${name}" data-bibliography-field="${name}" value="${escapeHtml(value)}">`;
+            return `<div class="paper-metadata-field ${name === 'title' || name === 'title_translation' ? 'wide' : ''}">
+                <label for="bibliography-${name}">${escapeHtml(label)}${name === 'title' ? '<span class="metadata-required" aria-label="必填">*</span>' : ''}</label>
                 ${control}
-            </label>`;
+            </div>`;
         }
         function renderPaperMetadata(item) {
             const review = bibliographyReviewSummary(item);
             const links = bibliographyField(item, 'links');
             const value = links.value && typeof links.value === 'object' ? links.value : {};
-            const linkEditor = `<section class="paper-metadata-field wide" data-bibliography-field="links">
-                <header><b>代码 / 项目 / 数据 / 补充材料</b><span>${escapeHtml(links.source || 'not_found')} · ${bibliographyConfidence(links)}${links.user_edited ? ' · 人工' : ''}</span></header>
-                <div class="paper-metadata-links">
-                    <label>代码仓库（每行一个）<textarea data-bibliography-link="code">${escapeHtml((value.code || []).join('\n'))}</textarea></label>
-                    <label>项目主页（每行一个）<textarea data-bibliography-link="project">${escapeHtml((value.project || []).join('\n'))}</textarea></label>
-                    <label>数据集（每行一个）<textarea data-bibliography-link="dataset">${escapeHtml((value.dataset || []).join('\n'))}</textarea></label>
-                    <label>补充材料（每行一个）<textarea data-bibliography-link="supplement">${escapeHtml((value.supplement || []).join('\n'))}</textarea></label>
-                </div>
-            </section>`;
+            const fields = (names) => names.map(name => renderBibliographyField(item, BIBLIOGRAPHY_FIELDS.find(field => field[0] === name))).join('');
+            const linkDefinitions = [['code', '代码仓库'], ['project', '项目主页'], ['dataset', '数据集'], ['supplement', '补充材料']];
+            const linkEditor = `<details class="paper-metadata-extra" data-bibliography-field="links">
+                <summary>关联资源<span>代码、项目与数据集</span></summary>
+                <div class="paper-metadata-links">${linkDefinitions.map(([name, label]) => `<div class="paper-metadata-field"><label for="bibliography-link-${name}">${label}</label><textarea id="bibliography-link-${name}" rows="2" data-bibliography-link="${name}">${escapeHtml((value[name] || []).join('\n'))}</textarea></div>`).join('')}</div>
+            </details>`;
+            const sources = {legacy_record:'已有记录', user:'人工修正', ingest_input:'上传资料', not_found:'未提取', not_generated:'未生成', crossref:'Crossref', openalex:'OpenAlex', arxiv:'arXiv'};
+            const evidence = [...BIBLIOGRAPHY_FIELDS, ['links', '关联资源']].map(([name, label]) => {
+                const field = bibliographyField(item, name);
+                const source = field.source || 'not_found';
+                return `<tr><th scope="row">${escapeHtml(label.replace(/（.*）/, ''))}</th><td title="${escapeHtml(source)}">${field.user_edited ? '人工修正' : escapeHtml(sources[source] || '文档解析')}</td><td>${source === 'legacy_record' ? '未评估' : bibliographyConfidence(field)}</td></tr>`;
+            }).join('');
             return `<div class="paper-metadata-editor">
-                <section class="paper-metadata-summary"><strong>论文信息与证据</strong><p class="subtle">完整字段 ${review.complete}/${review.total} · 待修正：${escapeHtml(review.needsReview.join('、') || '无')}。每个字段显示来源与置信度；人工修正不会被重新解析覆盖。</p></section>
-                <div class="paper-metadata-grid">${BIBLIOGRAPHY_FIELDS.map((field) => renderBibliographyField(item, field)).join('')}${linkEditor}</div>
-                <div class="paper-metadata-actions"><button id="savePaperMetadataBtn" class="primary" type="button">保存论文信息</button></div>
+                <div class="paper-metadata-summary"><strong>资料编辑</strong><div class="paper-metadata-completeness"><span id="paperMetadataCount">已填写 ${review.complete} / ${review.total}</span><progress id="paperMetadataProgress" value="${review.complete}" max="${review.total}" aria-label="字段完整度"></progress></div></div>
+                <div class="paper-metadata-body">
+                    <section class="paper-metadata-section"><h3>基本信息</h3><div class="paper-metadata-grid">${fields(['title', 'title_translation'])}</div></section>
+                    <section class="paper-metadata-section"><h3>作者与机构</h3><div class="paper-metadata-grid">${fields(['authors', 'institutions'])}</div></section>
+                    <section class="paper-metadata-section"><h3>出版信息</h3><div class="paper-metadata-grid publication-fields">${fields(['venue', 'published_at', 'paper_type'])}</div></section>
+                    <section class="paper-metadata-section"><h3>文献标识</h3><div class="paper-metadata-grid">${fields(['doi', 'arxiv_id'])}</div></section>
+                    ${linkEditor}
+                    <details class="paper-metadata-extra"><summary>字段来源<span>来源与置信度</span></summary><table class="paper-metadata-evidence"><thead><tr><th>字段</th><th>来源</th><th>置信度</th></tr></thead><tbody>${evidence}</tbody></table></details>
+                </div>
+                <div class="paper-metadata-actions"><span id="paperMetadataSaveState" role="status">尚未修改</span><div><button id="resetPaperMetadataBtn" class="plain" type="button" disabled>还原</button><button id="savePaperMetadataBtn" class="primary" type="button" disabled>保存修改</button></div></div>
             </div>`;
+        }
+        function updatePaperMetadataDraft() {
+            const values = BIBLIOGRAPHY_FIELDS.map(([name]) => metadataControlValue(name));
+            const complete = values.filter(value => Array.isArray(value) ? value.length : String(value || '').trim()).length
+                + Number(Array.from(document.querySelectorAll('[data-bibliography-link]')).some(control => control.value.trim()));
+            $('paperMetadataCount').textContent = `已填写 ${complete} / 10`;
+            $('paperMetadataProgress').value = complete;
+            $('paperMetadataSaveState').textContent = '有未保存的修改';
+            $('savePaperMetadataBtn').disabled = false;
+            $('resetPaperMetadataBtn').disabled = false;
         }
         function metadataControlValue(name) {
             const control = document.querySelector(`[data-bibliography-field="${name}"]`);
@@ -10248,7 +10325,8 @@
         }
         async function savePaperMetadata() {
             const item = selectedPaper();
-            if (!item) return;
+            const editor = document.querySelector('.paper-metadata-editor');
+            if (!item || !editor || editor.dataset.saving === 'true') return;
             const links = {};
             document.querySelectorAll('[data-bibliography-link]').forEach((control) => {
                 links[control.dataset.bibliographyLink] = control.value.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean);
@@ -10256,6 +10334,7 @@
             const value = (name) => metadataControlValue(name);
             if (!String(value('title') || '').trim()) {
                 toast('标题不能为空', 'bad');
+                $('bibliography-title').focus();
                 return;
             }
             try {
@@ -10271,12 +10350,19 @@
                     links,
                     paper_type: value('paper_type') || '',
                 };
+                editor.dataset.saving = 'true';
+                editor.querySelectorAll('input, textarea, button').forEach(control => { control.disabled = true; });
+                $('paperMetadataSaveState').textContent = '正在保存';
                 await api(`/knowledge/${encodeURIComponent(item.paper_id)}/metadata`, { method: 'PATCH', body: JSON.stringify(payload) });
                 state.selectedPaperId = item.paper_id;
                 toast('论文信息已保存', 'ok');
                 await loadKnowledge();
             } catch (error) {
                 toast(error.message, 'bad');
+                if (editor.isConnected) $('paperMetadataSaveState').textContent = '保存失败，请重试';
+            } finally {
+                delete editor.dataset.saving;
+                if (editor.isConnected) editor.querySelectorAll('input, textarea, button').forEach(control => { control.disabled = false; });
             }
         }
         function paperTextPages(item) {
@@ -10386,6 +10472,8 @@
             const item = selectedPaper();
             const viewer = $('paperViewer');
             const editor = $('paperEditor');
+            viewer.classList.toggle('metadata-view', Boolean(item) && state.paperViewMode === 'metadata');
+            viewer.closest('.reader-shell').classList.toggle('metadata-mode', Boolean(item) && state.paperViewMode === 'metadata');
             viewer.classList.toggle('structured-content', ['text', 'assets', 'chunks', 'metadata'].includes(state.paperViewMode));
             if (!item) {
                 $('paperPreviewTitle').textContent = '文献预览与编辑';
@@ -10423,8 +10511,10 @@
             $('paperPageLabel').textContent = '全文';
             if (state.paperViewMode === 'metadata') {
                 $('paperPageLabel').textContent = '论文信息';
-                viewer.innerHTML = `<div class="parsed-editor-stage">${renderPaperMetadata(item)}</div>`;
+                viewer.innerHTML = renderPaperMetadata(item);
                 $('savePaperMetadataBtn')?.addEventListener('click', savePaperMetadata);
+                $('resetPaperMetadataBtn')?.addEventListener('click', () => renderPaperWorkbench());
+                viewer.querySelectorAll('input, textarea').forEach(control => control.addEventListener('input', updatePaperMetadataDraft));
                 return;
             }
             const structure = paperStructure(item);
@@ -10586,7 +10676,7 @@
                     $('ragEmbeddingSummary').textContent = `${stats.embedding_provider || 'lexical'} · ${model} · ${stats.retrieval_mode || 'hybrid'}`;
                 }
                 if ($('ragChunkSummary')) {
-                    $('ragChunkSummary').textContent = `${stats.chunk_size || 900} 字符 / overlap ${stats.chunk_overlap || 120} / Top K ${stats.top_k || 8}`;
+                    $('ragChunkSummary').textContent = `${stats.chunk_size ?? 900} 字符 · 重叠 ${stats.chunk_overlap ?? 120} · Top K ${stats.top_k ?? 8}`;
                 }
                 const usage = stats.embedding_usage || {};
                 if ($('embeddingUsageCalls')) {
@@ -10878,6 +10968,7 @@
         }
 
         mountProfileConfig();
+        initRagSettingsTabs();
         if (desktopMode) {
             $('tenantId').innerHTML = '<option value="tenant_local">ScholarAgent Local</option>';
             $('username').value = 'scholar';
@@ -11240,12 +11331,13 @@
         .research-reader__controls { display: flex; align-items: center; gap: 6px; }
         .research-reader__controls button { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border-radius: 5px; }
         .research-reader__controls .wide { width: auto; padding: 0 10px; }
-        .research-reader__body { min-height: 0; display: grid; grid-template-columns: 224px minmax(440px,1fr) 360px; overflow: hidden; }
-        .research-reader__body.left-hidden { grid-template-columns: 0 minmax(440px,1fr) 360px; }
-        .research-reader__body.right-hidden { grid-template-columns: 224px minmax(440px,1fr) 0; }
-        .research-reader__body.left-hidden.right-hidden { grid-template-columns: 0 minmax(440px,1fr) 0; }
+        .research-reader__body { --reader-left-width: 176px; --reader-right-width: 260px; position: relative; min-height: 0; display: grid; grid-template-columns: var(--reader-left-width) minmax(0,1fr) var(--reader-right-width); overflow: hidden; }
+        .research-reader__body.left-hidden { --reader-left-width: 0px; }
+        .research-reader__body.right-hidden { --reader-right-width: 0px; }
+        .research-reader__body.left-hidden .reader-nav, .research-reader__body.right-hidden .reader-insight { visibility: hidden; }
+        .research-reader__controls button[aria-pressed="true"] { color: #08756d; background: #e5f2ef; border-color: #b7dcd7; }
         .reader-nav, .reader-insight { min-width: 0; overflow: hidden; background: #fafbfb; }
-        .reader-nav { border-right: 1px solid #d8dfe1; }
+        .reader-nav { border-right: 1px solid #d8dfe1; display: grid; grid-template-rows: auto minmax(0,1fr); }
         .reader-insight { border-left: 1px solid #d8dfe1; display: grid; grid-template-rows: auto minmax(0,1fr); }
         .reader-side-tabs { height: 44px; padding: 6px 8px; display: grid; grid-template-columns: repeat(3,1fr); gap: 3px; border-bottom: 1px solid #e0e5e6; }
         .reader-side-tabs button { border: 0; background: transparent; color: #66757a; font-size: 12px; border-radius: 4px; }
@@ -11254,8 +11346,18 @@
         .reader-thumbnail { display: grid; grid-template-columns: 42px minmax(0,1fr); gap: 9px; align-items: center; width: 100%; padding: 7px; border: 1px solid transparent; background: transparent; text-align: left; border-radius: 5px; color: #465358; }
         .reader-thumbnail.active { border-color: #8bc9c2; background: #eef8f6; color: #075e58; }
         .reader-thumbnail span:first-child { height: 54px; display: grid; place-items: center; background: white; border: 1px solid #d8dfe1; box-shadow: 0 2px 7px rgba(22,34,38,.06); font-family: Georgia,serif; }
-        .reader-document { min-width: 0; min-height: 0; display: grid; grid-template-rows: 42px minmax(0,1fr); background: #e7ebec; }
+        .reader-document { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: #e7ebec; }
         .reader-document__bar { display: flex; align-items: center; justify-content: center; gap: 7px; border-bottom: 1px solid #d2d9db; background: #f7f9f9; }
+        #pageReader .reader-document__bar { min-height: 44px; flex-wrap: wrap; padding: 5px 8px; }
+        #pageReader .reader-document__bar button { min-height: 30px; padding: 4px 10px; font-size: 12px; border-radius: 5px; }
+        #pageReader .reader-find { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #d2d9db; background: #fff; }
+        #pageReader .reader-find[hidden] { display: none; }
+        #pageReader .reader-find input { flex: 1; width: 80px; min-width: 0; min-height: 32px; padding: 5px 8px; font-size: 13px; }
+        #pageReader .reader-find button { min-width: 28px; min-height: 30px; padding: 4px 7px; }
+        #pageReader #rrFindStatus { flex: 0 0 auto; color: #6c7f88; font-size: 11px; }
+        #pageReader .reader-text-layer span.search-hit { background: rgba(247,199,65,.45); }
+        #pageReader .reader-text-layer span.search-current { outline: 1px solid #c88216; background: rgba(247,199,65,.7); }
+        #pageReader .reader-nav-empty { padding: 20px 4px; font-size: 12px; color: #7a8c92; text-align: center; }
         .reader-document__bar input { width: 48px; height: 28px; padding: 4px; text-align: center; }
         .reader-pages { min-height: 0; overflow: auto; padding: 24px 32px 54px; scroll-behavior: smooth; }
         .reader-page-sheet { position: relative; margin: 0 auto 18px; background: white; box-shadow: 0 3px 18px rgba(28,39,43,.16); overflow: hidden; }
@@ -11278,7 +11380,18 @@
         .reader-note-card p { margin: 4px 0 0; font-size: 13px; line-height: 1.55; color: #435156; }
         .reader-loading-line { height: 2px; background: linear-gradient(90deg,transparent,#0a7a70,transparent); background-size: 50% 100%; animation: reader-loading 1.1s linear infinite; }
         @keyframes reader-loading { to { background-position: 200% 0; } }
-        @media(max-width:1100px) { .research-reader__body { grid-template-columns: 0 minmax(0,1fr) 320px; } .reader-nav { display:none; } }
+        @media(max-width:1120px) {
+            #pageReader.active { position: fixed; inset: 0; z-index: 40; width: 100%; height: 100dvh; }
+            .research-reader__body { grid-template-columns: minmax(0,1fr); }
+            .reader-document { grid-column: 1; grid-row: 1; }
+            .reader-nav, .reader-insight { position: absolute; top: 0; bottom: 0; z-index: 4; box-shadow: 0 4px 16px #14252d22; }
+            .reader-nav { left: 0; width: 176px; }
+            .reader-insight { right: 0; width: min(260px, 80%); }
+            .research-reader__top { padding: 0 8px; gap: 8px; }
+            .research-reader__identity strong { font-size: 12px; }
+            #pageReader .reader-pages { padding: 16px 10px 32px; }
+            #pageReader #rrBack { padding: 5px 8px; font-size: 12px; }
+        }
     </style>
     <script>
     (() => {
@@ -11291,24 +11404,33 @@
               <button id="rrBack" class="plain wide" type="button">返回知识库</button>
               <div class="research-reader__identity"><strong id="rrTitle">论文阅读</strong><span id="rrMeta">正在准备文档</span></div>
               <div class="research-reader__controls">
-                <button id="rrToggleLeft" class="plain" title="目录与缩略图">☰</button>
-                <button id="rrSearch" class="plain" title="文内搜索">⌕</button>
-                <button id="rrToggleRight" class="plain" title="翻译与批注">◫</button>
+                <button id="rrToggleLeft" type="button" class="plain" title="目录与页面" aria-label="目录与页面" aria-pressed="false" aria-controls="rrNavSide">☰</button>
+                <button id="rrSearch" type="button" class="plain" title="文内搜索" aria-label="文内搜索" aria-expanded="false" aria-controls="rrFind">⌕</button>
+                <button id="rrToggleRight" type="button" class="plain" title="翻译与批注" aria-label="翻译与批注" aria-pressed="true" aria-controls="rrInsightSide">◫</button>
               </div>
             </header>
-            <div id="rrBody" class="research-reader__body">
-              <aside class="reader-nav">
-                <div class="reader-side-tabs"><button class="active">页面</button><button>目录</button><button>书签</button></div>
+            <div id="rrBody" class="research-reader__body left-hidden">
+              <aside id="rrNavSide" class="reader-nav" inert>
+                <div class="reader-side-tabs"><button class="active" data-rr-nav="pages">页面</button><button data-rr-nav="outline">目录</button><button data-rr-nav="bookmarks">书签</button></div>
                 <div id="rrNav" class="reader-nav-content"></div>
               </aside>
               <main class="reader-document">
+                <div class="reader-toolbar-group">
                 <div class="reader-document__bar">
                   <button id="rrPrev" class="plain" title="上一页">‹</button><input id="rrPage" type="number" min="1" value="1"><span id="rrCount" class="subtle">/ 1</span><button id="rrNext" class="plain" title="下一页">›</button>
                   <span style="width:18px"></span><button id="rrZoomOut" class="plain">−</button><span id="rrZoom" class="subtle">100%</span><button id="rrZoomIn" class="plain">＋</button><button id="rrFit" class="plain">适合宽度</button>
                 </div>
+                <div id="rrFind" class="reader-find" hidden>
+                  <input id="rrFindInput" type="search" placeholder="搜索文内文字" aria-label="搜索文内文字">
+                  <span id="rrFindStatus" role="status">输入关键词</span>
+                  <button id="rrFindPrev" class="plain" title="上一个匹配" aria-label="上一个匹配">‹</button>
+                  <button id="rrFindNext" class="plain" title="下一个匹配" aria-label="下一个匹配">›</button>
+                  <button id="rrFindClose" class="plain" title="关闭搜索" aria-label="关闭搜索">×</button>
+                </div>
+                </div>
                 <div id="rrPages" class="reader-pages"><div class="reader-page-sheet is-loading">正在加载文献...</div></div>
               </main>
-              <aside class="reader-insight">
+              <aside id="rrInsightSide" class="reader-insight">
                 <div class="reader-side-tabs"><button data-rr-panel="translation" class="active">翻译</button><button data-rr-panel="annotation">批注</button><button data-rr-panel="information">信息</button></div>
                 <div id="rrInsight" class="reader-insight-content"><div class="insight-empty">选择原文后即可翻译、批注或解释<br><small>译文和批注会与当前文献关联</small></div></div>
               </aside>
@@ -11318,6 +11440,10 @@
 
         let doc = null, paperId = null, current = 1, scale = 1, panel = 'translation', currentPaper = null;
         let annotations = [], translations = [], selectedText = '';
+        let openVersion = 0, renderVersion = 0, searchVersion = 0, searchTimer;
+        let activeRenderTask = null;
+        let searchMatches = [], searchPosition = -1, navMode = 'pages', fitWidth = true;
+        const pageText = new Map();
         const $r = id => document.getElementById(id);
 
         async function loadPdfRuntime() {
@@ -11329,18 +11455,34 @@
         }
 
         async function renderPdfPage(pageNumber) {
+            if (!doc) return;
+            current = pageNumber;
+            const version = ++renderVersion;
+            activeRenderTask?.cancel();
             const pdfPage = await doc.getPage(pageNumber);
+            if (version !== renderVersion) return;
             const viewport = pdfPage.getViewport({ scale });
             const sheet = document.createElement('section');
             sheet.className = 'reader-page-sheet';
             sheet.dataset.page = pageNumber;
             sheet.style.width = viewport.width + 'px'; sheet.style.height = viewport.height + 'px';
             const canvas = document.createElement('canvas');
-            canvas.width = viewport.width; canvas.height = viewport.height;
+            // Raster pixels follow screen density; text selection stays in CSS pixels.
+            const outputScale = Math.min(
+                Math.max(2, window.devicePixelRatio || 1),
+                Math.sqrt(16777216 / (viewport.width * viewport.height)),
+                8192 / viewport.width,
+                8192 / viewport.height,
+            );
+            canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
+            canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
+            canvas.style.width = viewport.width + 'px';
+            canvas.style.height = viewport.height + 'px';
             const textLayer = document.createElement('div'); textLayer.className = 'reader-text-layer';
             sheet.append(canvas, textLayer);
             $r('rrPages').replaceChildren(sheet);
             const text = await pdfPage.getTextContent();
+            if (version !== renderVersion) return;
             for (const item of text.items) {
                 if (!item.str) continue;
                 const tx = window.pdfjsLib.Util.transform(viewport.transform, item.transform);
@@ -11353,14 +11495,128 @@
                 const actual = span.getBoundingClientRect().width;
                 if (actual > 0) span.style.transform = `scaleX(${targetWidth / actual})`;
             }
-            await pdfPage.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+            const renderTask = pdfPage.render({
+                canvasContext: canvas.getContext('2d', {alpha: false}),
+                viewport,
+                transform: [canvas.width / viewport.width, 0, 0, canvas.height / viewport.height, 0, 0],
+            });
+            activeRenderTask = renderTask;
+            try {
+                await renderTask.promise;
+            } catch (error) {
+                if (error.name === 'RenderingCancelledException' || version !== renderVersion) return;
+                throw error;
+            } finally {
+                if (activeRenderTask === renderTask) activeRenderTask = null;
+            }
+            if (version !== renderVersion) return;
+            canvas.dataset.rendered = 'true';
             current = pageNumber; $r('rrPage').value = current; $r('rrZoom').textContent = Math.round(scale * 100) + '%';
-            document.querySelectorAll('.reader-thumbnail').forEach((node, i) => node.classList.toggle('active', i + 1 === current));
+            $r('rrPrev').disabled = current <= 1;
+            $r('rrNext').disabled = current >= doc.numPages;
+            document.querySelectorAll('.reader-thumbnail[data-page]').forEach(node => node.classList.toggle('active', Number(node.dataset.page) === current));
+            highlightSearch();
         }
 
-        function renderNav() {
-            $r('rrNav').innerHTML = Array.from({length:doc.numPages}, (_,i) => `<button class="reader-thumbnail ${i===0?'active':''}" data-page="${i+1}"><span>${i+1}</span><span>第 ${i+1} 页</span></button>`).join('');
+        const bookmarkKey = () => `scholar.reader.bookmarks.${state.session?.tenant_id}.${state.session?.user_id}.${paperId}`;
+        function bookmarks() { try { return JSON.parse(localStorage.getItem(bookmarkKey()) || '[]'); } catch { return []; } }
+        async function renderNav() {
+            if (!doc) return;
+            const version = openVersion, mode = navMode;
+            document.querySelectorAll('[data-rr-nav]').forEach(button => button.classList.toggle('active', button.dataset.rrNav === mode));
+            if (mode === 'outline') {
+                const outline = await doc.getOutline();
+                if (version !== openVersion || mode !== navMode) return;
+                const entries = [];
+                const visit = items => (items || []).forEach(item => { if (item.dest) entries.push(item); visit(item.items); });
+                visit(outline);
+                $r('rrNav').innerHTML = entries.length ? entries.map((entry, index) => `<button class="reader-thumbnail" data-outline="${index}">${escapeHtml(entry.title)}</button>`).join('') : '<div class="reader-nav-empty">该 PDF 未提供目录</div>';
+                $r('rrNav').querySelectorAll('[data-outline]').forEach(button => button.onclick = async () => {
+                    const target = entries[Number(button.dataset.outline)].dest;
+                    const destination = typeof target === 'string' ? await doc.getDestination(target) : target;
+                    if (!destination?.length) return;
+                    const index = typeof destination[0] === 'number' ? destination[0] : await doc.getPageIndex(destination[0]);
+                    await renderPdfPage(index + 1);
+                });
+                return;
+            }
+            const pages = mode === 'bookmarks' ? bookmarks() : Array.from({length: doc.numPages}, (_, i) => i + 1);
+            $r('rrNav').innerHTML = (mode === 'bookmarks' ? '<button id="rrBookmarkCurrent" class="plain" type="button">切换当前页书签</button>' : '') + pages.map(number => `<button class="reader-thumbnail ${number === current ? 'active' : ''}" data-page="${number}"><span>${number}</span><span>第 ${number} 页</span></button>`).join('');
+            if ($r('rrBookmarkCurrent')) $r('rrBookmarkCurrent').onclick = () => {
+                const saved = bookmarks();
+                const next = saved.includes(current) ? saved.filter(n => n !== current) : [...saved, current].sort((a, b) => a - b);
+                localStorage.setItem(bookmarkKey(), JSON.stringify(next));
+                renderNav();
+            };
             $r('rrNav').querySelectorAll('[data-page]').forEach(btn => btn.onclick = () => renderPdfPage(Number(btn.dataset.page)));
+        }
+        async function fitPage() {
+            if (!doc) return;
+            const version = openVersion, pageNumber = current, pdfPage = await doc.getPage(pageNumber);
+            if (version !== openVersion || pageNumber !== current) return;
+            const viewport = pdfPage.getViewport({scale: 1});
+            const style = getComputedStyle($r('rrPages'));
+            const available = $r('rrPages').clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 12;
+            scale = Math.max(.2, Math.min(3, available / viewport.width));
+            await renderPdfPage(current);
+        }
+        function setReaderSide(side, visible) {
+            $r('rrBody').classList.toggle(`${side}-hidden`, !visible);
+            const node = $r(side === 'left' ? 'rrNavSide' : 'rrInsightSide');
+            node.inert = !visible;
+            $r(side === 'left' ? 'rrToggleLeft' : 'rrToggleRight').setAttribute('aria-pressed', String(visible));
+            if (doc && fitWidth) requestAnimationFrame(() => fitPage());
+        }
+        function toggleSearch(visible) {
+            $r('rrFind').hidden = !visible;
+            $r('rrSearch').setAttribute('aria-expanded', String(visible));
+            if (visible) $r('rrFindInput').focus();
+            else { clearTimeout(searchTimer); ++searchVersion; searchMatches = []; searchPosition = -1; highlightSearch(); $r('rrSearch').focus(); }
+        }
+        function highlightSearch() {
+            const query = $r('rrFindInput').value.trim().toLocaleLowerCase();
+            const active = searchMatches[searchPosition];
+            let offset = 0;
+            $r('rrPages').querySelectorAll('.reader-text-layer span').forEach(span => {
+                const start = offset, end = start + span.textContent.length;
+                const hit = query && searchMatches.some(match => match.page === current && match.start < end && match.end > start);
+                span.classList.toggle('search-hit', !!hit);
+                span.classList.toggle('search-current', !!(hit && active?.page === current && active.start < end && active.end > start));
+                offset = end + 1;
+            });
+            $r('rrPages').querySelector('.search-current')?.scrollIntoView({block: 'center', behavior: 'instant'});
+        }
+        async function moveSearch(delta) {
+            if (!searchMatches.length) return;
+            searchPosition = (searchPosition + delta + searchMatches.length) % searchMatches.length;
+            $r('rrFindStatus').textContent = `${searchPosition + 1} / ${searchMatches.length}`;
+            const match = searchMatches[searchPosition];
+            if (current !== match.page) await renderPdfPage(match.page); else highlightSearch();
+        }
+        async function findInDocument() {
+            const version = ++searchVersion, activeDoc = doc;
+            const query = $r('rrFindInput').value.trim().toLocaleLowerCase();
+            searchMatches = []; searchPosition = -1; highlightSearch();
+            if (!activeDoc || !query) { $r('rrFindStatus').textContent = '输入关键词'; return; }
+            $r('rrFindStatus').textContent = '搜索中';
+            const matches = [];
+            try {
+                for (let number = 1; number <= activeDoc.numPages; number++) {
+                    if (version !== searchVersion) return;
+                    if (!pageText.has(number)) {
+                        const pdfPage = await activeDoc.getPage(number);
+                        const text = await pdfPage.getTextContent();
+                        if (version !== searchVersion) return;
+                        pageText.set(number, text.items.filter(item => item.str).map(item => item.str).join(' ').toLocaleLowerCase());
+                    }
+                    const text = pageText.get(number);
+                    let start = text.indexOf(query);
+                    while (start !== -1) { matches.push({page: number, start, end: start + query.length}); start = text.indexOf(query, start + query.length); }
+                }
+                if (version !== searchVersion) return;
+                searchMatches = matches;
+                if (matches.length) await moveSearch(1); else $r('rrFindStatus').textContent = '无匹配';
+            } catch (error) { if (version === searchVersion) $r('rrFindStatus').textContent = '搜索失败'; }
         }
         function renderInsight() {
             if (panel === 'translation') $r('rrInsight').innerHTML = translations.length ? translations.map(x => `<article class="translation-card"><div class="translation-source">${escapeHtml(x.source_text)}</div><div class="translation-result">${escapeHtml(x.translated_text)}</div><div class="translation-meta">${escapeHtml(x.model || '')}${x.cached?' · 已使用缓存':''}</div></article>`).join('') : '<div class="insight-empty">划选英文或其他语言文本<br><small>点击“翻译”后在这里对照阅读</small></div>';
@@ -11368,7 +11624,9 @@
             else $r('rrInsight').innerHTML = currentPaper ? `<article class="translation-card"><div class="translation-result">${escapeHtml(currentPaper.title||'未命名文献')}</div><div class="translation-source" style="margin-top:10px">${escapeHtml((currentPaper.authors||[]).join(', ')||'作者信息未收录')}</div><div class="translation-meta">${escapeHtml([currentPaper.source,currentPaper.published_at,currentPaper.doi&&('DOI '+currentPaper.doi)].filter(Boolean).join(' · '))}</div></article>` : '<div class="insight-empty">暂无文献信息</div>';
         }
         async function loadReaderAnnotations() {
+            const version = openVersion;
             const data = await api(`/knowledge/files/${encodeURIComponent(paperId)}/annotations`);
+            if (version !== openVersion) return;
             annotations = (data.strokes || []).map(x => ({page:x.page,type:x.type,color:x.color,content:x.content,points:x.points||[]})); renderInsight();
         }
         async function persistAnnotations() {
@@ -11376,34 +11634,85 @@
         }
         async function translateSelection() {
             if (!selectedText) return;
+            const version = openVersion;
             panel = 'translation'; activatePanel(); $r('rrInsight').innerHTML = '<div class="reader-loading-line"></div><div class="insight-empty">正在翻译选中文本...</div>';
             try {
                 const result = await api('/translations', {method:'POST', body:JSON.stringify({paper_id:paperId,text:selectedText,source_language:'auto',target_language:'中文'})});
+                if (version !== openVersion) return;
                 translations.unshift(result); renderInsight();
-            } catch (error) { $r('rrInsight').innerHTML = `<div class="insight-empty">翻译失败<br><small>${escapeHtml(error.message)}</small></div>`; }
+            } catch (error) { if (version === openVersion) $r('rrInsight').innerHTML = `<div class="insight-empty">翻译失败<br><small>${escapeHtml(error.message)}</small></div>`; }
         }
         async function addAnnotation(type) {
             if (!selectedText) return; let content = selectedText;
             if (type === 'note') { const note = prompt('输入批注内容', ''); if (note === null) return; content = note.trim() || selectedText; }
             annotations.push({page:current,type,color:type==='highlight'?'#f3ca52':null,content,points:[]}); await persistAnnotations(); panel='annotation'; activatePanel(); renderInsight(); toast('批注已保存','ok');
         }
-        function activatePanel() { document.querySelectorAll('[data-rr-panel]').forEach(b=>b.classList.toggle('active',b.dataset.rrPanel===panel)); }
+        function activatePanel() { setReaderSide('right', true); document.querySelectorAll('[data-rr-panel]').forEach(b=>b.classList.toggle('active',b.dataset.rrPanel===panel)); }
 
         openReader = async function(id) {
-            window.location.hash = '#/reader/' + id; paperId=id; current=1; scale=1; translations=[];
+            const version = ++openVersion;
+            ++renderVersion; ++searchVersion;
+            activeRenderTask?.cancel();
+            readerPaperId = id;
+            window.location.hash = '#/reader/' + encodeURIComponent(id); paperId=id; current=1; scale=1; translations=[]; annotations=[];
+            doc?.destroy(); doc = null; pageText.clear(); searchMatches=[]; searchPosition=-1; navMode='pages'; fitWidth=true;
+            $r('rrFindInput').value=''; $r('rrFind').hidden=true; $r('rrSearch').setAttribute('aria-expanded','false');
+            $r('rrNav').replaceChildren(); $r('rrCount').textContent='/ 1';
+            setReaderSide('left', false); setReaderSide('right', window.innerWidth > 1120);
             document.querySelectorAll('.page').forEach(p=>p.classList.remove('active')); page.classList.add('active');
             const paper = state.knowledge.find(p => p.paper_id === id || p.id === id); currentPaper = paper || null;
             $r('rrTitle').textContent = paper?.title || '论文阅读'; $r('rrMeta').textContent = [paper?.authors?.join?.(', '),paper?.published_at].filter(Boolean).join(' · ') || '个人知识库';
             $r('rrPages').innerHTML='<div class="reader-page-sheet is-loading">正在建立文本层...</div>';
-            try { const lib=await loadPdfRuntime(); doc=await lib.getDocument({url:`/knowledge/files/${encodeURIComponent(id)}`,httpHeaders:{'X-API-Key':state.session?.access_token||''}}).promise; $r('rrCount').textContent='/ '+doc.numPages; $r('rrPage').max=doc.numPages; const firstPage=await doc.getPage(1),baseViewport=firstPage.getViewport({scale:1}); scale=Math.max(.5,Math.min(1.5,($r('rrPages').clientWidth-72)/baseViewport.width)); renderNav(); await Promise.all([renderPdfPage(1),loadReaderAnnotations()]); if(state.selectedConversationId){api(`/conversations/${encodeURIComponent(state.selectedConversationId)}/events`,{method:'POST',body:JSON.stringify({event_type:'inspect_reader',summary:`已打开并检查文献《${paper?.title||id}》的阅读效果`,payload:{paper_id:id,title:paper?.title||'',page_count:doc.numPages,text_layer_nodes:document.querySelectorAll('.reader-text-layer span').length}})}).catch(()=>{});} }
-            catch(error){ $r('rrPages').innerHTML=`<div class="reader-page-sheet is-loading">无法打开文献：${escapeHtml(error.message)}</div>`; }
+            renderInsight();
+            try {
+                const response = await fetch(`/knowledge/files/${encodeURIComponent(id)}`, {headers:{'X-API-Key':state.session?.access_token||''}});
+                if (!response.ok) {
+                    const messages = {404:'原文件不存在或无权访问，请确认文件已成功入库。',403:'当前账号无权读取该文件，请重新登录。'};
+                    throw new Error(messages[response.status] || `文件读取失败（${response.status}）`);
+                }
+                const data = new Uint8Array(await response.arrayBuffer());
+                const lib = await loadPdfRuntime();
+                if (version !== openVersion) return;
+                const loaded = await lib.getDocument({data}).promise;
+                if (version !== openVersion) { loaded.destroy(); return; }
+                doc = loaded; $r('rrCount').textContent='/ '+doc.numPages; $r('rrPage').max=doc.numPages;
+                await fitPage(); await renderNav();
+                loadReaderAnnotations().catch(error => toast(`批注读取失败：${error.message}`, 'bad'));
+                if(state.selectedConversationId){api(`/conversations/${encodeURIComponent(state.selectedConversationId)}/events`,{method:'POST',body:JSON.stringify({event_type:'inspect_reader',summary:`已打开并检查文献《${paper?.title||id}》的阅读效果`,payload:{paper_id:id,title:paper?.title||'',page_count:doc.numPages,text_layer_nodes:document.querySelectorAll('.reader-text-layer span').length}})}).catch(()=>{});}
+            }
+            catch(error){ if(version === openVersion) $r('rrPages').innerHTML=`<div class="reader-page-sheet is-loading">无法打开文献：${escapeHtml(error.message)}</div>`; }
         };
         $r('rrBack').onclick=()=>{window.location.hash='#/knowledge';};
         $r('rrPrev').onclick=()=>current>1&&renderPdfPage(current-1); $r('rrNext').onclick=()=>doc&&current<doc.numPages&&renderPdfPage(current+1);
         $r('rrPage').onchange=()=>{const n=Number($r('rrPage').value);if(doc&&n>=1&&n<=doc.numPages)renderPdfPage(n);};
-        $r('rrZoomIn').onclick=()=>{scale=Math.min(3,scale+.15);renderPdfPage(current);}; $r('rrZoomOut').onclick=()=>{scale=Math.max(.5,scale-.15);renderPdfPage(current);};
-        $r('rrFit').onclick=async()=>{if(!doc)return;const p=await doc.getPage(current),v=p.getViewport({scale:1});scale=Math.max(.5,($r('rrPages').clientWidth-72)/v.width);renderPdfPage(current);};
-        $r('rrToggleLeft').onclick=()=>$r('rrBody').classList.toggle('left-hidden'); $r('rrToggleRight').onclick=()=>$r('rrBody').classList.toggle('right-hidden');
+        $r('rrZoomIn').onclick=()=>{if(!doc)return;fitWidth=false;scale=Math.min(3,scale+.15);renderPdfPage(current);}; $r('rrZoomOut').onclick=()=>{if(!doc)return;fitWidth=false;scale=Math.max(.2,scale-.15);renderPdfPage(current);};
+        $r('rrFit').onclick=()=>{fitWidth=true;fitPage();};
+        $r('rrToggleLeft').onclick=()=>setReaderSide('left',$r('rrBody').classList.contains('left-hidden'));
+        $r('rrToggleRight').onclick=()=>setReaderSide('right',$r('rrBody').classList.contains('right-hidden'));
+        $r('rrSearch').onclick=()=>toggleSearch($r('rrFind').hidden);
+        $r('rrFindClose').onclick=()=>toggleSearch(false);
+        $r('rrFindPrev').onclick=()=>moveSearch(-1); $r('rrFindNext').onclick=()=>moveSearch(1);
+        $r('rrFindInput').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(findInDocument,250);};
+        $r('rrFindInput').onkeydown=event=>{if(event.key==='Escape')toggleSearch(false);if(event.key==='Enter'){event.preventDefault();if(searchMatches.length)moveSearch(event.shiftKey?-1:1);else findInDocument();}};
+        document.querySelectorAll('[data-rr-nav]').forEach(button=>button.onclick=()=>{navMode=button.dataset.rrNav;renderNav();});
+        let resizeTimer;
+        new ResizeObserver(()=>{clearTimeout(resizeTimer);if(doc&&fitWidth&&page.classList.contains('active'))resizeTimer=setTimeout(fitPage,120);}).observe($r('rrPages'));
+        let readerResolutionQuery, readerPixelRatio = window.devicePixelRatio || 1;
+        function refreshReaderResolution() {
+            const density = window.devicePixelRatio || 1;
+            if (density !== readerPixelRatio) {
+                readerPixelRatio = density;
+                watchReaderResolution();
+                if (doc && page.classList.contains('active')) renderPdfPage(current);
+            }
+        }
+        function watchReaderResolution() {
+            readerResolutionQuery?.removeEventListener('change', refreshReaderResolution);
+            readerResolutionQuery = window.matchMedia(`(resolution: ${readerPixelRatio}dppx)`);
+            readerResolutionQuery.addEventListener('change', refreshReaderResolution);
+        }
+        watchReaderResolution();
+        window.addEventListener('resize', refreshReaderResolution);
         document.querySelectorAll('[data-rr-panel]').forEach(b=>b.onclick=()=>{panel=b.dataset.rrPanel;activatePanel();renderInsight();});
         document.addEventListener('mouseup', e=>{if(!page.classList.contains('active'))return;const selection=window.getSelection(),text=selection?.toString().trim();const menu=$r('rrSelection');if(!text||!e.target.closest('.reader-text-layer')){menu.style.display='none';return;}selectedText=text.slice(0,8000);const rect=selection.getRangeAt(0).getBoundingClientRect();menu.style.left=Math.min(rect.left,window.innerWidth-250)+'px';menu.style.top=Math.max(8,rect.top-45)+'px';menu.style.display='flex';});
         $r('rrSelection').querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{const action=b.dataset.action;$r('rrSelection').style.display='none';if(action==='translate')await translateSelection();else if(action==='highlight'||action==='note')await addAnnotation(action);else{panel='information';activatePanel();renderInsight();}});

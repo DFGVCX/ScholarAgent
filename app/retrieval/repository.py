@@ -172,7 +172,27 @@ class PostgresRetrievalRepository:
         )
         return [self._context_chunk(row) for row in result.mappings().all()]
 
-    async def lexical_candidates(self, request: RetrievalRequest) -> list[RetrievalCandidate]:
+    async def bm25_candidates(
+        self, request: RetrievalRequest, *, k1: float = 1.5, b: float = 0.75
+    ) -> list[RetrievalCandidate]:
+        import asyncio
+        from dataclasses import replace
+        from app.retrieval.bm25 import bm25_indexes
+
+        fingerprint = await self.corpus_fingerprint(request.tenant_id, request.user_id)
+        key = (request.tenant_id, request.user_id, stable_fingerprint(request.filters_dict()), fingerprint, k1, b)
+        index = bm25_indexes.get(key)
+        if index is None:
+            corpus = await self.lexical_candidates(
+                replace(request, query=""), row_limit=bm25_indexes.max_documents + 1
+            )
+            index = await asyncio.to_thread(bm25_indexes.build, key, corpus, k1, b)
+        expanded_query = " ".join((request.query, *academic_query_aliases(request.query)))
+        return await asyncio.to_thread(bm25_indexes.search, index, expanded_query, request.candidate_limit)
+
+    async def lexical_candidates(
+        self, request: RetrievalRequest, *, row_limit: int | None = None
+    ) -> list[RetrievalCandidate]:
         aliases = academic_query_aliases(request.query)
         filter_sql, filter_params = _structured_filters(request)
         alias_score_sql = "".join(
@@ -192,7 +212,7 @@ class PostgresRetrievalRepository:
             "user_id": request.user_id,
             "query": request.query,
             "pattern": f"%{request.query}%",
-            "candidate_limit": request.candidate_limit,
+            "candidate_limit": row_limit if row_limit is not None else request.candidate_limit,
             **{
                 f"alias_pattern_{index}": f"%{alias}%"
                 for index, alias in enumerate(aliases)

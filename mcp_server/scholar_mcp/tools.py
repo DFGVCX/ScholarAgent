@@ -230,6 +230,11 @@ async def search_papers(
     persist_results: bool = False,
     conversation_id: str = "",
 ) -> dict[str, Any]:
+    from mcp_server.scholar_mcp.paper_identity import deduplicate_papers
+
+    if source not in {"all", "local", "external", "arxiv", "openalex", "crossref"}:
+        raise ValueError(f"Unsupported paper source: {source}")
+    limit = max(1, min(int(limit), 100))
     local_hits: list[dict[str, Any]] = []
     external_candidates: list[dict[str, Any]] = []
     external_error: str | None = None
@@ -242,14 +247,15 @@ async def search_papers(
     replay_id = ""
     if source in {"all", "local"}:
         if query.strip():
-            retrieval = await rag_service.search(
-                tenant_id,
-                user_id,
-                query,
-                limit,
-                consumer="agent",
-                conversation_id=conversation_id,
-            )
+            try:
+                retrieval = await rag_service.search(
+                    tenant_id, user_id, query, limit,
+                    consumer="agent", conversation_id=conversation_id,
+                )
+            except Exception as exc:
+                if source == "local":
+                    raise
+                retrieval = {"warnings": [f"Local knowledge unavailable: {type(exc).__name__}; external sources remain enabled"]}
             replay_id = str(retrieval.get("replay_id") or "")
             retrieval_mode = str(retrieval.get("retrieval_mode") or "lexical")
             merged_contexts = list(retrieval.get("merged_contexts") or [])
@@ -264,7 +270,8 @@ async def search_papers(
             local_hits = await knowledge_store.search(tenant_id, user_id, "", limit)
             for item in local_hits:
                 item["can_cite"] = item.get("ingestion_status") in {"ready", "failed"}
-    if source in {"all", "external", "arxiv", "openalex", "crossref"} and len(local_hits) < limit:
+    source_status: list[dict[str, Any]] = []
+    if source in {"all", "external", "arxiv", "openalex", "crossref"}:
         if _mock_external_sources_enabled():
             needed = limit - len(local_hits)
             for i in range(needed):
@@ -275,31 +282,32 @@ async def search_papers(
                 external_candidates.append(candidate)
         else:
             external_errors: list[str] = []
-            for source_name, search_fn in _external_sources_for(source):
-                needed = limit - len(local_hits) - len(
-                    {item["paper_id"]: item for item in external_candidates}
-                )
-                if needed <= 0:
-                    break
+            async def search_source(source_name: str, search_fn: Any):
                 try:
-                    papers = await asyncio.to_thread(search_fn, tenant_id, user_id, query, needed)
-                    external_candidates.extend(await _prepare_external_search_results(papers))
-                except ExternalSourceError as exc:
-                    external_errors.append(f"{source_name}: {exc}")
-                    if source == source_name:
-                        raise RuntimeError(str(exc)) from exc
+                    papers = await asyncio.wait_for(
+                        asyncio.to_thread(search_fn, tenant_id, user_id, query, limit),
+                        timeout=get_settings().external_source_timeout_seconds + 1,
+                    )
+                    return source_name, await _prepare_external_search_results(papers), None
+                except (ExternalSourceError, TimeoutError) as exc:
+                    return source_name, [], str(exc) or "source timed out"
+            for source_name, papers, error in await asyncio.gather(*(
+                search_source(name, search_fn) for name, search_fn in _external_sources_for(source)
+            )):
+                external_candidates.extend(papers)
+                source_status.append({"source": source_name, "status": "failed" if error else "completed", "count": len(papers), "error": error})
+                if error:
+                    external_errors.append(f"{source_name}: {error}")
             external_error = " | ".join(external_errors) if external_errors else None
     unique_local: dict[str, dict[str, Any]] = {}
     for item in local_hits:
         identity = str(item.get("chunk_id") or item["paper_id"])
         unique_local.setdefault(identity, item)
-    unique_external: dict[str, dict[str, Any]] = {
-        item["paper_id"]: item for item in external_candidates
-    }
+    unique_external = deduplicate_papers(external_candidates)
     local_values = list(unique_local.values())[:limit]
-    external_values = list(unique_external.values())[: max(0, limit - len(local_values))]
+    external_values = unique_external[:limit]
     return {
-        "items": [*local_values, *external_values],
+        "items": deduplicate_papers([*local_values, *external_values])[:limit],
         "local_hits": local_values,
         "external_candidates": external_values,
         "retrieval_mode": retrieval_mode if query.strip() and local_values else "metadata",
@@ -314,6 +322,9 @@ async def search_papers(
         "external_error": external_error,
         "persist_results": False,
         "persistence_ignored": bool(persist_results),
+        "source_status": source_status,
+        "candidate_count": len(external_candidates) + len(local_hits),
+        "deduplicated_count": len(deduplicate_papers([*local_values, *external_values])),
     }
 
 
@@ -324,10 +335,7 @@ async def search_papers(
     safety_level=SafetyLevel.MEDIUM,
 )
 async def save_to_knowledge(tenant_id: str, user_id: str, paper: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(paper)
-    normalized.pop("tenant_id", None)
-    normalized.pop("user_id", None)
-    record = PaperRecord(tenant_id=tenant_id, user_id=user_id, **normalized)
+    record = PaperRecord.from_mapping(tenant_id, user_id, paper)
     return {"paper": await knowledge_store.save_paper(record)}
 
 
@@ -342,10 +350,7 @@ async def acquire_paper_to_knowledge(
     user_id: str,
     paper: dict[str, Any],
 ) -> dict[str, Any]:
-    normalized = dict(paper)
-    normalized.pop("tenant_id", None)
-    normalized.pop("user_id", None)
-    record = PaperRecord(tenant_id=tenant_id, user_id=user_id, **normalized)
+    record = PaperRecord.from_mapping(tenant_id, user_id, paper)
     if record.file_path and Path(record.file_path).exists():
         acquired = record
     elif record.source == "arxiv" or record.arxiv_id:
@@ -748,3 +753,26 @@ async def call_tool_with_safety(name: str, arguments: dict[str, Any]) -> dict[st
         }
     result = await tool_registry.call(name, arguments)
     return {"status": "OK", **result}
+
+
+@scholar_tool(name="list_skills", description="Discover executable writing, retrieval, audit and formatting skills", category="skill")
+async def list_skills(tenant_id: str, user_id: str) -> dict[str, Any]:
+    from agents.skill_registry import skill_registry
+
+    return {"items": [{"name": item.name, "version": item.version, "description": item.description}
+                      for item in skill_registry.list_skills()]}
+
+
+@scholar_tool(name="execute_skill", description="Run a discovered skill with structured inputs; survey_generation is queued as a writing task", category="skill", safety_level=SafetyLevel.MEDIUM)
+async def execute_skill(tenant_id: str, user_id: str, skill_name: str, inputs: dict[str, Any]) -> dict[str, Any]:
+    from agents.skill_execution import execute_registered_skill
+    from app.schemas import SurveyTaskRequest
+    from app.services.task_service import task_service
+
+    if skill_name == "survey_generation":
+        request = SurveyTaskRequest.from_mapping(inputs)
+        if not request.topic or not 1 <= request.max_papers <= 100:
+            raise ValueError("topic and a paper limit between 1 and 100 are required")
+        task = await task_service.create_survey_task(request, UserContext(tenant_id=tenant_id, user_id=user_id))
+        return {"task": task.to_dict()}
+    return await execute_registered_skill(skill_name, {**inputs, "tenant_id": tenant_id, "user_id": user_id})

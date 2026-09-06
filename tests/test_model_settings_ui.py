@@ -50,12 +50,12 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn("/app.html?v=", bridge)
 
     def test_rag_console_renders_canonical_chunk_fields(self) -> None:
-        self.assertIn("<th>Chunk</th><th>命中片段</th><th>来源论文</th>", self.html)
+        self.assertIn('class="rag-result-item"', self.html)
         self.assertIn("Chunk #${Number(item.chunk_index ?? 0)}", self.html)
         self.assertIn("escapeHtml(item.chunk_id || '-')", self.html)
         self.assertIn("escapeHtml(item.title || item.paper_id)", self.html)
-        self.assertIn("item.lexical_rank ?? '-'", self.html)
-        self.assertIn("item.vector_rank ?? '-'", self.html)
+        self.assertIn("item.lexical_rank == null ? '-' : Number(item.lexical_rank)", self.html)
+        self.assertIn("item.vector_rank == null ? '-' : Number(item.vector_rank)", self.html)
         self.assertIn("escapeHtml(item.snippet || '')", self.html)
         self.assertIn("function renderRagDebug", self.html)
         self.assertIn("查询向量", self.html)
@@ -66,7 +66,7 @@ class ModelSettingsUiTests(unittest.TestCase):
 
     def test_rag_console_renders_complete_chunk_text(self) -> None:
         self.assertIn(
-            "<div class=\"rag-verify-snippet\">${escapeHtml(item.snippet || '')}</div>",
+            "<p>${escapeHtml(item.snippet || '')}</p>",
             self.html,
         )
         self.assertNotIn("escapeHtml(item.snippet || '').slice(", self.html)
@@ -94,7 +94,7 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn('id="cfgRagChunkStrategy"', self.html)
         self.assertIn('data-config-key="SCHOLAR_RAG_CHUNK_STRATEGY"', self.html)
         self.assertGreaterEqual(self.html.count('value="scholar_hierarchical_v4"'), 2)
-        self.assertIn("Docling 主解析 + PyMuPDF 自动回退", self.html)
+        self.assertIn('value="scholar_hierarchical_v4">层级解析 v4 · Docling / PyMuPDF', self.html)
 
     def test_rag_console_renders_chunk_section_and_page_provenance(self) -> None:
         self.assertIn("ragChunkProvenance(item)", self.html)
@@ -158,8 +158,9 @@ class ModelSettingsUiTests(unittest.TestCase):
         self.assertIn('data-preview-mode="metadata">论文信息</button>', self.html)
         self.assertIn("function renderPaperMetadata", self.html)
         self.assertIn("function bibliographyReviewSummary", self.html)
-        self.assertIn("完整字段", self.html)
-        self.assertIn("待修正", self.html)
+        self.assertIn('id="paperMetadataProgress"', self.html)
+        self.assertIn('class="paper-metadata-section"', self.html)
+        self.assertIn('class="paper-metadata-evidence"', self.html)
         self.assertIn("function savePaperMetadata", self.html)
         for field in (
             "title",

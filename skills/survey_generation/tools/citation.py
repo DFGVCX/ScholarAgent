@@ -22,7 +22,8 @@ class CitationGuard:
         }
         coverage = 0.0 if not valid_ids else (len(valid_ids - set(missing)) / len(valid_ids))
         return {
-            "is_valid": not hallucinated,
+            "is_valid": bool(found_ids) and not hallucinated,
+            "uncited": not bool(found_ids),
             "found_ids": found_ids,
             "hallucinated_ids": hallucinated,
             "missing_reference_ids": missing,

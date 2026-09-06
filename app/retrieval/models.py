@@ -22,11 +22,28 @@ class RetrievalRequest:
     chunk_types: tuple[str, ...] = ()
     max_chunks_per_paper: int = 3
     retrieval_mode: str = "hybrid"
+    preference_query: str = ""
+    preference_ids: tuple[str, ...] = ()
+    lexical_weight: float = 1.0
+    vector_weight: float = 1.0
+    preference_weight: float = 0.0
+    recency_weight: float = 0.0
+    recency_half_life_days: float = 365.0
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
 
     def __post_init__(self) -> None:
         if not self.tenant_id or not self.user_id:
             raise ValueError("tenant_id and user_id are required")
         object.__setattr__(self, "query", self.query.strip())
+        import math
+        for name in ("lexical_weight", "vector_weight", "preference_weight", "recency_weight"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"{name} must be between 0 and 1")
+        if not 0 < self.recency_half_life_days <= 36500 or not 0 < self.bm25_k1 <= 10 or not 0 <= self.bm25_b <= 1:
+            raise ValueError("invalid BM25 or temporal parameters")
+        object.__setattr__(self, "preference_query", self.preference_query.strip()[:1000])
         object.__setattr__(self, "limit", max(1, min(int(self.limit), 50)))
         object.__setattr__(self, "candidate_limit", max(self.limit, min(int(self.candidate_limit), 800)))
         object.__setattr__(self, "paper_ids", self._terms(self.paper_ids, limit=100))
@@ -230,6 +247,8 @@ class LocalHit:
     previous_chunk_id: str | None = None
     next_chunk_id: str | None = None
     content_version: int = 0
+    preference_rank: int | None = None
+    temporal_score: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
